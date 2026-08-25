@@ -57,9 +57,13 @@ struct LossBreakdown {
     double mass_rmse_g = 0.0;
     double time_error_s = 0.0;
     double tds_error_percent = 0.0;
+    double pressure_rmse_bar = 0.0;
     double regularization = 0.0;
     double total = 0.0;
     bool simulated = false;  // false when the candidate failed validation
+    bool has_time_measurement = false;
+    bool has_tds_measurement = false;
+    bool has_pressure_measurement = false;
 };
 
 // A coefficient the fit is allowed to move, with the bounds that keep it
@@ -116,13 +120,50 @@ struct CalibrationReport {
     bool used_synthetic_data = false;
 };
 
+// Acceptance criteria for leave-one-shot-out validation. Pressure is reported
+// as a diagnostic only because the recipe, rather than the puck model, supplies
+// the pressure profile.
+struct LeaveOneOutThresholds {
+    double median_mass_rmse_g = 1.0;
+    double median_time_error_s = 2.0;
+    double median_tds_error_percent = 0.25;
+    double worst_fold_multiplier = 2.0;
+};
+
+struct LeaveOneOutReport {
+    std::vector<ShotLoss> folds;
+    double median_mass_rmse_g = 0.0;
+    double worst_mass_rmse_g = 0.0;
+    double median_time_error_s = 0.0;
+    double worst_time_error_s = 0.0;
+    std::optional<double> median_tds_error_percent;
+    std::optional<double> worst_tds_error_percent;
+    std::optional<double> median_pressure_rmse_bar;
+    std::optional<double> worst_pressure_rmse_bar;
+    bool tds_assessed = false;
+    bool passed = false;
+    std::vector<std::string> failed_checks;
+    LeaveOneOutThresholds thresholds;
+};
+
 // Mean loss of one coefficient set against one shot.
 LossBreakdown evaluate_shot_loss(const MeasuredShot& shot, const ModelCoefficients& coefficients,
-                                 const SimulationConfig& config, const LossWeights& weights);
+                                  const SimulationConfig& config, const LossWeights& weights);
+
+// Dataset checks specific to real-world leave-one-out validation. Regular fits
+// retain support for synthetic fixtures so the calibration machinery can be
+// tested without making a claim about real espresso.
+ValidationResult validate_leave_one_out_dataset(const std::vector<MeasuredShot>& shots);
 
 // Deterministic Nelder-Mead over the normalised parameter box. The same spec
 // always produces the same fit.
 CalibrationReport fit(const CalibrationSpec& spec);
+
+// Fits one model per held-out shot. `spec.fitting_shots` is the complete
+// dataset; `validation_shots` must be empty because every shot becomes a
+// validation case exactly once.
+LeaveOneOutReport leave_one_out(const CalibrationSpec& spec,
+                                const LeaveOneOutThresholds& thresholds = {});
 
 // Linear interpolation of a simulated mass curve at an arbitrary time, so a
 // measured sample at 7.3 s can be compared against a 0.05 s sample grid.
@@ -134,15 +175,19 @@ MeasuredShot load_measured_shot_file(const std::filesystem::path& file,
                                      const std::filesystem::path& recipe_base);
 std::vector<MeasuredShot> load_measured_shot_directory(const std::filesystem::path& directory);
 std::string dump_report_json(const CalibrationReport& report, int indent = 2);
+std::string dump_leave_one_out_report_json(const CalibrationReport* final_fit,
+                                           const LeaveOneOutReport& validation,
+                                           int indent = 2);
 
 // Writes a fitted coefficient file with provenance: which shots, which
 // parameters, which held-out validation case, and whether the data was
 // synthetic (11.3, "Commit the coefficient file with its dataset reference").
 std::string dump_fitted_coefficients_json(const CalibrationReport& report,
-                                          const std::string& id, const std::string& version,
-                                          const std::vector<std::string>& fitting_shot_ids,
-                                          const std::vector<std::string>& validation_shot_ids,
-                                          int indent = 2);
+                                           const std::string& id, const std::string& version,
+                                           const std::vector<std::string>& fitting_shot_ids,
+                                           const std::vector<std::string>& validation_shot_ids,
+                                           const LeaveOneOutReport* leave_one_out = nullptr,
+                                           int indent = 2);
 
 // Dev utility behind `espressolab_cli synthesize`: runs the model and writes the
 // output in the measured-shot format, flagged synthetic.

@@ -135,6 +135,12 @@ TEST_CASE("measured shot validation rejects malformed series", "[calibration]") 
     MeasuredShot empty;
     empty.recipe = testing::baseline_recipe();
     REQUIRE_FALSE(empty.validate().ok());
+
+    MeasuredShot invalid_final;
+    invalid_final.recipe = testing::baseline_recipe();
+    invalid_final.series = {{0.0, 0.0, 9.0}};
+    invalid_final.final_shot_time_s = -1.0;
+    REQUIRE_FALSE(invalid_final.validate().ok());
 }
 
 TEST_CASE("a fit needs parameters and shots", "[calibration]") {
@@ -144,4 +150,16 @@ TEST_CASE("a fit needs parameters and shots", "[calibration]") {
 
     spec.parameters.push_back(*tunable_parameter("kozeny_constant"));
     REQUIRE_THROWS_AS(fit(spec), InvalidInputError);  // still no shots
+}
+
+TEST_CASE("a calibration spec validates its controls and parameters", "[calibration]") {
+    const ModelCoefficients truth = testing::baseline_coefficients();
+    CalibrationSpec spec;
+    spec.starting_point = truth;
+    spec.fitting_shots = {synthesize(testing::baseline_recipe(), truth, "reference")};
+    spec.parameters = {{"kozeny_constant", 1.0, 1.0, true}};
+    spec.maximum_iterations = 0;
+    spec.weights.mass = -1.0;
+
+    REQUIRE_THROWS_AS(fit(spec), InvalidInputError);
 }

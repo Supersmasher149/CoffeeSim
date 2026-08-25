@@ -22,7 +22,8 @@ Fit against them with:
 
 ```bash
 espressolab_cli calibrate --shots assets/measured_shots \
-  --fit kozeny_constant,extraction_rate_ref_s --holdout <one-shot-id> \
+  --fit kozeny_constant,extraction_rate_ref_s --leave-one-out \
+  --report outputs/calibration/leave-one-out.json \
   --out assets/coefficients/fitted-v2.json
 ```
 
@@ -38,3 +39,17 @@ Rules from 11.3, worth repeating because they are what make the numbers usable:
   weighted error across several shots rather than matching one exactly.
 - Hold back at least one shot as a validation case that is never used for
   tuning, and name it in the coefficient file's `provenance`.
+
+## Leave-one-out validation
+
+For a small real dataset, `--leave-one-out` fits once per shot and holds out a
+different shot each time. It requires at least three non-synthetic files with
+unique IDs, the same nonempty `machine` description, at least two mass samples,
+and a final shot time. TDS and pressure remain optional. The command always
+requires `--report`; it writes `--out` only if validation passes.
+
+The pass criteria are median held-out mass RMSE at most 1 g, median time error
+at most 2 s, and no fold above twice either limit. When every shot has TDS, the
+median TDS error must also be at most 0.25 percentage points with no fold above
+0.5. Pressure RMSE is reported as a diagnostic, not fitted: pressure is a recipe
+input in this model, not a pump-dynamics prediction.

@@ -49,6 +49,22 @@ CalibrationSpec recovery_spec(const ModelCoefficients& truth, const ModelCoeffic
     return spec;
 }
 
+CalibrationSpec leave_one_out_spec(const ModelCoefficients& truth) {
+    CalibrationSpec spec = recovery_spec(truth, truth);
+    spec.fitting_shots.push_back(spec.validation_shots.front());
+    spec.validation_shots.clear();
+    for (MeasuredShot& shot : spec.fitting_shots) {
+        // These model-generated fixtures exercise the leave-one-out mechanics;
+        // production validation rejects files flagged as synthetic.
+        shot.synthetic = false;
+        shot.machine = "fixture-machine / 58 mm basket / fixture-grinder";
+        for (MeasuredSample& sample : shot.series) {
+            sample.pressure_bar = units::pa_to_bar(shot.recipe.pressure_pa.sample(sample.time_s));
+        }
+    }
+    return spec;
+}
+
 }  // namespace
 
 // The honest test of a calibration routine without real data: hide known
@@ -161,4 +177,54 @@ TEST_CASE("held-out shots never steer the fit", "[calibration][recovery]") {
 
     REQUIRE(a.fitted_values == b.fitted_values);
     REQUIRE(a.final_loss == b.final_loss);
+}
+
+TEST_CASE("leave-one-out scores every held-out shot deterministically", "[calibration][recovery]") {
+    const ModelCoefficients truth = testing::baseline_coefficients();
+    const CalibrationSpec spec = leave_one_out_spec(truth);
+
+    const LeaveOneOutReport first = leave_one_out(spec);
+    const LeaveOneOutReport second = leave_one_out(spec);
+
+    REQUIRE(first.folds.size() == 3);
+    REQUIRE(first.passed);
+    REQUIRE(first.tds_assessed);
+    REQUIRE(first.median_mass_rmse_g < 1.0e-6);
+    REQUIRE(first.median_time_error_s < 1.0e-6);
+    REQUIRE(first.median_tds_error_percent.has_value());
+    REQUIRE(*first.median_tds_error_percent < 1.0e-6);
+    REQUIRE(first.median_pressure_rmse_bar.has_value());
+    REQUIRE(*first.median_pressure_rmse_bar < 1.0e-6);
+    REQUIRE(first.median_mass_rmse_g == second.median_mass_rmse_g);
+    REQUIRE(first.median_time_error_s == second.median_time_error_s);
+    REQUIRE(first.failed_checks == second.failed_checks);
+
+    const CalibrationReport refit = fit(spec);
+    const std::string validation_json = io::dump_leave_one_out_report_json(&refit, first);
+    REQUIRE(validation_json.find("leave_one_out") != std::string::npos);
+    REQUIRE(validation_json.find("\"passed\": true") != std::string::npos);
+    const std::string coefficients = io::dump_fitted_coefficients_json(
+        refit, "fixture-fit", "1.0.0", {"baseline", "pre-infusion", "immediate"}, {}, &first);
+    REQUIRE(coefficients.find("leave_one_out_validation") != std::string::npos);
+}
+
+TEST_CASE("leave-one-out rejects invalid datasets and failed acceptance", "[calibration]") {
+    const ModelCoefficients truth = testing::baseline_coefficients();
+    CalibrationSpec spec = leave_one_out_spec(truth);
+
+    spec.fitting_shots.front().synthetic = true;
+    REQUIRE_FALSE(validate_leave_one_out_dataset(spec.fitting_shots).ok());
+    spec.fitting_shots.front().synthetic = false;
+    spec.fitting_shots[1].machine = "other machine";
+    REQUIRE_FALSE(validate_leave_one_out_dataset(spec.fitting_shots).ok());
+    spec.fitting_shots[1].machine = spec.fitting_shots.front().machine;
+
+    for (MeasuredSample& sample : spec.fitting_shots.front().series) {
+        sample.beverage_mass_g += 10.0;
+    }
+    const LeaveOneOutReport report = leave_one_out(spec);
+    REQUIRE_FALSE(report.passed);
+    REQUIRE_FALSE(report.failed_checks.empty());
+    REQUIRE(io::dump_leave_one_out_report_json(nullptr, report).find("refit_note") !=
+            std::string::npos);
 }

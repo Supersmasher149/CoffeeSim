@@ -26,6 +26,26 @@ A shot can be held out by its `id` or by its filename. A `--holdout` name that
 matches nothing is an error rather than a silent no-op: a holdout that quietly
 fails would report a fit as validated when it never was.
 
+For three to five real shots from one fixed setup, prefer leave-one-out
+validation over selecting one permanent holdout:
+
+```bash
+espressolab_cli calibrate \
+  --shots assets/measured_shots \
+  --coefficients assets/coefficients/default-v1.json \
+  --fit kozeny_constant,extraction_rate_ref_s \
+  --leave-one-out \
+  --report outputs/calibration/leave-one-out.json \
+  --out assets/coefficients/fitted-v2.json
+```
+
+This fits only `kozeny_constant` and `extraction_rate_ref_s` once per held-out
+shot, then scores each held-out mass curve, final shot time, and TDS when
+available. A successful cross-validation result is followed by one refit against
+every shot for the emitted coefficient file.
+The report records the fold metrics and that final refit; it is required because
+it is the evidence supporting the coefficient artifact.
+
 Only coefficients in `fit-params` can be moved, which is the guardrail against
 minimising the loss by turning every knob at once. `kozeny_constant`,
 `extraction_rate_ref_s` and `flow_half_saturation_m3_s` are searched in log space
@@ -89,6 +109,22 @@ loss = w_mass * RMSE(beverage_mass_curve)
    id naming the machine) with its dataset reference, date and limitations in
    `provenance`. Never edit a coefficient file in place: the result hash of every
    past run depends on it.
+
+### Leave-one-out acceptance
+
+`--leave-one-out` accepts at least three real shots from one identically named
+machine setup, with unique IDs, two or more time/mass samples per shot, and a
+measured final shot time. It rejects synthetic fixtures and mixed machine
+descriptions. Coffee and water consistency must still be established in notes.
+
+The validation gate passes only when median held-out mass RMSE is no more than
+1 g, median time error is no more than 2 s, and no fold exceeds twice either
+limit. If every shot includes TDS, median held-out TDS error must be no more
+than 0.25 percentage points and no fold may exceed 0.5. Missing TDS is reported
+as not assessed. Measured pressure, when present, receives an RMSE diagnostic
+only: this model accepts the recipe pressure profile as an input and does not
+model group-head or pump dynamics. A failed validation writes the report but
+never writes the requested coefficient file.
 
 ## What a good fit does not license
 

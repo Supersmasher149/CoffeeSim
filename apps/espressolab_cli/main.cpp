@@ -7,6 +7,7 @@
 #include <iomanip>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -34,7 +35,8 @@ Usage:
   espressolab_cli sweep    --spec <file> [--out <dir>] [--quiet]
 
   espressolab_cli calibrate --shots <dir> [--coefficients <file>]
-                            --fit <name,name,...> [--holdout <id,id,...>]
+                             --fit <name,name,...> [--holdout <id,id,...>]
+                             [--leave-one-out --report <file>]
                             [--out <file>] [--report <file>]
                             [--id <id>] [--coefficient-version <v>]
                             [--max-iterations <n>]
@@ -53,7 +55,8 @@ Examples:
   espressolab_cli sweep --spec assets/sweeps/grind-size.json --out outputs/sweeps/grind-size
 
   espressolab_cli calibrate --shots assets/measured_shots \
-    --fit kozeny_constant,extraction_rate_ref_s --holdout shot-3 \
+    --fit kozeny_constant,extraction_rate_ref_s --leave-one-out \
+    --report outputs/calibration/leave-one-out.json \
     --out assets/coefficients/fitted-v2.json
 )";
 }
@@ -246,6 +249,10 @@ int command_bench(int argc, char** argv) {
     const auto flags = parse_flags(argc, argv, 2);
     const double seconds = flags.count("seconds") ? std::stod(flags.at("seconds")) : 60.0;
     const int repeats = flags.count("repeats") ? std::stoi(flags.at("repeats")) : 200;
+    if (repeats <= 0) {
+        print_error("OUT_OF_RANGE", "--repeats must be a positive integer", "repeats");
+        return kInputError;
+    }
 
     Recipe recipe = artifact_io::load_recipe_file(
         flags.count("recipe") ? flags.at("recipe") : "assets/recipes/baseline.json");
@@ -307,6 +314,16 @@ int command_calibrate(int argc, char** argv) {
                     "");
         return kUsageError;
     }
+    const bool leave_one_out = flags.count("leave-one-out") > 0;
+    if (leave_one_out && flags.count("holdout")) {
+        print_error("CONFLICTING_ARGUMENTS", "--leave-one-out cannot be combined with --holdout",
+                    "leave-one-out");
+        return kUsageError;
+    }
+    if (leave_one_out && !flags.count("report")) {
+        print_error("MISSING_ARGUMENT", "--leave-one-out requires --report <file>", "report");
+        return kUsageError;
+    }
 
     calibration::CalibrationSpec spec;
     if (flags.count("coefficients")) {
@@ -327,87 +344,152 @@ int command_calibrate(int argc, char** argv) {
         }
         spec.parameters.push_back(*parameter);
     }
+    if (leave_one_out &&
+        (spec.parameters.size() != 2 ||
+         std::none_of(spec.parameters.begin(), spec.parameters.end(), [](const auto& parameter) {
+             return parameter.name == "kozeny_constant";
+         }) ||
+         std::none_of(spec.parameters.begin(), spec.parameters.end(), [](const auto& parameter) {
+             return parameter.name == "extraction_rate_ref_s";
+         }))) {
+        print_error("INVALID_LEAVE_ONE_OUT_PARAMETERS",
+                    "--leave-one-out fits only kozeny_constant and extraction_rate_ref_s",
+                    "fit");
+        return kInputError;
+    }
 
-    const std::vector<std::string> holdout =
-        flags.count("holdout") ? split_list(flags.at("holdout")) : std::vector<std::string>{};
     std::vector<std::string> fitting_ids;
     std::vector<std::string> validation_ids;
-
-    std::vector<std::string> unmatched_holdout = holdout;
-    for (auto& shot : calibration::io::load_measured_shot_directory(flags.at("shots"))) {
-        const auto matches = [&](const std::string& name) {
-            return name == shot.id || name == shot.source_stem;
-        };
-        const bool held_out = std::any_of(holdout.begin(), holdout.end(), matches);
-        std::erase_if(unmatched_holdout, matches);
-        if (held_out) {
-            validation_ids.push_back(shot.id);
-            spec.validation_shots.push_back(std::move(shot));
-        } else {
+    std::vector<calibration::MeasuredShot> shots =
+        calibration::io::load_measured_shot_directory(flags.at("shots"));
+    if (leave_one_out) {
+        const ValidationResult validation = calibration::validate_leave_one_out_dataset(shots);
+        if (!validation.ok()) {
+            for (const ValidationIssue& issue : validation.issues()) {
+                print_error(issue.code, issue.message, issue.path);
+            }
+            return kInputError;
+        }
+        for (auto& shot : shots) {
             fitting_ids.push_back(shot.id);
             spec.fitting_shots.push_back(std::move(shot));
         }
-    }
-
-    // A holdout that silently matches nothing would report a fit as validated
-    // when it never was, which is worse than refusing to run.
-    if (!unmatched_holdout.empty()) {
-        for (const std::string& name : unmatched_holdout) {
-            print_error("UNKNOWN_HOLDOUT_SHOT",
-                        "no measured shot with id or filename '" + name + "' in " +
-                            flags.at("shots"),
-                        "holdout");
+    } else {
+        const std::vector<std::string> holdout =
+            flags.count("holdout") ? split_list(flags.at("holdout")) : std::vector<std::string>{};
+        std::vector<std::string> unmatched_holdout = holdout;
+        for (auto& shot : shots) {
+            const auto matches = [&](const std::string& name) {
+                return name == shot.id || name == shot.source_stem;
+            };
+            const bool held_out = std::any_of(holdout.begin(), holdout.end(), matches);
+            std::erase_if(unmatched_holdout, matches);
+            if (held_out) {
+                validation_ids.push_back(shot.id);
+                spec.validation_shots.push_back(std::move(shot));
+            } else {
+                fitting_ids.push_back(shot.id);
+                spec.fitting_shots.push_back(std::move(shot));
+            }
         }
-        return kInputError;
+
+        // A holdout that silently matches nothing would report a fit as validated
+        // when it never was, which is worse than refusing to run.
+        if (!unmatched_holdout.empty()) {
+            for (const std::string& name : unmatched_holdout) {
+                print_error("UNKNOWN_HOLDOUT_SHOT",
+                            "no measured shot with id or filename '" + name + "' in " +
+                                flags.at("shots"),
+                            "holdout");
+            }
+            return kInputError;
+        }
+
+        if (spec.fitting_shots.empty()) {
+            print_error("NO_FITTING_SHOTS",
+                        "no measured shots to fit in " + flags.at("shots") +
+                            " (every shot found was held out)",
+                        "shots");
+            return kInputError;
+        }
     }
 
-    if (spec.fitting_shots.empty()) {
-        print_error("NO_FITTING_SHOTS",
-                    "no measured shots to fit in " + flags.at("shots") +
-                        " (every shot found was held out)",
-                    "shots");
-        return kInputError;
-    }
-
-    std::cout << "fitting " << spec.parameters.size() << " parameter(s) against "
-              << spec.fitting_shots.size() << " shot(s)";
-    if (!spec.validation_shots.empty()) {
+    std::cout << (leave_one_out ? "leave-one-out validation with " : "fitting ")
+              << spec.parameters.size() << " parameter(s) against " << spec.fitting_shots.size()
+              << " shot(s)";
+    if (!leave_one_out && !spec.validation_shots.empty()) {
         std::cout << ", holding out " << spec.validation_shots.size();
     }
     std::cout << "\n\n";
 
     const auto started = std::chrono::steady_clock::now();
-    const calibration::CalibrationReport report = calibration::fit(spec);
+    std::optional<calibration::LeaveOneOutReport> leave_one_out_report;
+    std::optional<calibration::CalibrationReport> report;
+    if (leave_one_out) {
+        leave_one_out_report = calibration::leave_one_out(spec);
+        if (leave_one_out_report->passed) report = calibration::fit(spec);
+    } else {
+        report = calibration::fit(spec);
+    }
     const auto elapsed = std::chrono::steady_clock::now() - started;
 
     std::cout << std::defaultfloat;
-    for (std::size_t i = 0; i < report.parameters.size(); ++i) {
-        std::cout << "  " << report.parameters[i].name << ": " << report.starting_values[i]
-                  << "  ->  " << report.fitted_values[i] << '\n';
+    if (leave_one_out_report.has_value()) {
+        for (const auto& fold : leave_one_out_report->folds) {
+            std::cout << "  held out " << fold.shot_id << ": mass RMSE " << fold.loss.mass_rmse_g
+                      << " g, time " << fold.loss.time_error_s << " s";
+            if (fold.loss.has_tds_measurement) {
+                std::cout << ", TDS " << fold.loss.tds_error_percent << " %";
+            }
+            if (fold.loss.has_pressure_measurement) {
+                std::cout << ", pressure RMSE " << fold.loss.pressure_rmse_bar << " bar";
+            }
+            std::cout << '\n';
+        }
+        std::cout << "\n  validation " << (leave_one_out_report->passed ? "PASS" : "FAIL")
+                  << ": median mass RMSE " << leave_one_out_report->median_mass_rmse_g << " g, "
+                  << "median time " << leave_one_out_report->median_time_error_s << " s";
+        if (leave_one_out_report->tds_assessed) {
+            std::cout << ", median TDS " << *leave_one_out_report->median_tds_error_percent << " %";
+        } else {
+            std::cout << ", TDS not assessed";
+        }
+        std::cout << '\n';
+        for (const std::string& failure : leave_one_out_report->failed_checks) {
+            std::cout << "  failed: " << failure << '\n';
+        }
     }
-    std::cout << "\n  loss " << report.starting_loss << " -> " << report.final_loss << '\n'
-              << "  " << report.iterations << " iterations, " << report.simulations
-              << " simulations, "
-              << std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count() << " ms"
-              << (report.converged ? " (converged)" : " (hit the iteration limit)") << '\n';
-
-    for (const auto& entry : report.fitting_losses) {
-        std::cout << "  fit  " << entry.shot_id << ": mass RMSE " << entry.loss.mass_rmse_g
-                  << " g, time " << entry.loss.time_error_s << " s, TDS "
-                  << entry.loss.tds_error_percent << " %\n";
-    }
-    if (report.validation_losses.empty()) {
-        std::cout << "\n  WARNING: no held-out validation shot. This fit has not been shown\n"
-                  << "           to generalise beyond the shots it was trained on.\n";
-    } else {
-        for (const auto& entry : report.validation_losses) {
-            std::cout << "  held out " << entry.shot_id << ": mass RMSE " << entry.loss.mass_rmse_g
+    if (report.has_value()) {
+        for (std::size_t i = 0; i < report->parameters.size(); ++i) {
+            std::cout << "  " << report->parameters[i].name << ": " << report->starting_values[i]
+                      << "  ->  " << report->fitted_values[i] << '\n';
+        }
+        std::cout << "\n  " << (leave_one_out ? "refit " : "") << "loss "
+                  << report->starting_loss << " -> " << report->final_loss << '\n'
+                  << "  " << report->iterations << " iterations, " << report->simulations
+                  << " simulations, "
+                  << std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count() << " ms"
+                  << (report->converged ? " (converged)" : " (hit the iteration limit)") << '\n';
+        for (const auto& entry : report->fitting_losses) {
+            std::cout << "  fit  " << entry.shot_id << ": mass RMSE " << entry.loss.mass_rmse_g
                       << " g, time " << entry.loss.time_error_s << " s, TDS "
                       << entry.loss.tds_error_percent << " %\n";
         }
-        std::cout << "  validation loss " << report.validation_loss << '\n';
+    } else {
+        std::cout << "\n  full-dataset refit skipped because validation failed\n";
     }
-    if (report.used_synthetic_data) {
+    if (!leave_one_out_report.has_value() && report->validation_losses.empty()) {
+        std::cout << "\n  WARNING: no held-out validation shot. This fit has not been shown\n"
+                   << "           to generalise beyond the shots it was trained on.\n";
+    } else if (!leave_one_out_report.has_value()) {
+        for (const auto& entry : report->validation_losses) {
+            std::cout << "  held out " << entry.shot_id << ": mass RMSE " << entry.loss.mass_rmse_g
+                       << " g, time " << entry.loss.time_error_s << " s, TDS "
+                       << entry.loss.tds_error_percent << " %\n";
+        }
+        std::cout << "  validation loss " << report->validation_loss << '\n';
+    }
+    if (report.has_value() && report->used_synthetic_data) {
         std::cout << "\n  WARNING: synthetic data. This validates the calibration machinery\n"
                   << "           only; it says nothing about real espresso.\n";
     }
@@ -419,21 +501,28 @@ int command_calibrate(int argc, char** argv) {
         stream << contents;
     };
 
-    if (flags.count("out")) {
-        const std::filesystem::path out = flags.at("out");
-        write(out, calibration::io::dump_fitted_coefficients_json(
-                       report, flags.count("id") ? flags.at("id") : out.stem().string(),
-                       flags.count("coefficient-version") ? flags.at("coefficient-version")
-                                                          : "1.0.0",
-                       fitting_ids, validation_ids));
-        std::cout << "\ncoefficients: " << std::filesystem::absolute(out).string() << '\n';
-    }
     if (flags.count("report")) {
         const std::filesystem::path path = flags.at("report");
-        write(path, calibration::io::dump_report_json(report));
+        write(path, leave_one_out_report.has_value()
+                        ? calibration::io::dump_leave_one_out_report_json(
+                              report.has_value() ? &*report : nullptr, *leave_one_out_report)
+                        : calibration::io::dump_report_json(*report));
         std::cout << "report: " << std::filesystem::absolute(path).string() << '\n';
     }
-    return kOk;
+    if (flags.count("out") && report.has_value()) {
+        const std::filesystem::path out = flags.at("out");
+        write(out, calibration::io::dump_fitted_coefficients_json(
+                        *report, flags.count("id") ? flags.at("id") : out.stem().string(),
+                        flags.count("coefficient-version") ? flags.at("coefficient-version")
+                                                           : "1.0.0",
+                        fitting_ids, validation_ids,
+                        leave_one_out_report.has_value() ? &*leave_one_out_report : nullptr));
+        std::cout << "\ncoefficients: " << std::filesystem::absolute(out).string() << '\n';
+    }
+    if (flags.count("out") && leave_one_out_report.has_value() && !leave_one_out_report->passed) {
+        std::cout << "\ncoefficients not written: leave-one-out validation failed\n";
+    }
+    return leave_one_out_report.has_value() && !leave_one_out_report->passed ? 1 : kOk;
 }
 
 }  // namespace

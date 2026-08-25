@@ -37,8 +37,44 @@ json breakdown_json(const LossBreakdown& loss) {
     return {{"mass_rmse_g", loss.mass_rmse_g},
             {"time_error_s", loss.time_error_s},
             {"tds_error_percent", loss.tds_error_percent},
+            {"pressure_rmse_bar", loss.pressure_rmse_bar},
             {"total", loss.total},
-            {"simulated", loss.simulated}};
+            {"simulated", loss.simulated},
+            {"has_time_measurement", loss.has_time_measurement},
+            {"has_tds_measurement", loss.has_tds_measurement},
+            {"has_pressure_measurement", loss.has_pressure_measurement}};
+}
+
+json leave_one_out_json(const LeaveOneOutReport& report) {
+    json folds = json::array();
+    for (const ShotLoss& fold : report.folds) {
+        folds.push_back({{"held_out_shot_id", fold.shot_id}, {"loss", breakdown_json(fold.loss)}});
+    }
+    return {{"thresholds",
+             {{"median_mass_rmse_g", report.thresholds.median_mass_rmse_g},
+              {"median_time_error_s", report.thresholds.median_time_error_s},
+              {"median_tds_error_percent", report.thresholds.median_tds_error_percent},
+              {"worst_fold_multiplier", report.thresholds.worst_fold_multiplier}}},
+            {"folds", folds},
+            {"median_mass_rmse_g", report.median_mass_rmse_g},
+            {"worst_mass_rmse_g", report.worst_mass_rmse_g},
+            {"median_time_error_s", report.median_time_error_s},
+            {"worst_time_error_s", report.worst_time_error_s},
+            {"tds_assessed", report.tds_assessed},
+            {"median_tds_error_percent",
+             report.median_tds_error_percent.has_value() ? json(*report.median_tds_error_percent)
+                                                          : json(nullptr)},
+            {"worst_tds_error_percent",
+             report.worst_tds_error_percent.has_value() ? json(*report.worst_tds_error_percent)
+                                                         : json(nullptr)},
+            {"median_pressure_rmse_bar",
+             report.median_pressure_rmse_bar.has_value() ? json(*report.median_pressure_rmse_bar)
+                                                          : json(nullptr)},
+            {"worst_pressure_rmse_bar",
+             report.worst_pressure_rmse_bar.has_value() ? json(*report.worst_pressure_rmse_bar)
+                                                         : json(nullptr)},
+            {"passed", report.passed},
+            {"failed_checks", report.failed_checks}};
 }
 
 }  // namespace
@@ -188,11 +224,23 @@ std::string dump_report_json(const CalibrationReport& report, int indent) {
     return root.dump(indent);
 }
 
+std::string dump_leave_one_out_report_json(const CalibrationReport* final_fit,
+                                           const LeaveOneOutReport& validation, int indent) {
+    json root = {{"refit", final_fit == nullptr ? json(nullptr)
+                                                   : json::parse(dump_report_json(*final_fit, -1))},
+                 {"leave_one_out", leave_one_out_json(validation)}};
+    if (final_fit == nullptr) {
+        root["refit_note"] = "Validation failed, so the full-dataset refit was not run.";
+    }
+    return root.dump(indent);
+}
+
 std::string dump_fitted_coefficients_json(const CalibrationReport& report, const std::string& id,
-                                          const std::string& version,
-                                          const std::vector<std::string>& fitting_shot_ids,
-                                          const std::vector<std::string>& validation_shot_ids,
-                                          int indent) {
+                                           const std::string& version,
+                                           const std::vector<std::string>& fitting_shot_ids,
+                                           const std::vector<std::string>& validation_shot_ids,
+                                           const LeaveOneOutReport* leave_one_out,
+                                           int indent) {
     json root = json::parse(artifact_io::dump_coefficients_json(report.fitted, -1));
     root["id"] = id;
     root["version"] = version;
@@ -223,8 +271,11 @@ std::string dump_fitted_coefficients_json(const CalibrationReport& report, const
                           {"fitted_parameters", fitted_names},
                           {"final_loss", report.final_loss},
                           {"validation_loss", report.validation_loss},
-                          {"solver_version", version::kSolver},
-                          {"limitations", limitations}};
+                           {"solver_version", version::kSolver},
+                           {"limitations", limitations}};
+    if (leave_one_out != nullptr) {
+        root["provenance"]["leave_one_out_validation"] = leave_one_out_json(*leave_one_out);
+    }
     return root.dump(indent);
 }
 

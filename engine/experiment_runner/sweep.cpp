@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <map>
+#include <set>
 
 #include "espressolab/artifact_io.hpp"
 #include "espressolab/units.hpp"
@@ -73,10 +74,18 @@ SweepResult ExperimentRunner::run(const SweepSpec& spec,
         result.add("EMPTY_SWEEP", "a sweep requires at least one axis", "sweep.axes");
         throw InvalidInputError(result);
     }
+    std::set<std::string> parameter_paths;
     for (const auto& axis : spec.axes) {
         if (axis.values.empty()) {
             ValidationResult result;
             result.add("EMPTY_SWEEP_AXIS", "axis '" + axis.parameter_path + "' has no values",
+                       "sweep.axes." + axis.parameter_path);
+            throw InvalidInputError(result);
+        }
+        if (!parameter_paths.insert(axis.parameter_path).second) {
+            ValidationResult result;
+            result.add("DUPLICATE_SWEEP_AXIS",
+                       "parameter '" + axis.parameter_path + "' appears in more than one axis",
                        "sweep.axes." + axis.parameter_path);
             throw InvalidInputError(result);
         }

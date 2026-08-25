@@ -1,5 +1,8 @@
+#include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <deque>
 #include <filesystem>
@@ -9,6 +12,8 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 #include <httplib.h>
 #include <nlohmann/json.hpp>
@@ -41,14 +46,23 @@ void send_error(httplib::Response& response, int status, const std::string& code
                          "application/json");
 }
 
-// Completed runs live in memory for the life of the process. The MVP has no
-// account system or cloud storage (1.4), so this is deliberately not a database.
+// Completed runs are a small, session-local cache rather than a database.
 class RunStore {
 public:
     void put_shot(const std::string& id, ShotResult result, Recipe recipe,
                   ModelCoefficients coefficients) {
         const std::lock_guard<std::mutex> lock(mutex_);
-        shots_[id] = Entry{std::move(result), std::move(recipe), std::move(coefficients)};
+        const auto existing = shots_.find(id);
+        if (existing != shots_.end()) {
+            existing->second = Entry{std::move(result), std::move(recipe), std::move(coefficients)};
+            return;
+        }
+        shots_.emplace(id, Entry{std::move(result), std::move(recipe), std::move(coefficients)});
+        order_.push_back(id);
+        while (order_.size() > kMaxRetained) {
+            shots_.erase(order_.front());
+            order_.pop_front();
+        }
     }
 
     bool shot(const std::string& id, ShotResult& out) const {
@@ -60,6 +74,7 @@ public:
     }
 
 private:
+    static constexpr std::size_t kMaxRetained = 128;
     struct Entry {
         ShotResult result;
         Recipe recipe;
@@ -67,6 +82,7 @@ private:
     };
     mutable std::mutex mutex_;
     std::unordered_map<std::string, Entry> shots_;
+    std::deque<std::string> order_;
 };
 
 // Section 15.2 restores background sweep jobs: a sweep no longer blocks the
@@ -159,6 +175,11 @@ public:
 
     [[nodiscard]] const std::string& id() const { return id_; }
 
+    [[nodiscard]] bool finished() const {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        return finished_;
+    }
+
 private:
     mutable std::mutex mutex_;
     std::condition_variable done_;
@@ -192,6 +213,7 @@ public:
     ~SweepJobStore() { join_all(); }
 
     std::shared_ptr<SweepJob> start(const std::string& id, SweepSpec spec, int total) {
+        reap_finished();
         auto job = std::make_shared<SweepJob>(id, std::move(spec), total);
         const std::lock_guard<std::mutex> lock(mutex_);
         jobs_[id] = job;
@@ -203,7 +225,7 @@ public:
         }
         // Under the same lock as the registry: two concurrent POSTs would
         // otherwise race on the worker vector.
-        workers_.emplace_back([job] { job->execute(); });
+        workers_.push_back({job, std::thread([job] { job->execute(); })});
         return job;
     }
 
@@ -224,32 +246,120 @@ public:
     }
 
     void join_all() {
-        std::vector<std::thread> pending;
+        std::vector<Worker> pending;
         {
             const std::lock_guard<std::mutex> lock(mutex_);
             pending.swap(workers_);
         }
         for (auto& worker : pending) {
-            if (worker.joinable()) worker.join();
+            if (worker.thread.joinable()) worker.thread.join();
         }
     }
 
 private:
+    struct Worker {
+        std::shared_ptr<SweepJob> job;
+        std::thread thread;
+    };
+
+    void reap_finished() {
+        std::vector<Worker> completed;
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            auto worker = workers_.begin();
+            while (worker != workers_.end()) {
+                if (worker->job->finished()) {
+                    completed.push_back(std::move(*worker));
+                    worker = workers_.erase(worker);
+                } else {
+                    ++worker;
+                }
+            }
+        }
+        for (auto& worker : completed) {
+            if (worker.thread.joinable()) worker.thread.join();
+        }
+    }
+
     static constexpr std::size_t kMaxRetained = 32;
     mutable std::mutex mutex_;
     std::unordered_map<std::string, std::shared_ptr<SweepJob>> jobs_;
     std::deque<std::string> order_;
-    std::vector<std::thread> workers_;
+    std::vector<Worker> workers_;
 };
 
 SimulationConfig parse_solver_config(const json& root) {
     SimulationConfig config;
-    if (root.contains("solver") && root.at("solver").is_object()) {
+    if (root.contains("solver")) {
         const json& solver = root.at("solver");
-        config.dt_s = solver.value("dt_s", config.dt_s);
-        config.sample_interval_s = solver.value("sample_interval_s", config.sample_interval_s);
+        if (!solver.is_object()) {
+            throw artifact_io::LoadError("MALFORMED_JSON", "solver", "solver must be an object");
+        }
+        const auto optional_number = [&](const char* key, double fallback) {
+            if (!solver.contains(key)) return fallback;
+            if (!solver.at(key).is_number() || !std::isfinite(solver.at(key).get<double>())) {
+                throw artifact_io::LoadError("MALFORMED_JSON", "solver." + std::string(key),
+                                             std::string(key) + " must be a number");
+            }
+            return solver.at(key).get<double>();
+        };
+        config.dt_s = optional_number("dt_s", config.dt_s);
+        config.sample_interval_s = optional_number("sample_interval_s", config.sample_interval_s);
     }
     return config;
+}
+
+std::vector<SweepAxis> parse_sweep_axes(const json& root) {
+    if (!root.contains("axes")) return {};
+    const json& axes = root.at("axes");
+    if (!axes.is_array()) {
+        throw artifact_io::LoadError("MALFORMED_JSON", "axes", "axes must be an array");
+    }
+    std::vector<SweepAxis> parsed;
+    parsed.reserve(axes.size());
+    for (std::size_t index = 0; index < axes.size(); ++index) {
+        const json& axis_json = axes[index];
+        const std::string path = "axes[" + std::to_string(index) + "]";
+        if (!axis_json.is_object()) {
+            throw artifact_io::LoadError("MALFORMED_JSON", path, "each axis must be an object");
+        }
+        if (!axis_json.contains("parameter_path") || !axis_json.at("parameter_path").is_string()) {
+            throw artifact_io::LoadError("MALFORMED_JSON", path + ".parameter_path",
+                                         "parameter_path must be a string");
+        }
+        if (!axis_json.contains("values") || !axis_json.at("values").is_array()) {
+            throw artifact_io::LoadError("MALFORMED_JSON", path + ".values", "values must be an array");
+        }
+        SweepAxis axis;
+        axis.parameter_path = axis_json.at("parameter_path").get<std::string>();
+        for (std::size_t value_index = 0; value_index < axis_json.at("values").size(); ++value_index) {
+            const json& value = axis_json.at("values")[value_index];
+            if (!value.is_number() || !std::isfinite(value.get<double>())) {
+                throw artifact_io::LoadError("MALFORMED_JSON",
+                                             path + ".values[" + std::to_string(value_index) + "]",
+                                             "axis values must be numbers");
+            }
+            axis.values.push_back(value.get<double>());
+        }
+        parsed.push_back(std::move(axis));
+    }
+    return parsed;
+}
+
+std::string route_safe_slug(const std::string& value) {
+    std::string slug;
+    bool separator_pending = false;
+    for (const char character : value) {
+        const unsigned char unsigned_character = static_cast<unsigned char>(character);
+        if (std::isalnum(unsigned_character)) {
+            if (separator_pending && !slug.empty()) slug.push_back('-');
+            slug.push_back(static_cast<char>(std::tolower(unsigned_character)));
+            separator_pending = false;
+        } else if (!slug.empty()) {
+            separator_pending = true;
+        }
+    }
+    return slug.empty() ? "sweep" : slug;
 }
 
 std::string asset_root(int argc, char** argv) {
@@ -276,14 +386,6 @@ int main(int argc, char** argv) {
     SweepJobStore sweeps;
     std::atomic<int> next_sweep_serial{1};
     httplib::Server server;
-
-    // The dashboard is served by Vite on another port during development.
-    server.set_default_headers({{"Access-Control-Allow-Origin", "*"},
-                                {"Access-Control-Allow-Headers", "Content-Type"},
-                                {"Access-Control-Allow-Methods", "GET, POST, OPTIONS"}});
-    server.Options(R"(/.*)", [](const httplib::Request&, httplib::Response& response) {
-        response.status = 204;
-    });
 
     // Serialises a finished sweep for the status and artifact endpoints.
     const auto sweep_body = [](const SweepJob& job) {
@@ -376,6 +478,10 @@ int main(int argc, char** argv) {
             send_error(response, 400, "MALFORMED_JSON", e.what(), "body");
             return;
         }
+        if (!root.is_object()) {
+            send_error(response, 400, "MALFORMED_JSON", "request body must be a JSON object", "body");
+            return;
+        }
 
         try {
             if (!root.contains("recipe")) {
@@ -462,9 +568,16 @@ int main(int argc, char** argv) {
             send_error(response, 400, "MALFORMED_JSON", e.what(), "body");
             return;
         }
+        if (!root.is_object()) {
+            send_error(response, 400, "MALFORMED_JSON", "request body must be a JSON object", "body");
+            return;
+        }
 
         try {
             SweepSpec spec;
+            if (root.contains("name") && !root.at("name").is_string()) {
+                throw artifact_io::LoadError("MALFORMED_JSON", "name", "name must be a string");
+            }
             spec.name = root.value("name", std::string("sweep"));
             if (!root.contains("baseline")) {
                 send_error(response, 400, "MISSING_FIELD", "baseline recipe is required",
@@ -482,13 +595,10 @@ int main(int argc, char** argv) {
             }
             spec.config = parse_solver_config(root);
 
+            spec.axes = parse_sweep_axes(root);
             std::size_t total = 1;
-            for (const auto& axis_json : root.value("axes", json::array())) {
-                SweepAxis axis;
-                axis.parameter_path = axis_json.value("parameter_path", std::string());
-                axis.values = axis_json.value("values", std::vector<double>{});
+            for (const auto& axis : spec.axes) {
                 total *= std::max<std::size_t>(axis.values.size(), 1);
-                spec.axes.push_back(std::move(axis));
             }
 
             // Sweeps now run on a worker thread, so the limit exists only to
@@ -504,10 +614,17 @@ int main(int argc, char** argv) {
 
             // Validate the axes up front so an obviously broken sweep fails on
             // this request instead of inside a background job.
+            std::unordered_set<std::string> parameter_paths;
             for (const auto& axis : spec.axes) {
                 if (axis.values.empty()) {
                     send_error(response, 422, "EMPTY_SWEEP_AXIS",
                                "axis '" + axis.parameter_path + "' has no values", "axes");
+                    return;
+                }
+                if (!parameter_paths.insert(axis.parameter_path).second) {
+                    send_error(response, 422, "DUPLICATE_SWEEP_AXIS",
+                               "parameter '" + axis.parameter_path + "' appears in more than one axis",
+                               "axes");
                     return;
                 }
                 (void)apply_parameter(spec.baseline, axis.parameter_path, axis.values.front());
@@ -518,8 +635,8 @@ int main(int argc, char** argv) {
                 return;
             }
 
-            const std::string id =
-                "sweep-" + spec.name + "-" + std::to_string(next_sweep_serial++);
+            const std::string id = "sweep-" + route_safe_slug(spec.name) + "-" +
+                                   std::to_string(next_sweep_serial++);
             sweeps.start(id, std::move(spec), static_cast<int>(total));
 
             response.status = 202;  // accepted, running in the background

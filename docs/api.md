@@ -56,8 +56,11 @@ and `runs` arrays appear once the sweep reaches `complete` or `cancelled`; a
 
 `POST /api/v1/sweeps/{id}/cancel` stops a running sweep and **keeps every run it
 already finished** — the partial result is a normal sweep result, exportable as
-CSV. A single sweep is limited to 20000 runs, and the server retains the 32 most
-recent sweeps in memory.
+CSV. A single sweep is limited to 20000 runs. The server retains the 32 most
+recent sweeps and 128 most recent shots in memory; older IDs return 404.
+
+The server does not enable CORS. The development dashboard uses Vite's local
+same-origin proxy, and direct API clients are expected to run locally.
 
 `GET /api/v1/health` returns the sweepable parameter paths, and
 `espressolab_cli params` prints the same list. The CLI still runs sweeps
@@ -92,7 +95,7 @@ Codes are stable and safe to switch on: `MALFORMED_JSON`, `MISSING_FIELD`,
 `UNORDERED_PROFILE`, `OUT_OF_RANGE`, `NONPHYSICAL_INPUT`, `NONFINITE_INPUT`,
 `UNKNOWN_PARAMETER_PATH`, `SWEEP_TOO_LARGE`, `RUN_NOT_FOUND`,
 `SWEEP_NOT_FOUND`, `ARTIFACT_NOT_FOUND`, `SWEEP_NOT_FINISHED`, `EMPTY_SWEEP`,
-`EMPTY_SWEEP_AXIS`.
+`EMPTY_SWEEP_AXIS`, `DUPLICATE_SWEEP_AXIS`.
 
 ## Warnings are not errors
 

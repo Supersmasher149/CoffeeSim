@@ -68,6 +68,19 @@ TEST_CASE("an unknown parameter path fails before any run", "[sweep]") {
     REQUIRE_THROWS_AS(ExperimentRunner().run(spec), InvalidInputError);
 }
 
+TEST_CASE("duplicate sweep axes are rejected before any run", "[sweep]") {
+    SweepSpec spec;
+    spec.baseline = testing::baseline_recipe();
+    spec.coefficients = testing::baseline_coefficients();
+    spec.axes = {{"puck.particle_diameter_um", {300.0}}, {"puck.particle_diameter_um", {400.0}}};
+
+    REQUIRE_THROWS_MATCHES(
+        ExperimentRunner().run(spec), InvalidInputError,
+        Catch::Matchers::Predicate<InvalidInputError>([](const InvalidInputError& e) {
+            return e.validation().issues().front().code == "DUPLICATE_SWEEP_AXIS";
+        }));
+}
+
 TEST_CASE("sweep parameters apply in the recipe's own units", "[sweep]") {
     const Recipe baseline = testing::baseline_recipe();
 

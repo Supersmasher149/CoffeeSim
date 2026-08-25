@@ -22,7 +22,8 @@ web (React/TS)  ->  tool_server (REST)  ->  experiment_runner
 | `espressolab_core` | State variables, stepping, termination, invariants | HTTP, browser UI, plotting |
 | `espressolab_artifacts` | Versioned JSON/CSV load and dump, result hashes | Physics decisions |
 | `espressolab_experiments` | Sweeps, run schedules, aggregation, artifact naming | Chart rendering |
-| `espressolab_server` | REST endpoints, error translation, file boundaries | Equation implementations |
+| `espressolab_calibration` | Measured shots, the loss function, the fit | Anything the solver depends on |
+| `espressolab_server` | REST endpoints, jobs and threads, error translation, file boundaries | Equation implementations |
 | `web` | Controls, charts, comparisons, warnings, exports | Authoritative calculations |
 | `tests/fixtures` | Golden recipes, expected invariants | Production defaults |
 
@@ -49,6 +50,14 @@ Recipe JSON + ModelCoefficients
   -> REST response / JSON / CSV
   -> React dashboard
 ```
+
+## Threads live in the server, not the engine
+
+`ExperimentRunner::run` takes an optional `(completed, total) -> bool` callback:
+it reports progress through it and stops when it returns false. That is the
+whole of the engine's involvement in background sweeps. The server owns the
+worker thread, the cancellation flag and the job registry, so the same runner
+still works unchanged in the CLI and in tests, where there is no thread at all.
 
 ## Why the boundary is where it is
 

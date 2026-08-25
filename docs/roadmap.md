@@ -29,6 +29,19 @@ project cannot manufacture: real measured shots.
 - **`espressolab_cli bench`.** A 60-second shot at 100 Hz runs in 0.49 ms
   median — about 2000 simulations per second, 40x inside the section 2.1 budget.
 
+## Done in the background-jobs milestone
+
+- **Background sweep jobs.** `POST /api/v1/sweeps` returns 202 and the sweep runs
+  on a worker thread with progress polling and cancellation. The old 400-run
+  synchronous cap is gone (the limit is now 20000). Cancelling keeps every run
+  that finished, and the partial result exports as CSV like any other.
+  The engine gained a progress callback and nothing else: threads stay in the
+  server.
+- **Graphical profile editing.** Pressure and inlet-temperature profiles are
+  draggable curves, with add and remove, snapping, and neighbour fencing that
+  preserves the strictly-increasing time rule. The numeric point list is still
+  there underneath, because that is the half that survives a scope cut.
+
 ## Not done
 
 - **A real calibration.** This is the honest headline: the machinery is built and
@@ -37,19 +50,25 @@ project cannot manufacture: real measured shots.
   recover known coefficients from synthetic data; it proves nothing about
   espresso. Collecting even three real shots would change what this project can
   claim more than any further code.
-- **Graphical profile editing.** Numeric point editing works; dragging a curve
-  does not. Third on the scope-cut list.
-- **Background sweep jobs.** Sweeps run synchronously, capped at 400 runs.
+- **A calibration view in the dashboard.** The CLI path is complete and the cut
+  list says to keep exactly that when the interface goes. With no measured shots
+  to drive it, a calibration UI would be a form with nothing to submit; it is
+  also the lowest-value remaining item by the guide's own cut order.
 - **Demo video and measured resume bullets.** The throughput number now exists;
   the rest waits on a calibrated model.
 
 ## Scope-cut order if the schedule slips
 
-1. Two-dimensional sweeps and heat maps.
-2. Measured-shot calibration interface (keep the files and CLI support).
-3. Editable graphical profile control (keep numeric points).
-4. Background sweep jobs (run synchronously with a small limit).
-5. Temperature profile editing (keep a constant inlet temperature).
+1. Two-dimensional sweeps and heat maps. — restored
+2. Measured-shot calibration interface (keep the files and CLI support). — CLI
+   support built; the dashboard view is still deferred
+3. Editable graphical profile control (keep numeric points). — restored
+4. Background sweep jobs (run synchronously with a small limit). — restored
+5. Temperature profile editing (keep a constant inlet temperature). — never cut
+
+Read as a value ranking (cut the least valuable first), restoring runs in
+reverse: 5, 4, 3, 2, 1. Only the calibration interface is outstanding, and it is
+blocked on data rather than on effort.
 
 Never cut: deterministic artifacts, tests, warnings, or the uniform-puck
 flow/extraction core.

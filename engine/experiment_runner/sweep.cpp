@@ -66,7 +66,8 @@ Recipe apply_parameter(const Recipe& baseline, const std::string& parameter_path
     return copy;
 }
 
-SweepResult ExperimentRunner::run(const SweepSpec& spec) const {
+SweepResult ExperimentRunner::run(const SweepSpec& spec,
+                                  const SweepProgressCallback& on_progress) const {
     if (spec.axes.empty()) {
         ValidationResult result;
         result.add("EMPTY_SWEEP", "a sweep requires at least one axis", "sweep.axes");
@@ -129,6 +130,13 @@ SweepResult ExperimentRunner::run(const SweepSpec& spec) const {
             run.warning_count = static_cast<int>(e.validation().issues().size());
         }
         result.runs.push_back(std::move(run));
+
+        if (on_progress && !on_progress(static_cast<int>(linear + 1), static_cast<int>(total))) {
+            // A cancelled sweep keeps the runs it already finished rather than
+            // discarding work the caller may still want.
+            result.cancelled = true;
+            break;
+        }
     }
 
     result.sweep_id = "sweep-" + spec.name;

@@ -50,6 +50,15 @@ about 2000 simulations per second, and 40x inside the 20 ms budget.
 Finer grind, more resistance, longer shot, stronger and more extracted — until
 250 µm chokes badly enough to hit the time limit before reaching 36 g.
 
+## The dashboard
+
+Recipes are edited through draggable pressure and inlet-temperature curves with
+the numeric point list underneath, charts share one time cursor, and sweeps run
+in the background with live progress and a cancel button — a 1600-run
+grind x temperature grid finishes in about four seconds and renders as a heat
+map. Every number on screen comes from the native solver; the browser computes
+nothing.
+
 ## Architecture
 
 ```
@@ -127,10 +136,11 @@ outputs/sweeps/<sweep-id>/{sweep.json,runs.jsonl,aggregate.csv,manifest.json}
 ./scripts/test.sh
 ```
 
-73 test cases, ~14.5k assertions: unit tests for every correlation, whole-shot
+78 test cases, ~14.5k assertions: unit tests for every correlation, whole-shot
 integration tests, generated-input property tests, mass-balance invariants, a
-step-size convergence test, and calibration recovery tests that hide known
-coefficients in synthetic shots and require the fitter to find them again. See
+step-size convergence test, sweep progress and cancellation tests, and
+calibration recovery tests that hide known coefficients in synthetic shots and
+require the fitter to find them again. See
 [docs/testing.md](docs/testing.md).
 
 ## Documentation

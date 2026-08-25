@@ -14,8 +14,10 @@ cloud deployment.
 | GET | `/api/v1/recipes` | The recipes in `assets/recipes/`, sorted by id |
 | POST | `/api/v1/shots` | Validate and execute one simulation |
 | GET | `/api/v1/shots/{id}` | Read a completed summary and its samples |
-| POST | `/api/v1/sweeps` | Run a parameter sweep |
-| GET | `/api/v1/sweeps/{id}` | Read status and aggregate results |
+| POST | `/api/v1/sweeps` | Start a parameter sweep in the background (202) |
+| GET | `/api/v1/sweeps` | List this session's sweeps and their progress |
+| GET | `/api/v1/sweeps/{id}` | Read status, progress and results |
+| POST | `/api/v1/sweeps/{id}/cancel` | Stop a running sweep, keeping finished runs |
 | GET | `/api/v1/artifacts/{id}.csv` | Stable CSV for a shot or a sweep |
 
 ## Running a shot
@@ -40,10 +42,26 @@ curl -s -X POST localhost:8734/api/v1/sweeps \
                   \"values\":[300,350,400]}]}"
 ```
 
-Sweeps run synchronously in this build and are capped at 400 runs per request;
-background jobs are the fourth item on the scope-cut list. `GET /api/v1/health`
-returns the sweepable parameter paths, and `espressolab_cli params` prints the
-same list.
+`POST` answers **202 Accepted** immediately with a `sweep_id` and a `poll` path;
+the sweep runs on a worker thread. Poll `GET /api/v1/sweeps/{id}` for progress:
+
+```json
+{ "sweep_id": "sweep-grind-1", "status": "running", "completed": 412,
+  "total": 1600, "elapsed_s": 1.06 }
+```
+
+`status` is `queued`, `running`, `complete`, `cancelled` or `failed`. The `axes`
+and `runs` arrays appear once the sweep reaches `complete` or `cancelled`; a
+`failed` sweep carries an `error` object instead.
+
+`POST /api/v1/sweeps/{id}/cancel` stops a running sweep and **keeps every run it
+already finished** — the partial result is a normal sweep result, exportable as
+CSV. A single sweep is limited to 20000 runs, and the server retains the 32 most
+recent sweeps in memory.
+
+`GET /api/v1/health` returns the sweepable parameter paths, and
+`espressolab_cli params` prints the same list. The CLI still runs sweeps
+synchronously: it has nothing to poll from.
 
 ## Error contract
 
@@ -64,7 +82,8 @@ Every failure answers with the shape from section 12.2:
 | --- | --- |
 | 400 | Malformed JSON, missing field, unsupported schema version |
 | 404 | Unknown run or sweep id |
-| 413 | Sweep larger than the synchronous limit |
+| 409 | Artifact requested for a sweep that has not finished |
+| 413 | Sweep larger than the 20000-run limit |
 | 422 | Well-formed but nonphysical or out-of-range input |
 | 500 | Unhandled server error (should not happen; report it) |
 
@@ -72,7 +91,8 @@ Codes are stable and safe to switch on: `MALFORMED_JSON`, `MISSING_FIELD`,
 `UNSUPPORTED_SCHEMA_VERSION`, `MALFORMED_PROFILE_POINT`, `EMPTY_PROFILE`,
 `UNORDERED_PROFILE`, `OUT_OF_RANGE`, `NONPHYSICAL_INPUT`, `NONFINITE_INPUT`,
 `UNKNOWN_PARAMETER_PATH`, `SWEEP_TOO_LARGE`, `RUN_NOT_FOUND`,
-`SWEEP_NOT_FOUND`, `ARTIFACT_NOT_FOUND`.
+`SWEEP_NOT_FOUND`, `ARTIFACT_NOT_FOUND`, `SWEEP_NOT_FINISHED`, `EMPTY_SWEEP`,
+`EMPTY_SWEEP_AXIS`.
 
 ## Warnings are not errors
 

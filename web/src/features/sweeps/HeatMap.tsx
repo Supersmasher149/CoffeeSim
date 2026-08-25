@@ -21,6 +21,20 @@ interface Props {
 // ramp and the hue spread is 20 degrees, so it reads as one scale.
 const RAMP = ["#241c17", "#4a2f1b", "#7a4a22", "#a8662c", "#d1893f", "#edb571", "#f8dcb4"];
 
+// Axis values come from a linear spread and can carry a long decimal tail
+// (94.794872). Round for display only; the sweep keeps the exact value.
+function formatTick(value: number): string {
+  if (Number.isInteger(value)) return String(value);
+  const rounded = Math.abs(value) >= 100 ? value.toFixed(0) : value.toFixed(1);
+  return String(Number(rounded));
+}
+
+// At 40 steps a label per cell is an unreadable smear, so show at most a dozen
+// and let the hover carry the exact coordinates.
+function tickStride(count: number): number {
+  return Math.max(1, Math.ceil(count / 12));
+}
+
 function rampColor(t: number): string {
   if (!Number.isFinite(t)) return RAMP[0];
   const clamped = Math.min(Math.max(t, 0), 1);
@@ -58,6 +72,12 @@ export function HeatMap({
 
   const format = (value: number) => value.toFixed(metric === "shot_time_s" ? 1 : 2);
 
+  // Rows get thinner as the grid grows so a large sweep still fits on screen.
+  const cellHeight = yValues.length > 24 ? 13 : yValues.length > 14 ? 19 : 26;
+  const xStride = tickStride(xValues.length);
+  const yStride = tickStride(yValues.length);
+  const reversedY = [...yValues].reverse();
+
   return (
     <div>
       <div style={{ display: "flex", gap: 10 }}>
@@ -78,13 +98,13 @@ export function HeatMap({
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: `44px repeat(${xValues.length}, minmax(30px, 1fr))`,
-              gap: 2,
+              gridTemplateColumns: `48px repeat(${xValues.length}, minmax(8px, 1fr))`,
+              gap: xValues.length > 24 ? 1 : 2,
             }}
           >
             {/* Rows run top-down from the highest y value, so the grid reads
                 like a plot rather than a spreadsheet. */}
-            {[...yValues].reverse().map((y) => (
+            {reversedY.map((y, rowIndex) => (
               <Fragment key={`row-${y}`}>
                 <div
                   style={{
@@ -97,7 +117,7 @@ export function HeatMap({
                     fontFamily: "ui-monospace, Menlo, monospace",
                   }}
                 >
-                  {y}
+                  {rowIndex % yStride === 0 ? formatTick(y) : ""}
                 </div>
                 {xValues.map((x) => {
                   const row = byCoordinate.get(`${y}|${x}`);
@@ -110,7 +130,7 @@ export function HeatMap({
                       onMouseLeave={() => setHovered(undefined)}
                       title={undefined}
                       style={{
-                        height: 26,
+                        height: cellHeight,
                         borderRadius: 2,
                         cursor: row ? "pointer" : "default",
                         // Invalid corners are a state, not a magnitude, so they
@@ -131,7 +151,7 @@ export function HeatMap({
             ))}
 
             <div />
-            {xValues.map((x) => (
+            {xValues.map((x, columnIndex) => (
               <div
                 key={`x-${x}`}
                 style={{
@@ -140,9 +160,11 @@ export function HeatMap({
                   textAlign: "center",
                   paddingTop: 4,
                   fontFamily: "ui-monospace, Menlo, monospace",
+                  whiteSpace: "nowrap",
+                  overflow: "visible",
                 }}
               >
-                {x}
+                {columnIndex % xStride === 0 ? formatTick(x) : ""}
               </div>
             ))}
           </div>

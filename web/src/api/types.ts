@@ -92,13 +92,30 @@ export interface SweepRunRow {
   warning_count: number;
 }
 
+export type SweepStatus = "queued" | "running" | "complete" | "cancelled" | "failed";
+
+// A sweep runs in the background, so this is a status document that grows into
+// a result rather than a result that is either there or not.
 export interface SweepResult {
   sweep_id: string;
-  name: string;
-  status: string;
-  axes: { parameter_path: string; values: number[] }[];
-  run_count: number;
-  runs: SweepRunRow[];
+  status: SweepStatus;
+  completed: number;
+  total: number;
+  elapsed_s: number;
+  name?: string;
+  run_count?: number;
+  cancelled?: boolean;
+  axes?: { parameter_path: string; values: number[] }[];
+  runs?: SweepRunRow[];
+  error?: { code: string; message: string };
+}
+
+export interface SweepAccepted {
+  sweep_id: string;
+  status: SweepStatus;
+  completed: number;
+  total: number;
+  poll: string;
 }
 
 export interface ApiError {

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   CartesianGrid,
   Line,
@@ -92,36 +92,83 @@ export function SweepPanel({ baseline, parameters, onError }: Props) {
   const [twoDimensional, setTwoDimensional] = useState(false);
   const [metric, setMetric] = useState<HeatMetric>("shot_time_s");
   const [result, setResult] = useState<SweepResult>();
-  const [running, setRunning] = useState(false);
+  const [activeId, setActiveId] = useState<string>();
+  const pollTimer = useRef<number>();
 
   // The second axis is the outer one, so the primary axis varies fastest and
   // stays on the horizontal axis of the heat map.
   const axes = twoDimensional ? [secondary, primary] : [primary];
   const runCount = axes.reduce((total, axis) => total * Math.max(axis.steps, 1), 1);
   const selected = METRICS.find((entry) => entry.key === metric)!;
+  const running = result?.status === "running" || result?.status === "queued";
+
+  // Sweeps run in the background on the server, so the dashboard polls for
+  // progress instead of holding a request open (15.2).
+  useEffect(() => {
+    if (!activeId) return undefined;
+
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const status = await api.sweepStatus(activeId);
+        if (cancelled) return;
+        setResult(status);
+        if (status.status === "running" || status.status === "queued") {
+          pollTimer.current = window.setTimeout(poll, 250);
+        } else {
+          setActiveId(undefined);
+          if (status.status === "failed" && status.error) {
+            onError(`${status.error.code}: ${status.error.message}`);
+          }
+        }
+      } catch (error) {
+        if (cancelled) return;
+        setActiveId(undefined);
+        onError(error instanceof Error ? error.message : String(error));
+      }
+    };
+    poll();
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(pollTimer.current);
+    };
+  }, [activeId, onError]);
 
   const run = async () => {
-    setRunning(true);
     try {
-      setResult(
-        await api.sweep(
-          twoDimensional ? "dashboard-2d" : "dashboard",
-          baseline,
-          axes.map((axis) => ({ parameter_path: axis.parameterPath, values: linspace(axis) })),
-        ),
+      const accepted = await api.startSweep(
+        twoDimensional ? "dashboard-2d" : "dashboard",
+        baseline,
+        axes.map((axis) => ({ parameter_path: axis.parameterPath, values: linspace(axis) })),
       );
+      setResult({
+        sweep_id: accepted.sweep_id,
+        status: accepted.status,
+        completed: 0,
+        total: accepted.total,
+        elapsed_s: 0,
+      });
+      setActiveId(accepted.sweep_id);
     } catch (error) {
       onError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setRunning(false);
     }
   };
 
-  const isHeatMap = (result?.axes.length ?? 0) === 2;
+  const cancel = async () => {
+    if (!result) return;
+    try {
+      await api.cancelSweep(result.sweep_id);
+    } catch (error) {
+      onError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const runs = result?.runs ?? [];
+  const finished = result?.status === "complete" || result?.status === "cancelled";
+  const isHeatMap = (result?.axes?.length ?? 0) === 2;
   const lineData =
-    result && !isHeatMap
-      ? result.runs.map((row) => ({ x: row.coordinates[0], ...row }))
-      : [];
+    finished && !isHeatMap ? runs.map((row) => ({ x: row.coordinates[0], ...row })) : [];
 
   return (
     <div className="chart-card">
@@ -139,15 +186,18 @@ export function SweepPanel({ baseline, parameters, onError }: Props) {
                    onChange={(e) => setTwoDimensional(e.target.checked)} />
             second axis (heat map)
           </label>
-          <button onClick={run} disabled={running || runCount > 400}>
-            {running ? `Running ${runCount} shots…` : `Run sweep (${runCount})`}
+          <button onClick={run} disabled={running || runCount > 20000}>
+            {running ? "Running…" : `Run sweep (${runCount})`}
           </button>
-          {runCount > 400 && (
-            <span className="note">
-              This build runs sweeps synchronously; reduce to 400 runs or fewer.
-            </span>
+          {runCount > 20000 && (
+            <span className="note">A single sweep is limited to 20000 runs.</span>
           )}
-          {result && (
+          {running && (
+            <button className="ghost" onClick={cancel}>
+              Cancel
+            </button>
+          )}
+          {finished && result && (
             <a href={api.csvUrl(result.sweep_id)} download={`${result.sweep_id}.csv`}>
               <button className="ghost">Download aggregate CSV</button>
             </a>
@@ -155,7 +205,32 @@ export function SweepPanel({ baseline, parameters, onError }: Props) {
         </div>
       </div>
 
-      {result && (
+      {running && result && (
+        <div style={{ marginBottom: 12 }}>
+          <div
+            style={{
+              height: 6, borderRadius: 3, background: "var(--bg)",
+              border: "1px solid var(--line)", overflow: "hidden",
+            }}
+          >
+            <div
+              style={{
+                height: "100%",
+                width: `${result.total ? (result.completed / result.total) * 100 : 0}%`,
+                background: "var(--accent)",
+                transition: "width 200ms linear",
+              }}
+            />
+          </div>
+          <div className="note" style={{ marginTop: 5 }}>
+            {result.completed} / {result.total} runs · {result.elapsed_s.toFixed(1)} s
+            {result.completed > 0 &&
+              ` · ${Math.round(result.completed / Math.max(result.elapsed_s, 0.001))} runs/s`}
+          </div>
+        </div>
+      )}
+
+      {finished && result && (
         <>
           <div className="row" style={{ marginBottom: 10 }}>
             <select style={{ width: 220 }} value={metric}
@@ -166,16 +241,19 @@ export function SweepPanel({ baseline, parameters, onError }: Props) {
                 </option>
               ))}
             </select>
-            <span className="note">{result.run_count} runs · {result.status}</span>
+            <span className="note">
+              {result.run_count} runs · {result.status}
+              {result.cancelled && " (partial results kept)"} · {result.elapsed_s.toFixed(2)} s
+            </span>
           </div>
 
           {isHeatMap ? (
             <HeatMap
-              rows={result.runs}
-              yValues={result.axes[0].values}
-              xValues={result.axes[1].values}
-              yLabel={result.axes[0].parameter_path}
-              xLabel={result.axes[1].parameter_path}
+              rows={runs}
+              yValues={result.axes![0].values}
+              xValues={result.axes![1].values}
+              yLabel={result.axes![0].parameter_path}
+              xLabel={result.axes![1].parameter_path}
               metric={metric}
               metricLabel={selected.label}
               metricUnit={selected.unit}
@@ -187,7 +265,7 @@ export function SweepPanel({ baseline, parameters, onError }: Props) {
                 <XAxis
                   dataKey="x" type="number" domain={["dataMin", "dataMax"]}
                   tick={{ fill: "#a2938a", fontSize: 11 }} stroke="#3a302a"
-                  label={{ value: result.axes[0].parameter_path, position: "insideBottom",
+                  label={{ value: result.axes![0].parameter_path, position: "insideBottom",
                            offset: -3, fill: "#a2938a", fontSize: 11 }}
                 />
                 <YAxis
@@ -207,7 +285,7 @@ export function SweepPanel({ baseline, parameters, onError }: Props) {
           <table style={{ marginTop: 12 }}>
             <thead>
               <tr>
-                {result.axes.map((axis) => (
+                {result.axes!.map((axis) => (
                   <th key={axis.parameter_path}>{axis.parameter_path}</th>
                 ))}
                 <th>time (s)</th>
@@ -218,7 +296,7 @@ export function SweepPanel({ baseline, parameters, onError }: Props) {
               </tr>
             </thead>
             <tbody>
-              {result.runs.map((row) => (
+              {runs.map((row) => (
                 <tr key={row.index}>
                   {row.coordinates.map((value, index) => (
                     <td key={index}>{value}</td>

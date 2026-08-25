@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <catch_amalgamated.hpp>
 
 #include "../fixtures/test_fixtures.hpp"
@@ -96,4 +97,95 @@ TEST_CASE("an out-of-range corner is recorded instead of aborting the sweep", "[
     REQUIRE(result.runs[2].summary.termination == TerminationReason::invalid_state);
     REQUIRE(result.runs[2].run_id == "invalid");
     REQUIRE(result.runs[0].summary.termination == TerminationReason::target_mass_reached);
+}
+
+// Section 15.2 restores background sweep jobs. The engine stays single-threaded
+// and knows nothing about who is calling it: progress and cancellation are a
+// callback, and the server supplies the thread.
+TEST_CASE("a sweep reports progress once per run", "[sweep][progress]") {
+    SweepSpec spec;
+    spec.baseline = testing::baseline_recipe();
+    spec.coefficients = testing::baseline_coefficients();
+    spec.axes.push_back({"puck.particle_diameter_um", {280.0, 320.0, 360.0, 400.0, 440.0}});
+
+    std::vector<int> completed_seen;
+    int total_seen = 0;
+    const SweepResult result = ExperimentRunner().run(spec, [&](int completed, int total) {
+        completed_seen.push_back(completed);
+        total_seen = total;
+        return true;
+    });
+
+    REQUIRE_FALSE(result.cancelled);
+    REQUIRE(result.runs.size() == 5);
+    REQUIRE(total_seen == 5);
+    REQUIRE(completed_seen == std::vector<int>{1, 2, 3, 4, 5});
+}
+
+TEST_CASE("returning false stops the sweep and keeps finished runs", "[sweep][progress]") {
+    SweepSpec spec;
+    spec.baseline = testing::baseline_recipe();
+    spec.coefficients = testing::baseline_coefficients();
+    SweepAxis axis;
+    axis.parameter_path = "puck.particle_diameter_um";
+    for (double um = 260.0; um <= 460.0; um += 10.0) axis.values.push_back(um);
+    spec.axes.push_back(axis);
+
+    const SweepResult result = ExperimentRunner().run(spec, [](int completed, int) {
+        return completed < 4;  // stop once four runs are done
+    });
+
+    REQUIRE(result.cancelled);
+    REQUIRE(result.runs.size() == 4);
+    // The runs it did finish are ordinary, complete results.
+    for (const auto& run : result.runs) {
+        REQUIRE(run.summary.termination != TerminationReason::numerical_failure);
+        REQUIRE(std::isfinite(run.summary.extraction_yield_fraction));
+    }
+    REQUIRE(result.runs.front().coordinates.front() == Catch::Approx(260.0));
+}
+
+TEST_CASE("cancelling at the first callback keeps exactly one run", "[sweep][progress]") {
+    SweepSpec spec;
+    spec.baseline = testing::baseline_recipe();
+    spec.coefficients = testing::baseline_coefficients();
+    spec.axes.push_back({"puck.particle_diameter_um", {300.0, 350.0, 400.0}});
+
+    const SweepResult result = ExperimentRunner().run(spec, [](int, int) { return false; });
+
+    REQUIRE(result.cancelled);
+    REQUIRE(result.runs.size() == 1);
+}
+
+TEST_CASE("a cancelled sweep still exports its partial results", "[sweep][progress]") {
+    SweepSpec spec;
+    spec.baseline = testing::baseline_recipe();
+    spec.coefficients = testing::baseline_coefficients();
+    spec.axes.push_back({"puck.particle_diameter_um", {300.0, 340.0, 380.0, 420.0}});
+
+    const SweepResult result =
+        ExperimentRunner().run(spec, [](int completed, int) { return completed < 2; });
+
+    const std::string csv = artifact_io_sweep::dump_aggregate_csv(result);
+    REQUIRE(std::count(csv.begin(), csv.end(), '\n') == 3);  // header + 2 runs
+
+    const std::string json = artifact_io_sweep::dump_sweep_json(result);
+    REQUIRE(json.find("\"cancelled\": true") != std::string::npos);
+}
+
+TEST_CASE("a sweep without a callback behaves exactly as before", "[sweep][progress]") {
+    SweepSpec spec;
+    spec.baseline = testing::baseline_recipe();
+    spec.coefficients = testing::baseline_coefficients();
+    spec.axes.push_back({"puck.particle_diameter_um", {300.0, 350.0, 400.0}});
+
+    const SweepResult with_callback =
+        ExperimentRunner().run(spec, [](int, int) { return true; });
+    const SweepResult without = ExperimentRunner().run(spec);
+
+    REQUIRE(without.runs.size() == with_callback.runs.size());
+    REQUIRE_FALSE(without.cancelled);
+    for (std::size_t i = 0; i < without.runs.size(); ++i) {
+        REQUIRE(without.runs[i].result_hash == with_callback.runs[i].result_hash);
+    }
 }

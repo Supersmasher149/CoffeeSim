@@ -114,6 +114,9 @@ export function ControlRail(props: Props) {
         <ProfileEditor
           points={recipe.pressure_profile_bar}
           range={inputRanges.pressure_bar}
+          maxTimeSeconds={recipe.stop.maximum_time_s}
+          unit="bar"
+          color="#d98b4a"
           onChange={(points) => onChange({ ...recipe, pressure_profile_bar: points })}
         />
       </div>
@@ -123,6 +126,9 @@ export function ControlRail(props: Props) {
         <ProfileEditor
           points={recipe.temperature_profile_c}
           range={inputRanges.temperature_c}
+          maxTimeSeconds={recipe.stop.maximum_time_s}
+          unit="°C"
+          color="#6fb3c8"
           onChange={(points) => onChange({ ...recipe, temperature_profile_c: points })}
         />
       </div>

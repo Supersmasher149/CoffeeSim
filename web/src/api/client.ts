@@ -1,4 +1,11 @@
-import type { ApiError, Recipe, ShotResult, SweepResult, ValidationIssue } from "./types";
+import type {
+  ApiError,
+  Recipe,
+  ShotResult,
+  SweepAccepted,
+  SweepResult,
+  ValidationIssue,
+} from "./types";
 
 const BASE = "/api/v1";
 
@@ -50,10 +57,22 @@ export const api = {
   simulate: (recipe: Recipe) =>
     request<ShotResult>("/shots", { method: "POST", body: JSON.stringify({ recipe }) }),
 
-  sweep: (name: string, baseline: Recipe, axes: { parameter_path: string; values: number[] }[]) =>
-    request<SweepResult>("/sweeps", {
+  // Returns as soon as the job is accepted; poll sweepStatus for progress.
+  startSweep: (
+    name: string,
+    baseline: Recipe,
+    axes: { parameter_path: string; values: number[] }[],
+  ) =>
+    request<SweepAccepted>("/sweeps", {
       method: "POST",
       body: JSON.stringify({ name, baseline, axes }),
+    }),
+
+  sweepStatus: (id: string) => request<SweepResult>(`/sweeps/${id}`),
+
+  cancelSweep: (id: string) =>
+    request<{ sweep_id: string; cancel_requested: boolean }>(`/sweeps/${id}/cancel`, {
+      method: "POST",
     }),
 
   csvUrl: (id: string) => `${BASE}/artifacts/${id}.csv`,

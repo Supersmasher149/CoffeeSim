@@ -1,5 +1,6 @@
 #pragma once
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -41,7 +42,15 @@ struct SweepResult {
     std::string name;
     std::vector<SweepAxis> axes;
     std::vector<SweepRun> runs;
+    // True when the caller stopped the sweep early. The runs already completed
+    // are still valid and still exported.
+    bool cancelled = false;
 };
+
+// Called after each run with (completed, total). Returning false stops the
+// sweep. The engine owns no threads: whoever wants a sweep in the background
+// runs it on their own thread and answers this callback (section 3.4).
+using SweepProgressCallback = std::function<bool(int, int)>;
 
 // Applies one sweep coordinate to a copy of the baseline recipe. Throws
 // InvalidInputError for an unknown parameter path.
@@ -52,7 +61,8 @@ class ExperimentRunner {
 public:
     // Cartesian product of the axes, in declared order, so run ordering is
     // stable across machines (14.2).
-    [[nodiscard]] SweepResult run(const SweepSpec& spec) const;
+    [[nodiscard]] SweepResult run(const SweepSpec& spec,
+                                  const SweepProgressCallback& on_progress = {}) const;
 };
 
 namespace artifact_io_sweep {

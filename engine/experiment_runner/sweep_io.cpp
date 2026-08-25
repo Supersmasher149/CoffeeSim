@@ -48,7 +48,8 @@ std::string dump_sweep_json(const SweepResult& result, int indent) {
     json root = {{"sweep_id", result.sweep_id},
                  {"name", result.name},
                  {"axes", axes},
-                 {"run_count", result.runs.size()}};
+                 {"run_count", result.runs.size()},
+                 {"cancelled", result.cancelled}};
     return root.dump(indent);
 }
 

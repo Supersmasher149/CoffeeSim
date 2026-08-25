@@ -1,8 +1,13 @@
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <deque>
 #include <filesystem>
+#include <memory>
 #include <iostream>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <unordered_map>
 
 #include <httplib.h>
@@ -54,19 +59,6 @@ public:
         return true;
     }
 
-    void put_sweep(const std::string& id, SweepResult result) {
-        const std::lock_guard<std::mutex> lock(mutex_);
-        sweeps_[id] = std::move(result);
-    }
-
-    bool sweep(const std::string& id, SweepResult& out) const {
-        const std::lock_guard<std::mutex> lock(mutex_);
-        const auto it = sweeps_.find(id);
-        if (it == sweeps_.end()) return false;
-        out = it->second;
-        return true;
-    }
-
 private:
     struct Entry {
         ShotResult result;
@@ -75,7 +67,179 @@ private:
     };
     mutable std::mutex mutex_;
     std::unordered_map<std::string, Entry> shots_;
-    std::unordered_map<std::string, SweepResult> sweeps_;
+};
+
+// Section 15.2 restores background sweep jobs: a sweep no longer blocks the
+// request that started it, so the browser can show progress and cancel instead
+// of holding a connection open for thousands of runs.
+class SweepJob {
+public:
+    enum class Status { queued, running, complete, cancelled, failed };
+
+    SweepJob(std::string id, SweepSpec spec, int total)
+        : id_(std::move(id)), spec_(std::move(spec)), total_(total) {}
+
+    void execute() {
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            status_ = Status::running;
+            started_at_ = std::chrono::steady_clock::now();
+        }
+        try {
+            SweepResult result = ExperimentRunner().run(spec_, [this](int done, int total) {
+                const std::lock_guard<std::mutex> lock(mutex_);
+                completed_ = done;
+                total_ = total;
+                return !cancel_requested_;
+            });
+            const std::lock_guard<std::mutex> lock(mutex_);
+            result.sweep_id = id_;
+            result_ = std::move(result);
+            status_ = result_.cancelled ? Status::cancelled : Status::complete;
+        } catch (const InvalidInputError& e) {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            status_ = Status::failed;
+            error_ = e.validation().issues().empty() ? std::string(e.what())
+                                                     : e.validation().issues().front().message;
+            error_code_ = e.validation().issues().empty()
+                              ? "INVALID_INPUT"
+                              : e.validation().issues().front().code;
+        } catch (const std::exception& e) {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            status_ = Status::failed;
+            error_ = e.what();
+            error_code_ = "INTERNAL_ERROR";
+        }
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            finished_at_ = std::chrono::steady_clock::now();
+            finished_ = true;
+        }
+        done_.notify_all();
+    }
+
+    void cancel() {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        cancel_requested_ = true;
+    }
+
+    // Used on shutdown so a detached worker cannot outlive the store.
+    void wait() {
+        std::unique_lock<std::mutex> lock(mutex_);
+        done_.wait(lock, [this] { return finished_; });
+    }
+
+    struct Snapshot {
+        Status status = Status::queued;
+        int completed = 0;
+        int total = 0;
+        double elapsed_s = 0.0;
+        std::string error;
+        std::string error_code;
+        SweepResult result;
+    };
+
+    [[nodiscard]] Snapshot snapshot() const {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        Snapshot out;
+        out.status = status_;
+        out.completed = completed_;
+        out.total = total_;
+        out.error = error_;
+        out.error_code = error_code_;
+        out.result = result_;
+        if (status_ != Status::queued) {
+            out.elapsed_s = std::chrono::duration<double>(
+                                (finished_ ? finished_at_ : std::chrono::steady_clock::now()) -
+                                started_at_)
+                                .count();
+        }
+        return out;
+    }
+
+    [[nodiscard]] const std::string& id() const { return id_; }
+
+private:
+    mutable std::mutex mutex_;
+    std::condition_variable done_;
+    std::string id_;
+    SweepSpec spec_;
+    Status status_ = Status::queued;
+    int completed_ = 0;
+    int total_ = 0;
+    bool cancel_requested_ = false;
+    bool finished_ = false;
+    std::string error_;
+    std::string error_code_;
+    SweepResult result_;
+    std::chrono::steady_clock::time_point started_at_{};
+    std::chrono::steady_clock::time_point finished_at_{};
+};
+
+const char* to_string(SweepJob::Status status) {
+    switch (status) {
+        case SweepJob::Status::queued: return "queued";
+        case SweepJob::Status::running: return "running";
+        case SweepJob::Status::complete: return "complete";
+        case SweepJob::Status::cancelled: return "cancelled";
+        case SweepJob::Status::failed: return "failed";
+    }
+    return "unknown";
+}
+
+class SweepJobStore {
+public:
+    ~SweepJobStore() { join_all(); }
+
+    std::shared_ptr<SweepJob> start(const std::string& id, SweepSpec spec, int total) {
+        auto job = std::make_shared<SweepJob>(id, std::move(spec), total);
+        const std::lock_guard<std::mutex> lock(mutex_);
+        jobs_[id] = job;
+        order_.push_back(id);
+        // Keep the store from growing without bound over a long session.
+        while (order_.size() > kMaxRetained) {
+            jobs_.erase(order_.front());
+            order_.pop_front();
+        }
+        // Under the same lock as the registry: two concurrent POSTs would
+        // otherwise race on the worker vector.
+        workers_.emplace_back([job] { job->execute(); });
+        return job;
+    }
+
+    [[nodiscard]] std::shared_ptr<SweepJob> find(const std::string& id) const {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        const auto it = jobs_.find(id);
+        return it == jobs_.end() ? nullptr : it->second;
+    }
+
+    [[nodiscard]] std::vector<std::shared_ptr<SweepJob>> all() const {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        std::vector<std::shared_ptr<SweepJob>> out;
+        for (const auto& id : order_) {
+            const auto it = jobs_.find(id);
+            if (it != jobs_.end()) out.push_back(it->second);
+        }
+        return out;
+    }
+
+    void join_all() {
+        std::vector<std::thread> pending;
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            pending.swap(workers_);
+        }
+        for (auto& worker : pending) {
+            if (worker.joinable()) worker.join();
+        }
+    }
+
+private:
+    static constexpr std::size_t kMaxRetained = 32;
+    mutable std::mutex mutex_;
+    std::unordered_map<std::string, std::shared_ptr<SweepJob>> jobs_;
+    std::deque<std::string> order_;
+    std::vector<std::thread> workers_;
 };
 
 SimulationConfig parse_solver_config(const json& root) {
@@ -109,6 +273,8 @@ int main(int argc, char** argv) {
     const int port = port_from_args(argc, argv);
 
     RunStore store;
+    SweepJobStore sweeps;
+    std::atomic<int> next_sweep_serial{1};
     httplib::Server server;
 
     // The dashboard is served by Vite on another port during development.
@@ -118,6 +284,51 @@ int main(int argc, char** argv) {
     server.Options(R"(/.*)", [](const httplib::Request&, httplib::Response& response) {
         response.status = 204;
     });
+
+    // Serialises a finished sweep for the status and artifact endpoints.
+    const auto sweep_body = [](const SweepJob& job) {
+        const SweepJob::Snapshot snapshot = job.snapshot();
+        json body = {{"sweep_id", job.id()},
+                     {"status", to_string(snapshot.status)},
+                     {"completed", snapshot.completed},
+                     {"total", snapshot.total},
+                     {"elapsed_s", snapshot.elapsed_s}};
+        if (snapshot.status == SweepJob::Status::failed) {
+            body["error"] = {{"code", snapshot.error_code}, {"message", snapshot.error}};
+            return body;
+        }
+        if (snapshot.status != SweepJob::Status::complete &&
+            snapshot.status != SweepJob::Status::cancelled) {
+            return body;
+        }
+
+        const SweepResult& result = snapshot.result;
+        body["name"] = result.name;
+        body["run_count"] = result.runs.size();
+        body["cancelled"] = result.cancelled;
+
+        json axes = json::array();
+        for (const auto& axis : result.axes) {
+            axes.push_back({{"parameter_path", axis.parameter_path}, {"values", axis.values}});
+        }
+        body["axes"] = std::move(axes);
+
+        json runs = json::array();
+        for (const auto& line : result.runs) {
+            runs.push_back({{"index", line.index},
+                            {"coordinates", line.coordinates},
+                            {"run_id", line.run_id},
+                            {"termination", to_string(line.summary.termination)},
+                            {"shot_time_s", line.summary.elapsed_time_s},
+                            {"beverage_mass_g", units::kg_to_grams(line.summary.beverage_mass_kg)},
+                            {"tds_percent", line.summary.tds_fraction * 100.0},
+                            {"extraction_yield_percent",
+                             line.summary.extraction_yield_fraction * 100.0},
+                            {"warning_count", line.warning_count}});
+        }
+        body["runs"] = std::move(runs);
+        return body;
+    };
 
     server.Get("/api/v1/health", [&](const httplib::Request&, httplib::Response& response) {
         const json body = {{"status", "ok"},
@@ -226,10 +437,17 @@ int main(int argc, char** argv) {
                        response.set_content(artifact_io::dump_samples_csv(shot), "text/csv");
                        return;
                    }
-                   SweepResult sweep;
-                   if (store.sweep(id, sweep)) {
-                       response.set_content(artifact_io_sweep::dump_aggregate_csv(sweep),
-                                            "text/csv");
+                   if (const auto job = sweeps.find(id)) {
+                       const SweepJob::Snapshot snapshot = job->snapshot();
+                       if (snapshot.status == SweepJob::Status::complete ||
+                           snapshot.status == SweepJob::Status::cancelled) {
+                           response.set_content(
+                               artifact_io_sweep::dump_aggregate_csv(snapshot.result), "text/csv");
+                           return;
+                       }
+                       send_error(response, 409, "SWEEP_NOT_FINISHED",
+                                  "sweep '" + id + "' is still " + to_string(snapshot.status),
+                                  "artifacts.id");
                        return;
                    }
                    send_error(response, 404, "ARTIFACT_NOT_FOUND",
@@ -273,39 +491,45 @@ int main(int argc, char** argv) {
                 spec.axes.push_back(std::move(axis));
             }
 
-            // Sweeps run synchronously in the MVP, so the request is bounded
-            // rather than queued as a background job (15.2, scope cut order).
-            constexpr std::size_t kMaxSynchronousRuns = 400;
-            if (total > kMaxSynchronousRuns) {
+            // Sweeps now run on a worker thread, so the limit exists only to
+            // keep one request from monopolising the machine, not to keep a
+            // connection from timing out.
+            constexpr std::size_t kMaxRuns = 20000;
+            if (total > kMaxRuns) {
                 send_error(response, 413, "SWEEP_TOO_LARGE",
-                           "this build runs sweeps synchronously; reduce the axes to at most " +
-                               std::to_string(kMaxSynchronousRuns) + " runs",
+                           "a single sweep is limited to " + std::to_string(kMaxRuns) + " runs",
                            "axes", {{"requested_runs", total}});
                 return;
             }
 
-            SweepResult result = ExperimentRunner().run(spec);
-            store.put_sweep(result.sweep_id, result);
-
-            json body = json::parse(artifact_io_sweep::dump_sweep_json(result, -1));
-            json runs = json::array();
-            for (const auto& line : result.runs) {
-                runs.push_back({{"index", line.index},
-                                {"coordinates", line.coordinates},
-                                {"run_id", line.run_id},
-                                {"termination", to_string(line.summary.termination)},
-                                {"shot_time_s", line.summary.elapsed_time_s},
-                                {"beverage_mass_g", units::kg_to_grams(line.summary.beverage_mass_kg)},
-                                {"tds_percent", line.summary.tds_fraction * 100.0},
-                                {"extraction_yield_percent",
-                                 line.summary.extraction_yield_fraction * 100.0},
-                                {"warning_count", line.warning_count}});
+            // Validate the axes up front so an obviously broken sweep fails on
+            // this request instead of inside a background job.
+            for (const auto& axis : spec.axes) {
+                if (axis.values.empty()) {
+                    send_error(response, 422, "EMPTY_SWEEP_AXIS",
+                               "axis '" + axis.parameter_path + "' has no values", "axes");
+                    return;
+                }
+                (void)apply_parameter(spec.baseline, axis.parameter_path, axis.values.front());
             }
-            body["runs"] = std::move(runs);
-            body["status"] = "complete";
+            if (spec.axes.empty()) {
+                send_error(response, 422, "EMPTY_SWEEP", "a sweep requires at least one axis",
+                           "axes");
+                return;
+            }
 
-            response.status = 201;
-            response.set_content(body.dump(2), "application/json");
+            const std::string id =
+                "sweep-" + spec.name + "-" + std::to_string(next_sweep_serial++);
+            sweeps.start(id, std::move(spec), static_cast<int>(total));
+
+            response.status = 202;  // accepted, running in the background
+            response.set_content(json({{"sweep_id", id},
+                                       {"status", "running"},
+                                       {"completed", 0},
+                                       {"total", total},
+                                       {"poll", "/api/v1/sweeps/" + id}})
+                                     .dump(2),
+                                 "application/json");
         } catch (const artifact_io::LoadError& e) {
             send_error(response, 400, e.code, e.what(), e.path);
         } catch (const InvalidInputError& e) {
@@ -319,17 +543,43 @@ int main(int argc, char** argv) {
     server.Get(R"(/api/v1/sweeps/([A-Za-z0-9\-]+))",
                [&](const httplib::Request& request, httplib::Response& response) {
                    const std::string id = request.matches[1];
-                   SweepResult result;
-                   if (!store.sweep(id, result)) {
+                   const auto job = sweeps.find(id);
+                   if (!job) {
                        send_error(response, 404, "SWEEP_NOT_FOUND", "no sweep with id '" + id + "'",
                                   "sweeps.id");
                        return;
                    }
-                   json body = json::parse(artifact_io_sweep::dump_sweep_json(result, -1));
-                   body["status"] = "complete";
-                   body["runs_jsonl"] = artifact_io_sweep::dump_runs_jsonl(result);
-                   response.set_content(body.dump(2), "application/json");
+                   response.set_content(sweep_body(*job).dump(2), "application/json");
                });
+
+    // Cancellation keeps whatever runs already finished (15.2).
+    server.Post(R"(/api/v1/sweeps/([A-Za-z0-9\-]+)/cancel)",
+                [&](const httplib::Request& request, httplib::Response& response) {
+                    const std::string id = request.matches[1];
+                    const auto job = sweeps.find(id);
+                    if (!job) {
+                        send_error(response, 404, "SWEEP_NOT_FOUND",
+                                   "no sweep with id '" + id + "'", "sweeps.id");
+                        return;
+                    }
+                    job->cancel();
+                    response.set_content(
+                        json({{"sweep_id", id}, {"cancel_requested", true}}).dump(2),
+                        "application/json");
+                });
+
+    server.Get("/api/v1/sweeps", [&](const httplib::Request&, httplib::Response& response) {
+        json list = json::array();
+        for (const auto& job : sweeps.all()) {
+            const SweepJob::Snapshot snapshot = job->snapshot();
+            list.push_back({{"sweep_id", job->id()},
+                            {"status", to_string(snapshot.status)},
+                            {"completed", snapshot.completed},
+                            {"total", snapshot.total},
+                            {"elapsed_s", snapshot.elapsed_s}});
+        }
+        response.set_content(json({{"sweeps", list}}).dump(2), "application/json");
+    });
 
     server.set_exception_handler(
         [](const httplib::Request&, httplib::Response& response, std::exception_ptr ep) {
@@ -350,5 +600,6 @@ int main(int argc, char** argv) {
         std::cerr << "error PORT_UNAVAILABLE: could not bind 127.0.0.1:" << port << '\n';
         return 1;
     }
+    sweeps.join_all();
     return 0;
 }

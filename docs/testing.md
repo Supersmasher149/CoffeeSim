@@ -42,6 +42,12 @@ and that synthetic provenance survives into the report and the fitted file. This
 validates the machinery; it says nothing about whether the model matches real
 espresso.
 
+**Leave-one-out tests** verify that each shot is held out exactly once, aggregate
+metrics remain deterministic, acceptance thresholds reject poor held-out fits,
+and synthetic, mixed-machine, or incomplete datasets are refused before they
+can be described as real-world validation. The tests use model-generated inputs
+as fixtures and explicitly avoid treating them as real calibration evidence.
+
 ## On golden fixtures
 
 There is deliberately no exact-snapshot golden result. Snapshots make every

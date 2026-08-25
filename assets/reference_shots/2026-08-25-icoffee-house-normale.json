@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0",
+  "kind": "published_reference_recipe",
+  "id": "2026-08-25-icoffee-house-normale",
+  "calibration_eligible": false,
+  "source": {
+    "publisher": "iCoffee",
+    "title": "Espresso Recipe: The iCoffee House Brew",
+    "url": "https://icoffeeapp.com/en/recipes/espresso-icoffee",
+    "retrieved_at": "2026-08-25",
+    "published_at": "2026-06-09",
+    "updated_at": "2026-08-05",
+    "excerpt": "18g in, 36g out at 93C, 1:2 ratio, fine grind, 25-second pull."
+  },
+  "published": {
+    "dose": "18g",
+    "beverage_yield": "36g",
+    "brew_ratio": "1:2",
+    "shot_time": "25 seconds",
+    "water_temperature": "93C",
+    "pump_pressure": "about 9 bar"
+  },
+  "normalized": {
+    "dose_g": 18.0,
+    "beverage_target_g": 36.0,
+    "brew_ratio": 2.0,
+    "target_time_s": 25.0,
+    "inlet_temperature_c": 93.0,
+    "nominal_pump_pressure_bar": 9.0
+  },
+  "derived_from_published": [],
+  "unavailable": ["machine", "basket_geometry", "particle_diameter_um", "beverage_mass_time_series", "tds_percent"]
+}

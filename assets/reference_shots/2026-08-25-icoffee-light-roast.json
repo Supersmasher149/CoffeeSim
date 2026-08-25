@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0",
+  "kind": "published_reference_recipe",
+  "id": "2026-08-25-icoffee-light-roast",
+  "calibration_eligible": false,
+  "source": {
+    "publisher": "iCoffee",
+    "title": "Espresso Recipe: The iCoffee House Brew",
+    "url": "https://icoffeeapp.com/en/recipes/espresso-icoffee",
+    "retrieved_at": "2026-08-25",
+    "published_at": "2026-06-09",
+    "updated_at": "2026-08-05",
+    "excerpt": "Lighter roasts often pull better at 1:2.5."
+  },
+  "published": {
+    "dose": "18g base recipe dose",
+    "brew_ratio": "1:2.5 for lighter roasts",
+    "beverage_yield": "not directly stated",
+    "shot_time": "not stated for this variation",
+    "water_temperature": "not stated for this variation",
+    "pump_pressure": "not stated for this variation"
+  },
+  "normalized": {
+    "dose_g": 18.0,
+    "beverage_target_g": 45.0,
+    "brew_ratio": 2.5,
+    "target_time_s": null,
+    "inlet_temperature_c": null,
+    "nominal_pump_pressure_bar": null
+  },
+  "derived_from_published": ["beverage_target_g = 18.0 * 2.5"],
+  "unavailable": ["machine", "basket_geometry", "particle_diameter_um", "beverage_mass_time_series", "tds_percent"]
+}

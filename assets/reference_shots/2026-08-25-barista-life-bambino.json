@@ -1,0 +1,35 @@
+{
+  "schema_version": "1.0",
+  "kind": "published_reference_recipe",
+  "id": "2026-08-25-barista-life-bambino",
+  "calibration_eligible": false,
+  "source": {
+    "publisher": "Barista Life",
+    "title": "How to make espresso with a Breville Bambino",
+    "url": "https://baristalife.co/blogs/blog/how-to-make-espresso-with-a-bambino",
+    "retrieved_at": "2026-08-25",
+    "published_at": "2025-12-19",
+    "excerpt": "18 grams of ground coffee in, 36 grams of espresso out, in 25 to 30 seconds."
+  },
+  "published": {
+    "machine": "Breville Bambino",
+    "basket": "54mm portafilter double basket",
+    "dose": "18g",
+    "beverage_yield": "36g",
+    "brew_ratio": "1:2",
+    "shot_time": "25 to 30 seconds",
+    "water_temperature": "not stated",
+    "pump_pressure": "not stated"
+  },
+  "normalized": {
+    "dose_g": 18.0,
+    "beverage_target_g": 36.0,
+    "brew_ratio": 2.0,
+    "target_time_range_s": [25.0, 30.0],
+    "inlet_temperature_c": null,
+    "nominal_pump_pressure_bar": null,
+    "basket_diameter_mm": 54.0
+  },
+  "derived_from_published": [],
+  "unavailable": ["basket_depth_mm", "particle_diameter_um", "beverage_mass_time_series", "tds_percent"]
+}

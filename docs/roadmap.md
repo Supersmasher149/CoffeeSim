@@ -1,83 +1,102 @@
-# Roadmap and status
+# Roadmap and Status
 
-## Where this scaffold sits against the four-week plan
+This is an evidence-based status report against the August 2026 technical
+implementation guide. "Complete" means the capability is present in the
+repository and was verified locally; it does not imply that the model has been
+validated against real espresso shots.
 
-| Week | Focus | Status |
+## Current Position
+
+The engineering MVP is substantially complete. The deterministic C++20 core,
+CLI, REST server, React/TypeScript dashboard, artifacts, sweeps, calibration
+machinery, and documentation are implemented. The remaining release work is
+real-world validation and portfolio packaging, plus CI that proves a clean
+cross-platform build.
+
+| Week | Focus from the guide | Status | Evidence |
+| --- | --- | --- | --- |
+| 1 | Skeleton, domain types, profiles, units, water properties, flow-only CLI | Complete | Core/model targets, unit tests, and CLI are present. |
+| 2 | Thermal state, wetting, extraction, mass balances, artifacts, determinism | Complete | Integration, invariant, convergence, and artifact tests pass. |
+| 3 | Sweep runner, REST server, React controls, synchronized charts, exports | Complete | Server routes, dashboard source, background sweeps, and production web build are present. |
+| 4 | Calibration, edge cases, CI, README, profiling, demo, portfolio packaging | Partial | Calibration tooling, edge-case tests, documentation, benchmark, CLI demo, and a macOS/Linux CI workflow are complete; real calibration, hosted CI evidence, demo video, and measured portfolio claims remain. |
+
+## Verified Locally
+
+- `./scripts/test.sh` passes: 78 test cases and 14,474 assertions.
+- `npm run build` succeeds for the dashboard. Vite reports a non-blocking
+  559 kB JavaScript chunk-size warning.
+- `./scripts/demo.sh` completes the documented CLI acceptance path:
+  baseline simulation, nine-run grind-size sweep, JSON/CSV artifacts, and an
+  identical SHA-256 result hash on rerun.
+- The Vite-served dashboard loads and proxies `/api/v1` to the local server.
+  Through that path, shot execution, shot CSV export, completed sweep CSV export,
+  and cancelled-sweep partial CSV export all succeed.
+- `espressolab_cli bench` records a 60-second, 100 Hz shot in 0.468 ms median,
+  42.7x inside the guide's 20 ms performance budget.
+- The baseline run reaches the 36 g target in 29.03 s with no clamps and closes
+  water and solids residuals near machine precision.
+
+## Guide Acceptance Gate
+
+| Gate | Status | Notes |
 | --- | --- | --- |
-| 1 | Skeleton, domain types, profiles, units, water properties, flow-only CLI | Complete |
-| 2 | Thermal state, wetting, extraction, mass balances, artifacts, determinism | Complete |
-| 3 | Sweep runner, REST server, React controls, synchronized charts, exports | Complete |
-| 4 | Calibration, edge cases, CI, README, profiling, demo and portfolio packaging | Partial — see below |
+| Build native core and dashboard | Verified locally | CMake build and production web build succeed. |
+| Run the baseline recipe | Verified locally | CLI demo reaches its beverage-mass target. |
+| Complete a grind-size sweep | Verified locally | The demo exports a nine-run sweep. |
+| Export JSON and CSV artifacts | Verified locally | The demo writes shot and sweep artifacts. |
+| Reproduce the same result hash | Verified locally | The demo reports matching SHA-256 hashes. |
+| Pass conservation and convergence tests | Verified locally | Covered by the passing test suite. |
+| Run and compare shots in the browser | Partially verified | The Vite page, API proxy, shot flow, completed sweep, cancellation, and exports pass; literal browser interactions, including profile editing and pinned comparison overlays, remain unverified. |
+| Clean-clone macOS and Linux verification | CI configured; hosted runs outstanding | GitHub Actions runs the native suite, dashboard build, and CLI demo on both platforms; this local review cannot confirm the first hosted run. |
 
-Week 4 is where the remaining work is, and what is left needs something this
-project cannot manufacture: real measured shots.
+## Completed Week 4 Tooling
 
-## Done in the calibration milestone
+- **Calibration engine and CLI.** `espressolab_calibration` loads measured-shot
+  data, evaluates the weighted loss from section 11.4, and deterministically
+  fits a bounded, named set of physically interpretable coefficients. The CLI
+  supports held-out validation, provenance-bearing coefficient files, and JSON
+  reports.
+- **Synthetic calibration workflow.** `espressolab_cli synthesize` produces
+  explicitly flagged synthetic measurement files so the fitting path can be
+  exercised without making a scientific claim.
+- **Experiment tooling.** The dashboard provides two-dimensional heat maps,
+  background sweep jobs with progress and cancellation, and draggable pressure
+  and temperature profiles backed by numeric point lists.
+- **Documentation and profiling.** The README, model, architecture, API,
+  testing, and calibration documentation are present; the benchmark command is
+  implemented.
 
-- **Calibration engine.** `espressolab_calibration`: measured-shot loader, the
-  weighted loss of section 11.4, and a deterministic Nelder-Mead fit over a
-  bounded, named set of physically interpretable coefficients. Wide-ranging
-  parameters are searched in log space.
-- **`espressolab_cli calibrate`**, with held-out validation shots, a fitted
-  coefficient file carrying full provenance, and a JSON report.
-- **`espressolab_cli synthesize`**, which writes a measured-shot file from the
-  model's own output so the workflow can be exercised without real data. Every
-  synthetic file, report and fitted coefficient set is flagged as such.
-- **Two-dimensional heat maps** in the experiment view, with a validated
-  sequential ramp, per-cell hover, and out-of-range corners rendered as a state
-  rather than a magnitude.
-- **`espressolab_cli bench`.** A 60-second shot at 100 Hz runs in 0.49 ms
-  median — about 2000 simulations per second, 40x inside the section 2.1 budget.
+## Outstanding Work
 
-## Done in the background-jobs milestone
+- **Fit and validate with real shots.** No real measured shot has been fitted,
+  so `default-v1.json` remains an uncalibrated placeholder. The synthetic
+  recovery tests validate the fitter, not the espresso model. The CLI now
+  supports leave-one-shot-out validation for three or more fixed-setup shots;
+  supplying and running those real measurements is the highest-value next step.
+- **Confirm hosted CI runs.** The committed macOS/Linux GitHub Actions workflow builds
+  the native targets, runs `./scripts/test.sh`, builds the dashboard, and runs
+  `./scripts/demo.sh` from a fresh checkout. Confirm the first hosted runs pass
+  after this change is pushed.
+- **Run a browser interaction check.** The served page and API workflow are
+  verified. Use a controllable browser to edit a recipe and profile, pin runs for
+  comparison, inspect synchronized charts, and confirm downloads from the UI.
+- **Finish portfolio packaging.** Record the demo video and write resume bullets
+  from the verified benchmark and, after calibration, measured validation data.
+- **Calibration dashboard view.** The CLI workflow is complete. A dashboard
+  workflow remains deferred because it has no real data to drive it and was
+  explicitly low priority in the guide's scope-cut order.
 
-- **Background sweep jobs.** `POST /api/v1/sweeps` returns 202 and the sweep runs
-  on a worker thread with progress polling and cancellation. The old 400-run
-  synchronous cap is gone (the limit is now 20000). Cancelling keeps every run
-  that finished, and the partial result exports as CSV like any other.
-  The engine gained a progress callback and nothing else: threads stay in the
-  server.
-- **Graphical profile editing.** Pressure and inlet-temperature profiles are
-  draggable curves, with add and remove, snapping, and neighbour fencing that
-  preserves the strictly-increasing time rule. The numeric point list is still
-  there underneath, because that is the half that survives a scope cut.
+## Scope-Cut Order
 
-## Not done
+The guide's scope cuts have mostly been restored: two-dimensional sweeps,
+graphical profile editing, and background sweep jobs are implemented. The only
+deferred feature from that list is the calibration dashboard view. Never cut
+deterministic artifacts, tests, warnings, or the uniform-puck flow/extraction
+core.
 
-- **A real calibration.** This is the honest headline: the machinery is built and
-  tested, but no measured shot has been fitted, so the default coefficients are
-  still uncalibrated placeholders. The recovery test proves the fitter can
-  recover known coefficients from synthetic data; it proves nothing about
-  espresso. Collecting even three real shots would change what this project can
-  claim more than any further code.
-- **A calibration view in the dashboard.** The CLI path is complete and the cut
-  list says to keep exactly that when the interface goes. With no measured shots
-  to drive it, a calibration UI would be a form with nothing to submit; it is
-  also the lowest-value remaining item by the guide's own cut order.
-- **Demo video and measured resume bullets.** The throughput number now exists;
-  the rest waits on a calibrated model.
+## Recommended Next Modeling Extension
 
-## Scope-cut order if the schedule slips
-
-1. Two-dimensional sweeps and heat maps. — restored
-2. Measured-shot calibration interface (keep the files and CLI support). — CLI
-   support built; the dashboard view is still deferred
-3. Editable graphical profile control (keep numeric points). — restored
-4. Background sweep jobs (run synchronously with a small limit). — restored
-5. Temperature profile editing (keep a constant inlet temperature). — never cut
-
-Read as a value ranking (cut the least valuable first), restoring runs in
-reverse: 5, 4, 3, 2, 1. Only the calibration interface is outstanding, and it is
-blocked on data rather than on effort.
-
-Never cut: deterministic artifacts, tests, warnings, or the uniform-puck
-flow/extraction core.
-
-## The extension worth building next
-
-Parallel puck regions with different permeability (fidelity level 2). Channelling
-is the largest single source of disagreement between this model and a real shot,
-and it is the one the current architecture is already shaped for: the flow
-solution is a single function of geometry and permeability, so a second region is
-a loop rather than a rewrite. Axial thermal cells (level 3) are more work for less
-explanatory return until the flow side is honest.
+After real-shot calibration, add parallel puck regions with different
+permeability (fidelity level 2). Channelling is the largest known limitation of
+the current uniform-puck model, and parallel flow regions extend the existing
+flow calculation more directly than axial thermal cells.

@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.0",
+  "kind": "published_reference_recipe",
+  "id": "2026-08-25-zando-essentials",
+  "calibration_eligible": false,
+  "source": {
+    "publisher": "Zando Coffee",
+    "title": "Espresso Essentials",
+    "url": "https://zandocoffee.com.au/wp-content/uploads/2021/04/EspressoEssentials_150720.pdf",
+    "retrieved_at": "2026-08-25",
+    "excerpt": "An example of an espresso recipe is 20g in, 40g out, 32 seconds."
+  },
+  "published": {
+    "dose": "20g",
+    "beverage_yield": "40g",
+    "brew_ratio": "1:2",
+    "shot_time": "32 seconds",
+    "water_temperature": "not stated",
+    "pump_pressure": "not stated"
+  },
+  "normalized": {
+    "dose_g": 20.0,
+    "beverage_target_g": 40.0,
+    "brew_ratio": 2.0,
+    "target_time_s": 32.0,
+    "inlet_temperature_c": null,
+    "nominal_pump_pressure_bar": null
+  },
+  "derived_from_published": [],
+  "unavailable": ["machine", "basket_geometry", "particle_diameter_um", "beverage_mass_time_series", "tds_percent"]
+}

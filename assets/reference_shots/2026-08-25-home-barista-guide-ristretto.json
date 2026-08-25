@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.0",
+  "kind": "published_reference_recipe",
+  "id": "2026-08-25-home-barista-guide-ristretto",
+  "calibration_eligible": false,
+  "source": {
+    "publisher": "Home Barista Guide",
+    "title": "Espresso Ratios: 18g In, 36g Out & Tamping Pressure Guide",
+    "url": "https://homebaristaguide.com/brewing-methods-techniques/espresso-brewing-ratios-recipes-and-tamping-techniques/",
+    "retrieved_at": "2026-08-25",
+    "excerpt": "Use a 1:2 coffee-to-water ratio - like 18g in, 36g out - for balanced espresso, adjusting to 1:1.5 for stronger shots."
+  },
+  "published": {
+    "dose": "18g base recipe dose",
+    "brew_ratio": "1:1.5 for a stronger shot",
+    "beverage_yield": "not directly stated",
+    "shot_time": "not stated",
+    "water_temperature": "not stated",
+    "pump_pressure": "not stated"
+  },
+  "normalized": {
+    "dose_g": 18.0,
+    "beverage_target_g": 27.0,
+    "brew_ratio": 1.5,
+    "target_time_s": null,
+    "inlet_temperature_c": null,
+    "nominal_pump_pressure_bar": null
+  },
+  "derived_from_published": ["beverage_target_g = 18.0 * 1.5"],
+  "unavailable": ["machine", "basket_geometry", "particle_diameter_um", "beverage_mass_time_series", "tds_percent"]
+}

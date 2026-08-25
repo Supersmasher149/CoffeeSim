@@ -37,6 +37,11 @@ about 2000 simulations per second, and 40x inside the 20 ms budget.
 
 ## What a grind sweep looks like
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/grind-sweep-dark.svg">
+  <img src="docs/images/grind-sweep-light.svg" alt="Grind-size sweep showing finer particles produce longer shots, higher TDS, and higher extraction until the finest puck reaches the time limit.">
+</picture>
+
 `./build/apps/espressolab_cli/espressolab_cli sweep --spec assets/sweeps/grind-size.json`
 
 | particle ⌀ (µm) | shot time (s) | TDS (%) | yield (%) | stop |
@@ -60,6 +65,11 @@ map. Every number on screen comes from the native solver; the browser computes
 nothing.
 
 ## Architecture
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/architecture-dark.svg">
+  <img src="docs/images/architecture-light.svg" alt="EspressoLab architecture: the web dashboard, CLI, and tests drive one simulation core, which depends on the model library and outputs artifacts.">
+</picture>
 
 ```
 web (React/TS)  ->  tool_server (REST)  ->  experiment_runner
@@ -95,8 +105,8 @@ What it does **not** do:
 - **The default coefficients are uncalibrated.** They put the baseline recipe in
   a plausible range; no measured shot has been fitted. The calibration machinery
   is built and tested — `espressolab_cli calibrate` fits a named set of
-  physically interpretable coefficients against measured shots, with held-out
-  validation — but it has only ever been run against synthetic data. See
+  physically interpretable coefficients against measured shots, with held-out or
+  leave-one-shot-out validation — but it has only ever been run against synthetic data. See
   [docs/calibration.md](docs/calibration.md).
 
 ## Reproducibility
@@ -114,7 +124,8 @@ espressolab_cli simulate --recipe <file> [--coefficients <file>] [--out <dir>]
                          [--dt <s>] [--sample-interval <s>] [--quiet]
 espressolab_cli sweep    --spec <file> [--out <dir>] [--quiet]
 espressolab_cli calibrate --shots <dir> --fit <name,...> [--holdout <id,...>]
-                          [--coefficients <file>] [--out <file>] [--report <file>]
+                           [--coefficients <file>] [--out <file>] [--report <file>]
+                           [--leave-one-out]
 espressolab_cli synthesize --recipe <file> [--noise <g>] --out <file>
 espressolab_cli bench    [--seconds <s>] [--repeats <n>]
 
@@ -138,9 +149,8 @@ outputs/sweeps/<sweep-id>/{sweep.json,runs.jsonl,aggregate.csv,manifest.json}
 
 78 test cases, ~14.5k assertions: unit tests for every correlation, whole-shot
 integration tests, generated-input property tests, mass-balance invariants, a
-step-size convergence test, sweep progress and cancellation tests, and
-calibration recovery tests that hide known coefficients in synthetic shots and
-require the fitter to find them again. See
+step-size convergence test, sweep progress and cancellation tests, calibration
+recovery tests, and deterministic leave-one-out validation tests. See
 [docs/testing.md](docs/testing.md).
 
 ## Documentation

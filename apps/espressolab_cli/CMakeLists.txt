@@ -1,0 +1,3 @@
+add_executable(espressolab_cli main.cpp)
+target_link_libraries(espressolab_cli
+  PRIVATE espressolab_core espressolab_artifacts espressolab_experiments espressolab_warnings)

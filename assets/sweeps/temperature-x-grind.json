@@ -1,0 +1,16 @@
+{
+  "name": "temperature-x-grind",
+  "baseline_recipe": "../recipes/baseline.json",
+  "coefficients": "../coefficients/default-v1.json",
+  "axes": [
+    {
+      "parameter_path": "temperature_profile_c.constant",
+      "range": { "from": 88, "to": 96, "steps": 5 }
+    },
+    {
+      "parameter_path": "puck.particle_diameter_um",
+      "range": { "from": 250, "to": 450, "steps": 9 }
+    }
+  ],
+  "output_metrics": ["shot_time_s", "extraction_yield_percent"]
+}

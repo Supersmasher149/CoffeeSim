@@ -1,0 +1,48 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  native:
+    name: native (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      # A clean clone must build without fetching anything: the dependencies
+      # are vendored (third_party/README.md).
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DESPRESSOLAB_WARNINGS_AS_ERRORS=ON
+
+      - name: Build
+        run: cmake --build build -j 4
+
+      - name: Test
+        run: ./build/tests/espressolab_tests
+
+      # Definition of done (section 2.2): baseline recipe, grind sweep, both
+      # artifacts exported, identical result hash on rerun.
+      - name: Acceptance demo
+        run: ./scripts/demo.sh
+
+  web:
+    name: dashboard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      - run: npm run build
+        working-directory: web

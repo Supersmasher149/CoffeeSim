@@ -1,0 +1,46 @@
+{
+  "id": "default",
+  "version": "1.0.0",
+  "provenance": {
+    "source": "software defaults, not calibrated against measured shots",
+    "dataset": null,
+    "date": "2026-08-25",
+    "limitations": [
+      "No measured shot has been fitted yet: treat every value here as a placeholder.",
+      "kozeny_constant and extraction_rate_ref_s are the two dominant knobs; fit them first.",
+      "Estimated TDS and extraction yield are engineering outputs, not flavor scores."
+    ],
+    "notes_on_kozeny_constant": [
+      "The textbook Kozeny-Carman shape constant is about 180. This file uses 4.0e6.",
+      "The four orders of magnitude are not a unit error: they absorb everything a single representative particle diameter cannot express in a real espresso bed - fines filling the voids between coarse particles, tamping compaction, and internal particle porosity. A textbook 180 with d_p = 350 um predicts a permeability near 1e-10 m^2, while espresso pucks measure nearer 1e-15 m^2.",
+      "This is stated here rather than buried in the code because the guide forbids hiding empirical tuning behind unexplained constants. It is the first coefficient that should be replaced by a fit to measured shots, and doing so will likely change its magnitude again."
+    ]
+  },
+  "values": {
+    "initial_porosity": 0.42,
+    "kozeny_constant": 4.0e6,
+    "dry_permeability_multiplier": 0.25,
+    "pressure_compressibility": 0.06,
+    "maximum_compression": 0.2,
+    "porosity_compression_factor": 0.8,
+    "minimum_porosity": 0.2,
+    "compression_reference_pa": 100000.0,
+
+    "coffee_heat_capacity_j_kg_k": 1600.0,
+    "ambient_heat_loss_w_k": 0.9,
+    "ambient_temperature_c": 20.0,
+    "initial_puck_temperature_c": 40.0,
+
+    "extractable_solids_fraction": 0.3,
+    "extraction_rate_ref_s": 0.21,
+    "activation_energy_j_mol": 30000.0,
+    "reference_temperature_c": 93.0,
+    "grind_exponent": 1.0,
+    "reference_particle_diameter_um": 350.0,
+    "flow_half_saturation_m3_s": 1.5e-6,
+
+    "distribution_factor_floor": 0.05,
+    "maximum_flow_m3_s": 5.0e-5,
+    "outlet_pressure_pa": 0.0
+  }
+}

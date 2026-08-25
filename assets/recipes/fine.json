@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "name": "Fine grind (high resistance)",
+  "puck": {
+    "dose_g": 18.0,
+    "basket_diameter_mm": 58.0,
+    "depth_mm": 9.0,
+    "particle_diameter_um": 240.0,
+    "particle_spread_factor": 0.7
+  },
+  "pressure_profile_bar": [[0, 9], [30, 9]],
+  "temperature_profile_c": [[0, 93]],
+  "stop": { "target_beverage_g": 36, "maximum_time_s": 45 }
+}

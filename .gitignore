@@ -1,0 +1,8 @@
+build/
+outputs/
+compile_commands.json
+.cache/
+.DS_Store
+node_modules/
+web/dist/
+*.log

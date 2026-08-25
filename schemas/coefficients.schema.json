@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://espressolab.local/schemas/coefficients-1.0.json",
+  "title": "EspressoLab model coefficients",
+  "description": "Empirical coefficients, versioned separately from recipes and solver code (section 10.2). Every value is a calibration target, not a universal constant.",
+  "type": "object",
+  "required": ["id", "version", "values"],
+  "properties": {
+    "id": { "type": "string" },
+    "version": { "type": "string", "description": "Semantic version of this coefficient set." },
+    "provenance": {
+      "type": "object",
+      "description": "Where these numbers came from and what they may not be used for (section 11.3).",
+      "properties": {
+        "source": { "type": "string" },
+        "dataset": { "type": ["string", "null"] },
+        "date": { "type": "string" },
+        "limitations": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "values": {
+      "type": "object",
+      "properties": {
+        "initial_porosity": { "type": "number", "minimum": 0.05, "maximum": 0.95 },
+        "kozeny_constant": { "type": "number", "exclusiveMinimum": 0 },
+        "dry_permeability_multiplier": { "type": "number", "minimum": 0, "maximum": 1 },
+        "pressure_compressibility": { "type": "number", "minimum": 0, "maximum": 1 },
+        "maximum_compression": { "type": "number", "minimum": 0, "maximum": 0.9 },
+        "porosity_compression_factor": { "type": "number", "minimum": 0 },
+        "minimum_porosity": { "type": "number", "minimum": 0.01 },
+        "compression_reference_pa": { "type": "number", "exclusiveMinimum": 0 },
+        "coffee_heat_capacity_j_kg_k": { "type": "number", "exclusiveMinimum": 0 },
+        "ambient_heat_loss_w_k": { "type": "number", "minimum": 0 },
+        "ambient_temperature_c": { "type": "number" },
+        "initial_puck_temperature_c": { "type": "number" },
+        "extractable_solids_fraction": { "type": "number", "minimum": 0.05, "maximum": 0.5 },
+        "extraction_rate_ref_s": { "type": "number", "exclusiveMinimum": 0 },
+        "activation_energy_j_mol": { "type": "number" },
+        "reference_temperature_c": { "type": "number" },
+        "grind_exponent": { "type": "number", "minimum": 0, "maximum": 4 },
+        "reference_particle_diameter_um": { "type": "number", "exclusiveMinimum": 0 },
+        "flow_half_saturation_m3_s": { "type": "number", "exclusiveMinimum": 0 },
+        "distribution_factor_floor": { "type": "number", "minimum": 0.01, "maximum": 1 },
+        "maximum_flow_m3_s": {
+          "type": "number", "exclusiveMinimum": 0,
+          "description": "Numerical guard only; hitting it raises a hard warning (section 6.5)."
+        },
+        "outlet_pressure_pa": { "type": "number", "minimum": 0 }
+      }
+    }
+  }
+}

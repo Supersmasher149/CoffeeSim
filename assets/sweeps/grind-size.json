@@ -1,0 +1,13 @@
+{
+  "name": "grind-size",
+  "baseline_recipe": "../recipes/baseline.json",
+  "coefficients": "../coefficients/default-v1.json",
+  "solver": { "dt_s": 0.01, "sample_interval_s": 0.05 },
+  "axes": [
+    {
+      "parameter_path": "puck.particle_diameter_um",
+      "range": { "from": 250, "to": 450, "steps": 9 }
+    }
+  ],
+  "output_metrics": ["shot_time_s", "beverage_mass_g", "tds_percent", "extraction_yield_percent"]
+}

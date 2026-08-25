@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "name": "Long pre-infusion then declining pressure",
+  "puck": {
+    "dose_g": 18.0,
+    "basket_diameter_mm": 58.0,
+    "depth_mm": 9.0,
+    "particle_diameter_um": 330.0,
+    "particle_spread_factor": 0.5
+  },
+  "pressure_profile_bar": [[0, 2], [10, 2], [13, 9], [25, 9], [40, 6]],
+  "temperature_profile_c": [[0, 94], [30, 92]],
+  "stop": { "target_beverage_g": 36, "maximum_time_s": 50 }
+}

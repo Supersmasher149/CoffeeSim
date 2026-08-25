@@ -198,8 +198,8 @@ export function SweepPanel({ baseline, parameters, onError }: Props) {
             </button>
           )}
           {finished && result && (
-            <a href={api.csvUrl(result.sweep_id)} download={`${result.sweep_id}.csv`}>
-              <button className="ghost">Download aggregate CSV</button>
+            <a className="button ghost" href={api.csvUrl(result.sweep_id)} download={`${result.sweep_id}.csv`}>
+              Download aggregate CSV
             </a>
           )}
         </div>

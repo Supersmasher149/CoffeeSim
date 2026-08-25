@@ -103,8 +103,8 @@ export function App() {
         {active && (
           <>
             <span className="sub">run {active.manifest.run_id}</span>
-            <a href={api.csvUrl(active.manifest.run_id)} download={`${active.manifest.run_id}.csv`}>
-              <button className="ghost">Download CSV</button>
+            <a className="button ghost" href={api.csvUrl(active.manifest.run_id)} download={`${active.manifest.run_id}.csv`}>
+              Download CSV
             </a>
             <button
               className="ghost"

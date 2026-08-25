@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 
 import type { ProfilePoint } from "../../api/types";
 
@@ -25,6 +25,7 @@ const MIN_GAP_S = 0.5;
 
 export function ProfileCanvas({ points, range, maxTimeSeconds, unit, color, onChange }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
+  const instructionsId = useId();
   const [dragIndex, setDragIndex] = useState<number>();
   const [hoverIndex, setHoverIndex] = useState<number>();
 
@@ -92,6 +93,39 @@ export function ProfileCanvas({ points, range, maxTimeSeconds, unit, color, onCh
     onChange(points.filter((_, i) => i !== index));
   };
 
+  const movePoint = (index: number, timeChange: number, valueChange: number) => {
+    const point = points[index];
+    if (!point) return;
+    const previous = index > 0 ? points[index - 1][0] + MIN_GAP_S : 0;
+    const next = index < points.length - 1 ? points[index + 1][0] - MIN_GAP_S : span;
+    const time = Math.min(Math.max(snapTime(point[0] + timeChange), previous), next);
+    const value = snapValue(point[1] + valueChange);
+    onChange(points.map((current, currentIndex) =>
+      currentIndex === index ? ([time, value] as ProfilePoint) : current,
+    ));
+  };
+
+  const handlePointKeyDown = (event: React.KeyboardEvent<SVGCircleElement>, index: number) => {
+    switch (event.key) {
+      case "ArrowLeft":
+        event.preventDefault();
+        movePoint(index, -TIME_SNAP, 0);
+        break;
+      case "ArrowRight":
+        event.preventDefault();
+        movePoint(index, TIME_SNAP, 0);
+        break;
+      case "ArrowDown":
+        event.preventDefault();
+        movePoint(index, 0, -0.1);
+        break;
+      case "ArrowUp":
+        event.preventDefault();
+        movePoint(index, 0, 0.1);
+        break;
+    }
+  };
+
   const path = points.length
     ? [
         `M ${toX(0)} ${toY(points[0][1])}`,
@@ -109,6 +143,9 @@ export function ProfileCanvas({ points, range, maxTimeSeconds, unit, color, onCh
         ref={svgRef}
         viewBox={`0 0 ${VIEW.width} ${VIEW.height}`}
         style={{ width: "100%", height: "auto", touchAction: "none", cursor: "crosshair" }}
+        role="group"
+        aria-label={`${unit} profile editor`}
+        aria-describedby={instructionsId}
         onPointerMove={handleMove}
         onPointerUp={() => setDragIndex(undefined)}
         onPointerLeave={() => setDragIndex(undefined)}
@@ -156,6 +193,13 @@ export function ProfileCanvas({ points, range, maxTimeSeconds, unit, color, onCh
             stroke="var(--panel)"
             strokeWidth={1.2}
             style={{ cursor: "grab" }}
+            role="slider"
+            tabIndex={0}
+            aria-label={`Profile point ${index + 1}`}
+            aria-valuemin={low}
+            aria-valuemax={high}
+            aria-valuenow={point[1]}
+            aria-valuetext={`${point[0]} seconds, ${point[1]} ${unit}`}
             onPointerDown={(event) => {
               event.stopPropagation();
               (event.target as Element).setPointerCapture?.(event.pointerId);
@@ -163,6 +207,7 @@ export function ProfileCanvas({ points, range, maxTimeSeconds, unit, color, onCh
             }}
             onPointerEnter={() => setHoverIndex(index)}
             onPointerLeave={() => setHoverIndex(undefined)}
+            onKeyDown={(event) => handlePointKeyDown(event, index)}
             onDoubleClick={(event) => {
               event.stopPropagation();
               removePoint(index);
@@ -182,8 +227,9 @@ export function ProfileCanvas({ points, range, maxTimeSeconds, unit, color, onCh
           </text>
         )}
       </svg>
-      <p className="note" style={{ marginTop: 2 }}>
-        Drag a point to move it · double-click the plot to add · double-click a point to remove
+      <p id={instructionsId} className="note" style={{ marginTop: 2 }}>
+        Drag a point to move it. Double-click the plot to add and a point to remove. Focus a point
+        and use arrow keys to adjust its time or value.
       </p>
     </div>
   );

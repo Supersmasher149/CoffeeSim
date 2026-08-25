@@ -89,7 +89,7 @@ select {
   font-size: 13px;
 }
 
-button {
+button, .button {
   background: var(--accent);
   border: none;
   color: #1b1310;
@@ -98,9 +98,11 @@ button {
   font-weight: 600;
   font-size: 13px;
   cursor: pointer;
+  display: inline-block;
+  text-decoration: none;
 }
 button:disabled { background: var(--line); color: var(--muted); cursor: not-allowed; }
-button.ghost { background: transparent; border: 1px solid var(--line); color: var(--text); font-weight: 500; }
+button.ghost, .button.ghost { background: transparent; border: 1px solid var(--line); color: var(--text); font-weight: 500; }
 
 .metric-strip { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
 .metric {

@@ -18,6 +18,17 @@ One file per shot, `YYYY-MM-DD-<machine>-<n>.json`:
 }
 ```
 
+Fit against them with:
+
+```bash
+espressolab_cli calibrate --shots assets/measured_shots \
+  --fit kozeny_constant,extraction_rate_ref_s --holdout <one-shot-id> \
+  --out assets/coefficients/fitted-v2.json
+```
+
+Write fitted coefficients and reports somewhere else: every `.json` in this
+directory is read as a measured shot.
+
 Rules from 11.3, worth repeating because they are what make the numbers usable:
 
 - Record time and beverage mass first; add pressure and TDS only if the

@@ -41,6 +41,7 @@ add_subdirectory(engine/model_library)
 add_subdirectory(engine/espresso_core)
 add_subdirectory(engine/artifact_io)
 add_subdirectory(engine/experiment_runner)
+add_subdirectory(engine/calibration)
 add_subdirectory(apps/espressolab_cli)
 
 if(ESPRESSOLAB_BUILD_SERVER)

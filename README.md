@@ -32,8 +32,8 @@ A baseline shot on an M-series laptop:
   result hash     ba04fea5c54433e0950fc58b8a627ad1a176f177e2ffc15f714e42824b84dcc6
 ```
 
-Simulating that 29-second shot takes about 0.3 ms, against a budget of 20 ms for
-a 60-second shot at 100 Hz.
+`espressolab_cli bench` runs a 60-second shot at 100 Hz in **0.49 ms** median —
+about 2000 simulations per second, and 40x inside the 20 ms budget.
 
 ## What a grind sweep looks like
 
@@ -84,7 +84,10 @@ What it does **not** do:
   outputs. Taste depends on compound composition, roast, water chemistry,
   distribution and sensory context this model does not resolve.
 - **The default coefficients are uncalibrated.** They put the baseline recipe in
-  a plausible range; no measured shot has been fitted. See
+  a plausible range; no measured shot has been fitted. The calibration machinery
+  is built and tested — `espressolab_cli calibrate` fits a named set of
+  physically interpretable coefficients against measured shots, with held-out
+  validation — but it has only ever been run against synthetic data. See
   [docs/calibration.md](docs/calibration.md).
 
 ## Reproducibility
@@ -101,7 +104,13 @@ a re-fit never silently changes what a past run meant.
 espressolab_cli simulate --recipe <file> [--coefficients <file>] [--out <dir>]
                          [--dt <s>] [--sample-interval <s>] [--quiet]
 espressolab_cli sweep    --spec <file> [--out <dir>] [--quiet]
-espressolab_cli params   # sweepable parameter paths
+espressolab_cli calibrate --shots <dir> --fit <name,...> [--holdout <id,...>]
+                          [--coefficients <file>] [--out <file>] [--report <file>]
+espressolab_cli synthesize --recipe <file> [--noise <g>] --out <file>
+espressolab_cli bench    [--seconds <s>] [--repeats <n>]
+
+espressolab_cli params     # sweepable recipe parameters
+espressolab_cli fit-params # fittable coefficients, with bounds
 espressolab_cli version
 ```
 
@@ -118,9 +127,11 @@ outputs/sweeps/<sweep-id>/{sweep.json,runs.jsonl,aggregate.csv,manifest.json}
 ./scripts/test.sh
 ```
 
-60 test cases, ~14k assertions: unit tests for every correlation, whole-shot
-integration tests, generated-input property tests, mass-balance invariants and a
-step-size convergence test. See [docs/testing.md](docs/testing.md).
+73 test cases, ~14.5k assertions: unit tests for every correlation, whole-shot
+integration tests, generated-input property tests, mass-balance invariants, a
+step-size convergence test, and calibration recovery tests that hide known
+coefficients in synthetic shots and require the fitter to find them again. See
+[docs/testing.md](docs/testing.md).
 
 ## Documentation
 

@@ -50,14 +50,10 @@ export const api = {
   simulate: (recipe: Recipe) =>
     request<ShotResult>("/shots", { method: "POST", body: JSON.stringify({ recipe }) }),
 
-  sweep: (name: string, baseline: Recipe, parameterPath: string, values: number[]) =>
+  sweep: (name: string, baseline: Recipe, axes: { parameter_path: string; values: number[] }[]) =>
     request<SweepResult>("/sweeps", {
       method: "POST",
-      body: JSON.stringify({
-        name,
-        baseline,
-        axes: [{ parameter_path: parameterPath, values }],
-      }),
+      body: JSON.stringify({ name, baseline, axes }),
     }),
 
   csvUrl: (id: string) => `${BASE}/artifacts/${id}.csv`,

@@ -32,6 +32,14 @@ jobs:
       - name: Acceptance demo
         run: ./scripts/demo.sh
 
+      # Proves the fitter recovers known coefficients through the CLI path,
+      # which the test binary does not cover.
+      - name: Calibration recovery
+        run: ./scripts/calibration_demo.sh
+
+      - name: Performance budget
+        run: ./build/apps/espressolab_cli/espressolab_cli bench --repeats 50
+
   web:
     name: dashboard
     runs-on: ubuntu-latest

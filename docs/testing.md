@@ -8,7 +8,7 @@
 
 Tags: `[units]` `[profile]` `[water]` `[permeability]` `[flow]` `[heat]`
 `[extraction]` `[artifacts]` `[integration]` `[invariants]` `[convergence]`
-`[sweep]` `[property]` `[performance]`.
+`[sweep]` `[calibration]` `[recovery]` `[property]` `[performance]`.
 
 ## What each layer is for
 
@@ -32,6 +32,15 @@ balances close to within 1e-9 kg.
 **Convergence tests** run the baseline at 0.02, 0.01 and 0.005 s and require the
 change to shrink as the step halves. This is the test that would catch a
 scientifically wrong integration scheme hiding behind a plausible curve.
+
+**Calibration recovery tests** are how a fitting routine is checked without real
+data. Known coefficients are hidden inside synthetic shots, the fit is started
+from a deliberately wrong point, and the test requires it to find the truth again
+within 2%. Companion tests check that the fit is deterministic, that held-out
+shots never steer it, that coefficients outside the parameter list do not move,
+and that synthetic provenance survives into the report and the fitted file. This
+validates the machinery; it says nothing about whether the model matches real
+espresso.
 
 ## On golden fixtures
 

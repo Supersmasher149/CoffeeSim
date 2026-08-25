@@ -29,6 +29,21 @@
     },
     "pressure_profile_bar": { "$ref": "#/$defs/profile", "description": "Gauge pressure across the puck, 0-12 bar." },
     "temperature_profile_c": { "$ref": "#/$defs/profile", "description": "Inlet water temperature, 85-100 C." },
+    "parallel_regions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "description": "Optional lateral puck partitions that share pressure but evolve independently. Omit for one uniform region.",
+      "items": {
+        "type": "object",
+        "required": ["area_fraction", "permeability_multiplier"],
+        "additionalProperties": false,
+        "properties": {
+          "area_fraction": { "type": "number", "minimum": 0.01, "maximum": 1.0 },
+          "permeability_multiplier": { "type": "number", "minimum": 0.05, "maximum": 20.0 }
+        }
+      }
+    },
     "stop": {
       "type": "object",
       "required": ["maximum_time_s"],

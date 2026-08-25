@@ -1,3 +1,4 @@
+#include <cmath>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
@@ -24,16 +25,39 @@ const json& require_object(const json& node, const char* key, const std::string&
     return node.at(key);
 }
 
+void require_root_object(const json& node, const std::string& path) {
+    if (!node.is_object()) fail("MISSING_FIELD", path, path + " must be a JSON object");
+}
+
+std::string require_string(const json& node, const char* key, const std::string& path) {
+    if (!node.contains(key) || !node.at(key).is_string()) {
+        fail("MISSING_FIELD", path + "." + key, std::string(key) + " must be a string");
+    }
+    return node.at(key).get<std::string>();
+}
+
+std::string optional_string(const json& node, const char* key, const std::string& path,
+                            std::string fallback) {
+    if (!node.contains(key) || node.at(key).is_null()) return fallback;
+    if (!node.at(key).is_string()) {
+        fail("MISSING_FIELD", path + "." + key, std::string(key) + " must be a string");
+    }
+    return node.at(key).get<std::string>();
+}
+
 double require_number(const json& node, const char* key, const std::string& path) {
-    if (!node.contains(key) || !node.at(key).is_number()) {
+    if (!node.contains(key) || !node.at(key).is_number() ||
+        !std::isfinite(node.at(key).get<double>())) {
         fail("MISSING_FIELD", path + "." + key, std::string(key) + " must be a number");
     }
     return node.at(key).get<double>();
 }
 
-double optional_number(const json& node, const char* key, double fallback) {
-    if (!node.contains(key) || node.at(key).is_null()) return fallback;
-    if (!node.at(key).is_number()) return fallback;
+double required_number(const json& node, const char* key, const std::string& path) {
+    if (!node.contains(key) || !node.at(key).is_number() ||
+        !std::isfinite(node.at(key).get<double>())) {
+        fail("MISSING_FIELD", path + "." + key, std::string(key) + " must be a finite number");
+    }
     return node.at(key).get<double>();
 }
 
@@ -102,16 +126,18 @@ json warnings_to_json(const std::vector<SimulationWarning>& warnings) {
 
 Recipe load_recipe_json(const std::string& json_text) {
     const json root = parse_or_throw(json_text, "recipe");
+    require_root_object(root, "recipe");
 
     Recipe recipe;
-    recipe.schema_version = root.value("schema_version", std::string(version::kRecipeSchema));
+    recipe.schema_version =
+        optional_string(root, "schema_version", "recipe", std::string(version::kRecipeSchema));
     if (recipe.schema_version != version::kRecipeSchema) {
         // FR-01: unknown versions fail with a clear error.
         fail("UNSUPPORTED_SCHEMA_VERSION", "recipe.schema_version",
              "recipe schema_version '" + recipe.schema_version + "' is not supported (expected " +
                  std::string(version::kRecipeSchema) + ")");
     }
-    recipe.name = root.value("name", std::string("unnamed"));
+    recipe.name = optional_string(root, "name", "recipe", "unnamed");
 
     const json& puck = require_object(root, "puck", "recipe");
     recipe.dose_kg = units::grams_to_kg(require_number(puck, "dose_g", "recipe.puck"));
@@ -121,6 +147,24 @@ Recipe load_recipe_json(const std::string& json_text) {
     recipe.particle_diameter_m =
         units::microns_to_m(require_number(puck, "particle_diameter_um", "recipe.puck"));
     recipe.particle_spread_factor = require_number(puck, "particle_spread_factor", "recipe.puck");
+    if (root.contains("parallel_regions")) {
+        const json& regions = root.at("parallel_regions");
+        if (!regions.is_array() || regions.empty()) {
+            fail("MISSING_FIELD", "recipe.parallel_regions",
+                 "parallel_regions must be a non-empty array of region objects");
+        }
+        recipe.parallel_regions.clear();
+        recipe.parallel_regions.reserve(regions.size());
+        for (std::size_t i = 0; i < regions.size(); ++i) {
+            const std::string path = "recipe.parallel_regions[" + std::to_string(i) + "]";
+            if (!regions[i].is_object()) {
+                fail("MISSING_FIELD", path, "each parallel region must be an object");
+            }
+            recipe.parallel_regions.push_back(
+                {required_number(regions[i], "area_fraction", path),
+                 required_number(regions[i], "permeability_multiplier", path)});
+        }
+    }
 
     if (!root.contains("pressure_profile_bar")) {
         fail("MISSING_FIELD", "recipe.pressure_profile_bar", "pressure_profile_bar is required");
@@ -138,7 +182,7 @@ Recipe load_recipe_json(const std::string& json_text) {
     recipe.maximum_time_s = require_number(stop, "maximum_time_s", "recipe.stop");
     if (stop.contains("target_beverage_g") && !stop.at("target_beverage_g").is_null()) {
         recipe.target_beverage_mass_kg =
-            units::grams_to_kg(stop.at("target_beverage_g").get<double>());
+            units::grams_to_kg(require_number(stop, "target_beverage_g", "recipe.stop"));
     } else {
         recipe.target_beverage_mass_kg.reset();
     }
@@ -157,7 +201,13 @@ std::string dump_recipe_json(const Recipe& recipe, int indent) {
                     {"basket_diameter_mm", units::m_to_mm(recipe.basket_diameter_m)},
                     {"depth_mm", units::m_to_mm(recipe.puck_depth_m)},
                     {"particle_diameter_um", units::m_to_microns(recipe.particle_diameter_m)},
-                    {"particle_spread_factor", recipe.particle_spread_factor}};
+                     {"particle_spread_factor", recipe.particle_spread_factor}};
+    root["parallel_regions"] = json::array();
+    for (const ParallelRegion& region : recipe.parallel_regions) {
+        root["parallel_regions"].push_back({{"area_fraction", region.area_fraction},
+                                             {"permeability_multiplier",
+                                              region.permeability_multiplier}});
+    }
     root["pressure_profile_bar"] = profile_to_json(recipe.pressure_pa, units::pa_to_bar);
     root["temperature_profile_c"] =
         profile_to_json(recipe.inlet_temperature_k, units::kelvin_to_celsius);
@@ -172,57 +222,48 @@ std::string dump_recipe_json(const Recipe& recipe, int indent) {
 
 ModelCoefficients load_coefficients_json(const std::string& json_text) {
     const json root = parse_or_throw(json_text, "coefficients");
+    require_root_object(root, "coefficients");
     ModelCoefficients c;
-    c.id = root.value("id", std::string("default"));
-    c.version = root.value("version", std::string("1.0.0"));
-
-    const json& v = root.contains("values") && root.at("values").is_object() ? root.at("values")
-                                                                            : root;
-    c.initial_porosity = optional_number(v, "initial_porosity", c.initial_porosity);
-    c.kozeny_constant = optional_number(v, "kozeny_constant", c.kozeny_constant);
+    c.id = require_string(root, "id", "coefficients");
+    c.version = require_string(root, "version", "coefficients");
+    const json& v = require_object(root, "values", "coefficients");
+    c.initial_porosity = required_number(v, "initial_porosity", "coefficients.values");
+    c.kozeny_constant = required_number(v, "kozeny_constant", "coefficients.values");
     c.dry_permeability_multiplier =
-        optional_number(v, "dry_permeability_multiplier", c.dry_permeability_multiplier);
+        required_number(v, "dry_permeability_multiplier", "coefficients.values");
     c.pressure_compressibility =
-        optional_number(v, "pressure_compressibility", c.pressure_compressibility);
-    c.maximum_compression = optional_number(v, "maximum_compression", c.maximum_compression);
+        required_number(v, "pressure_compressibility", "coefficients.values");
+    c.maximum_compression = required_number(v, "maximum_compression", "coefficients.values");
     c.porosity_compression_factor =
-        optional_number(v, "porosity_compression_factor", c.porosity_compression_factor);
-    c.minimum_porosity = optional_number(v, "minimum_porosity", c.minimum_porosity);
+        required_number(v, "porosity_compression_factor", "coefficients.values");
+    c.minimum_porosity = required_number(v, "minimum_porosity", "coefficients.values");
     c.compression_reference_pa =
-        optional_number(v, "compression_reference_pa", c.compression_reference_pa);
+        required_number(v, "compression_reference_pa", "coefficients.values");
     c.coffee_heat_capacity_j_kg_k =
-        optional_number(v, "coffee_heat_capacity_j_kg_k", c.coffee_heat_capacity_j_kg_k);
-    c.ambient_heat_loss_w_k = optional_number(v, "ambient_heat_loss_w_k", c.ambient_heat_loss_w_k);
-    if (v.contains("ambient_temperature_c") && v.at("ambient_temperature_c").is_number()) {
-        c.ambient_temperature_k =
-            units::celsius_to_kelvin(v.at("ambient_temperature_c").get<double>());
-    }
-    if (v.contains("initial_puck_temperature_c") &&
-        v.at("initial_puck_temperature_c").is_number()) {
-        c.initial_puck_temperature_k =
-            units::celsius_to_kelvin(v.at("initial_puck_temperature_c").get<double>());
-    }
+        required_number(v, "coffee_heat_capacity_j_kg_k", "coefficients.values");
+    c.ambient_heat_loss_w_k =
+        required_number(v, "ambient_heat_loss_w_k", "coefficients.values");
+    c.ambient_temperature_k = units::celsius_to_kelvin(
+        required_number(v, "ambient_temperature_c", "coefficients.values"));
+    c.initial_puck_temperature_k = units::celsius_to_kelvin(
+        required_number(v, "initial_puck_temperature_c", "coefficients.values"));
     c.extractable_solids_fraction =
-        optional_number(v, "extractable_solids_fraction", c.extractable_solids_fraction);
-    c.extraction_rate_ref_s = optional_number(v, "extraction_rate_ref_s", c.extraction_rate_ref_s);
+        required_number(v, "extractable_solids_fraction", "coefficients.values");
+    c.extraction_rate_ref_s =
+        required_number(v, "extraction_rate_ref_s", "coefficients.values");
     c.activation_energy_j_mol =
-        optional_number(v, "activation_energy_j_mol", c.activation_energy_j_mol);
-    if (v.contains("reference_temperature_c") && v.at("reference_temperature_c").is_number()) {
-        c.reference_temperature_k =
-            units::celsius_to_kelvin(v.at("reference_temperature_c").get<double>());
-    }
-    c.grind_exponent = optional_number(v, "grind_exponent", c.grind_exponent);
-    if (v.contains("reference_particle_diameter_um") &&
-        v.at("reference_particle_diameter_um").is_number()) {
-        c.reference_particle_diameter_m =
-            units::microns_to_m(v.at("reference_particle_diameter_um").get<double>());
-    }
+        required_number(v, "activation_energy_j_mol", "coefficients.values");
+    c.reference_temperature_k = units::celsius_to_kelvin(
+        required_number(v, "reference_temperature_c", "coefficients.values"));
+    c.grind_exponent = required_number(v, "grind_exponent", "coefficients.values");
+    c.reference_particle_diameter_m = units::microns_to_m(
+        required_number(v, "reference_particle_diameter_um", "coefficients.values"));
     c.flow_half_saturation_m3_s =
-        optional_number(v, "flow_half_saturation_m3_s", c.flow_half_saturation_m3_s);
+        required_number(v, "flow_half_saturation_m3_s", "coefficients.values");
     c.distribution_factor_floor =
-        optional_number(v, "distribution_factor_floor", c.distribution_factor_floor);
-    c.maximum_flow_m3_s = optional_number(v, "maximum_flow_m3_s", c.maximum_flow_m3_s);
-    c.outlet_pressure_pa = optional_number(v, "outlet_pressure_pa", c.outlet_pressure_pa);
+        required_number(v, "distribution_factor_floor", "coefficients.values");
+    c.maximum_flow_m3_s = required_number(v, "maximum_flow_m3_s", "coefficients.values");
+    c.outlet_pressure_pa = required_number(v, "outlet_pressure_pa", "coefficients.values");
     return c;
 }
 
@@ -299,7 +340,17 @@ std::string dump_summary_json(const ShotResult& result, int indent) {
           {"max_flow_ml_s", units::m3_s_to_ml_s(d.max_flow_m3_s)},
           {"min_puck_temperature_c", units::kelvin_to_celsius(d.min_puck_temperature_k)},
           {"max_puck_temperature_c", units::kelvin_to_celsius(d.max_puck_temperature_k)}}},
-        {"warnings", warnings_to_json(result.warnings)}};
+         {"warnings", warnings_to_json(result.warnings)}};
+    root["regions"] = json::array();
+    for (const RegionSummary& region : result.regions) {
+        root["regions"].push_back(
+            {{"area_fraction", region.area_fraction},
+             {"permeability_multiplier", region.permeability_multiplier},
+             {"beverage_mass_g", units::kg_to_grams(region.beverage_mass_kg)},
+             {"flow_fraction", region.flow_fraction},
+             {"tds_percent", region.tds_fraction * 100.0},
+             {"extraction_yield_percent", region.extraction_yield_fraction * 100.0}});
+    }
     return root.dump(indent);
 }
 

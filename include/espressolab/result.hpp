@@ -78,12 +78,22 @@ struct ShotSummary {
     int warning_count = 0;
 };
 
+struct RegionSummary {
+    double area_fraction = 0.0;
+    double permeability_multiplier = 1.0;
+    double beverage_mass_kg = 0.0;
+    double flow_fraction = 0.0;
+    double tds_fraction = 0.0;
+    double extraction_yield_fraction = 0.0;
+};
+
 struct ShotResult {
     RunManifest manifest;
     ShotSummary summary;
     ShotDiagnostics diagnostics;
     std::vector<ShotSample> samples;
     std::vector<SimulationWarning> warnings;
+    std::vector<RegionSummary> regions;
 };
 
 }  // namespace espressolab

@@ -39,6 +39,14 @@ TEST_CASE("a missing field names its own path", "[artifacts]") {
         }));
 }
 
+TEST_CASE("wrongly typed recipe fields fail as loader errors", "[artifacts]") {
+    REQUIRE_THROWS_MATCHES(
+        artifact_io::load_recipe_json(R"({"schema_version": 1})"), artifact_io::LoadError,
+        Catch::Matchers::Predicate<artifact_io::LoadError>([](const artifact_io::LoadError& e) {
+            return e.code == "MISSING_FIELD" && e.path == "recipe.schema_version";
+        }));
+}
+
 TEST_CASE("a malformed profile point is rejected with its index", "[artifacts]") {
     const std::string text = R"({
       "schema_version": "1.0",
@@ -88,6 +96,41 @@ TEST_CASE("coefficients survive a JSON round trip", "[artifacts]") {
     REQUIRE(reloaded.kozeny_constant == Catch::Approx(original.kozeny_constant));
     REQUIRE(reloaded.reference_temperature_k == Catch::Approx(original.reference_temperature_k));
     REQUIRE(artifact_io::coefficient_hash(reloaded) == artifact_io::coefficient_hash(original));
+}
+
+TEST_CASE("coefficient JSON requires every typed serialized value", "[artifacts]") {
+    const ModelCoefficients original = testing::baseline_coefficients();
+    std::string document = artifact_io::dump_coefficients_json(original);
+    const std::size_t kozeny = document.find("\"kozeny_constant\":");
+    REQUIRE(kozeny != std::string::npos);
+    const std::size_t next_value = document.find(',', kozeny);
+    REQUIRE(next_value != std::string::npos);
+    document.erase(kozeny, next_value - kozeny + 1);
+
+    REQUIRE_THROWS_MATCHES(
+        artifact_io::load_coefficients_json(document), artifact_io::LoadError,
+        Catch::Matchers::Predicate<artifact_io::LoadError>([](const artifact_io::LoadError& e) {
+            return e.code == "MISSING_FIELD" && e.path == "coefficients.values.kozeny_constant";
+        }));
+
+    document = artifact_io::dump_coefficients_json(original);
+    const std::size_t max_flow = document.find("\"maximum_flow_m3_s\":");
+    REQUIRE(max_flow != std::string::npos);
+    const std::size_t max_flow_end = document.find(',', max_flow);
+    REQUIRE(max_flow_end != std::string::npos);
+    document.replace(max_flow, max_flow_end - max_flow, "\"maximum_flow_m3_s\":\"fast\"");
+    REQUIRE_THROWS_AS(artifact_io::load_coefficients_json(document), artifact_io::LoadError);
+}
+
+TEST_CASE("result hashes include saturation", "[artifacts]") {
+    const Recipe recipe = testing::baseline_recipe();
+    const ModelCoefficients coefficients = testing::baseline_coefficients();
+    const SimulationConfig config;
+    std::vector<ShotSample> samples(1);
+
+    const std::string dry_hash = artifact_io::result_hash(recipe, coefficients, config, samples);
+    samples.front().saturation = 1.0;
+    REQUIRE(artifact_io::result_hash(recipe, coefficients, config, samples) != dry_hash);
 }
 
 TEST_CASE("sha256 matches the published test vectors", "[artifacts]") {

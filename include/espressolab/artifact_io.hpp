@@ -41,7 +41,8 @@ std::string sha256_hex(const std::string& bytes);
 std::string recipe_hash(const Recipe& recipe);
 std::string coefficient_hash(const ModelCoefficients& coeff);
 std::string result_hash(const Recipe& recipe, const ModelCoefficients& coeff,
-                        const SimulationConfig& config, const std::vector<ShotSample>& samples);
+                        const SimulationConfig& config, const std::vector<ShotSample>& samples,
+                        const std::vector<RegionSummary>& regions = {});
 
 // Fills the identity fields of section 10.1 that need canonical JSON, which the
 // solver itself cannot produce without breaking the dependency rule (3.4).

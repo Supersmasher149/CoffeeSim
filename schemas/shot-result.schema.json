@@ -63,6 +63,21 @@
         }
       }
     },
+    "regions": {
+      "type": "array",
+      "description": "Final diagnostics for each parallel puck region.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "area_fraction": { "type": "number" },
+          "permeability_multiplier": { "type": "number" },
+          "beverage_mass_g": { "type": "number" },
+          "flow_fraction": { "type": "number", "minimum": 0, "maximum": 1 },
+          "tds_percent": { "type": "number" },
+          "extraction_yield_percent": { "type": "number" }
+        }
+      }
+    },
     "samples": {
       "type": "array",
       "items": {

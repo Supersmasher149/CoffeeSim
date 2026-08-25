@@ -33,7 +33,27 @@ ValidationResult Recipe::validate() const {
     require_in_range(result, units::m_to_microns(particle_diameter_m), 150.0, 800.0,
                      "recipe.puck.particle_diameter_um", "um");
     require_in_range(result, particle_spread_factor, 0.1, 1.0,
-                     "recipe.puck.particle_spread_factor", "");
+                      "recipe.puck.particle_spread_factor", "");
+    if (parallel_regions.empty() || parallel_regions.size() > 8) {
+        result.add("NONPHYSICAL_INPUT", "recipe.parallel_regions must contain between 1 and 8 regions",
+                   "recipe.parallel_regions");
+    } else {
+        double total_area_fraction = 0.0;
+        for (std::size_t i = 0; i < parallel_regions.size(); ++i) {
+            const ParallelRegion& region = parallel_regions[i];
+            const std::string path = "recipe.parallel_regions[" + std::to_string(i) + "]";
+            const std::string area_path = path + ".area_fraction";
+            const std::string permeability_path = path + ".permeability_multiplier";
+            require_in_range(result, region.area_fraction, 0.01, 1.0, area_path.c_str(), "");
+            require_in_range(result, region.permeability_multiplier, 0.05, 20.0,
+                             permeability_path.c_str(), "");
+            total_area_fraction += region.area_fraction;
+        }
+        if (std::abs(total_area_fraction - 1.0) > 1.0e-9) {
+            result.add("NONPHYSICAL_INPUT", "recipe.parallel_regions area fractions must sum to 1",
+                       "recipe.parallel_regions");
+        }
+    }
     require_in_range(result, maximum_time_s, 10.0, 60.0, "recipe.stop.maximum_time_s", "s");
 
     if (target_beverage_mass_kg.has_value()) {

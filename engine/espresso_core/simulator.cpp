@@ -79,6 +79,27 @@ ShotSample make_sample(const ShotState& s, const Boundaries& b, const Derived& d
     return sample;
 }
 
+ShotState interpolate_state(const ShotState& lower, const ShotState& upper, double time_s) {
+    const double span = upper.time_s - lower.time_s;
+    const double fraction = span > 0.0 ? (time_s - lower.time_s) / span : 0.0;
+    const auto interpolate = [fraction](double a, double b) { return a + fraction * (b - a); };
+    ShotState state;
+    state.time_s = time_s;
+    state.puck_temperature_k = interpolate(lower.puck_temperature_k, upper.puck_temperature_k);
+    state.permeability_m2 = interpolate(lower.permeability_m2, upper.permeability_m2);
+    state.liquid_saturation = interpolate(lower.liquid_saturation, upper.liquid_saturation);
+    state.remaining_extractable_solids_kg =
+        interpolate(lower.remaining_extractable_solids_kg, upper.remaining_extractable_solids_kg);
+    state.dissolved_solids_kg = interpolate(lower.dissolved_solids_kg, upper.dissolved_solids_kg);
+    state.beverage_mass_kg = interpolate(lower.beverage_mass_kg, upper.beverage_mass_kg);
+    state.cumulative_water_in_kg =
+        interpolate(lower.cumulative_water_in_kg, upper.cumulative_water_in_kg);
+    state.retained_water_kg = interpolate(lower.retained_water_kg, upper.retained_water_kg);
+    state.dissolved_solids_in_cup_kg =
+        interpolate(lower.dissolved_solids_in_cup_kg, upper.dissolved_solids_in_cup_kg);
+    return state;
+}
+
 }  // namespace
 
 InvalidInputError::InvalidInputError(const ValidationResult& result)
@@ -118,8 +139,7 @@ ShotResult Simulator::run(const Recipe& recipe, const ModelCoefficients& coeff,
     const double dt = config.dt_s;
     TerminationReason termination = TerminationReason::not_terminated;
     double next_sample_time_s = 0.0;
-    Derived derived_at_sample;
-    Boundaries boundaries_at_sample;
+    double integrated_flow_m3 = 0.0;
 
     const auto evaluate = [&](const ShotState& s) {
         // 9.2 steps 1-3.
@@ -154,8 +174,6 @@ ShotResult Simulator::run(const Recipe& recipe, const ModelCoefficients& coeff,
     for (long long step = 0;; ++step) {
         const auto [b, d] = evaluate(state);
         state.permeability_m2 = d.permeability_m2;
-        boundaries_at_sample = b;
-        derived_at_sample = d;
 
         diag.min_permeability_m2 = std::min(diag.min_permeability_m2, d.permeability_m2);
         diag.max_flow_m3_s = std::max(diag.max_flow_m3_s, d.flow.flow_m3_s);
@@ -174,7 +192,8 @@ ShotResult Simulator::run(const Recipe& recipe, const ModelCoefficients& coeff,
                       WarningSeverity::hard);
         }
 
-        // --- Sampling at the requested interval (9.1)
+        // The initial state is always the first sample. Later samples are emitted
+        // from the interval that contains their exact requested timestamp.
         if (state.time_s + 1.0e-9 >= next_sample_time_s) {
             result.samples.push_back(make_sample(state, b, d, recipe));
             next_sample_time_s += config.sample_interval_s;
@@ -198,8 +217,10 @@ ShotResult Simulator::run(const Recipe& recipe, const ModelCoefficients& coeff,
         }
 
         // --- Integrate one explicit step -----------------------------------
+        const ShotState state_before_step = state;
         // 9.2 step 4: inflow, pore filling and outflow.
         const double water_in_kg = d.flow.flow_m3_s * d.inlet_density_kg_m3 * dt;
+        integrated_flow_m3 += d.flow.flow_m3_s * dt;
         state.cumulative_water_in_kg += water_in_kg;
         state.retained_water_kg += water_in_kg;  // pore liquid: water + dissolved solids
 
@@ -267,6 +288,18 @@ ShotResult Simulator::run(const Recipe& recipe, const ModelCoefficients& coeff,
         // 9.2 step 7.
         state.time_s = static_cast<double>(step + 1) * dt;  // accumulate from the step index
         diag.step_count = step + 1;
+
+        // Output timestamps must match the requested interval rather than the
+        // first solver step after it. Interpolating the state keeps sampling from
+        // changing solver physics, while re-evaluating boundaries reports the
+        // profile value at the actual sample time.
+        while (next_sample_time_s <= state.time_s + 1.0e-9) {
+            ShotState sampled_state = interpolate_state(state_before_step, state, next_sample_time_s);
+            const auto [sampled_boundaries, sampled_derived] = evaluate(sampled_state);
+            sampled_state.permeability_m2 = sampled_derived.permeability_m2;
+            result.samples.push_back(make_sample(sampled_state, sampled_boundaries, sampled_derived, recipe));
+            next_sample_time_s += config.sample_interval_s;
+        }
     }
 
     // --- Invariants and residuals (9.3)
@@ -281,9 +314,9 @@ ShotResult Simulator::run(const Recipe& recipe, const ModelCoefficients& coeff,
     }
 
     // Final sample so the series always ends at the termination time.
-    if (result.samples.empty() || result.samples.back().time_s < state.time_s) {
-        result.samples.push_back(
-            make_sample(state, boundaries_at_sample, derived_at_sample, recipe));
+    if (result.samples.empty() || result.samples.back().time_s < state.time_s - 1.0e-9) {
+        const auto [final_boundaries, final_derived] = evaluate(state);
+        result.samples.push_back(make_sample(state, final_boundaries, final_derived, recipe));
     }
 
     ShotSummary& summary = result.summary;
@@ -296,13 +329,8 @@ ShotResult Simulator::run(const Recipe& recipe, const ModelCoefficients& coeff,
     summary.brew_ratio =
         recipe.dose_kg > kMassEpsilon ? state.beverage_mass_kg / recipe.dose_kg : 0.0;
     summary.peak_flow_m3_s = diag.max_flow_m3_s;
-    summary.average_flow_m3_s = 0.0;
-    if (state.time_s > 0.0) {
-        double total_volume_m3 = 0.0;
-        for (const auto& sample : result.samples) total_volume_m3 += sample.flow_m3_s;
-        summary.average_flow_m3_s =
-            result.samples.empty() ? 0.0 : total_volume_m3 / static_cast<double>(result.samples.size());
-    }
+    summary.average_flow_m3_s =
+        state.time_s > 0.0 ? integrated_flow_m3 / state.time_s : 0.0;
     summary.warning_count = static_cast<int>(result.warnings.size());
 
     if (summary.beverage_mass_kg <= kMassEpsilon) {

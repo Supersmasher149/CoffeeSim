@@ -7,6 +7,13 @@
 
 namespace espressolab {
 
+// A lateral puck partition. Regions are hydraulically parallel: they share the
+// imposed pressure drop but retain their own liquid, heat, and solute state.
+struct ParallelRegion {
+    double area_fraction = 1.0;
+    double permeability_multiplier = 1.0;
+};
+
 // Appendix A.1. All members are SI; JSON input is converted at load time.
 struct Recipe {
     std::string schema_version = "1.0";
@@ -16,6 +23,7 @@ struct Recipe {
     double puck_depth_m = 0.009;
     double particle_diameter_m = 350.0e-6;
     double particle_spread_factor = 0.55;
+    std::vector<ParallelRegion> parallel_regions{{}};
     PiecewiseLinearProfile pressure_pa;
     PiecewiseLinearProfile inlet_temperature_k;
     double maximum_time_s = 45.0;

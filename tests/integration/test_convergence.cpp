@@ -87,4 +87,20 @@ TEST_CASE("the sample interval does not change the physics", "[convergence]") {
     REQUIRE(a.summary.beverage_mass_kg == Catch::Approx(b.summary.beverage_mass_kg));
     REQUIRE(a.summary.extraction_yield_fraction ==
             Catch::Approx(b.summary.extraction_yield_fraction));
+    REQUIRE(a.summary.average_flow_m3_s == Catch::Approx(b.summary.average_flow_m3_s));
+}
+
+TEST_CASE("samples land on the requested interval rather than solver steps", "[convergence]") {
+    Recipe recipe = testing::baseline_recipe();
+    recipe.target_beverage_mass_kg.reset();
+    recipe.maximum_time_s = 10.0;
+    SimulationConfig config;
+    config.dt_s = 0.1;
+    config.sample_interval_s = 0.15;
+
+    const ShotResult result = Simulator().run(recipe, testing::baseline_coefficients(), config);
+    REQUIRE(result.samples.front().time_s == Catch::Approx(0.0));
+    REQUIRE(result.samples[1].time_s == Catch::Approx(0.15));
+    REQUIRE(result.samples[2].time_s == Catch::Approx(0.30));
+    REQUIRE(result.samples.back().time_s == Catch::Approx(result.summary.elapsed_time_s));
 }

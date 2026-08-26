@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "name": "Breville Barista Touch BES880 18 g double - fine grind",
+  "puck": {
+    "dose_g": 18.0,
+    "basket_diameter_mm": 54.0,
+    "depth_mm": 10.4,
+    "particle_diameter_um": 330.0,
+    "particle_spread_factor": 0.55
+  },
+  "pressure_profile_bar": [[0, 2], [3, 2], [6, 9], [45, 9]],
+  "temperature_profile_c": [[0, 93]],
+  "stop": { "target_beverage_g": 36, "maximum_time_s": 50 }
+}

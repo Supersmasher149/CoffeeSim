@@ -61,8 +61,20 @@ Recipes are edited through draggable pressure and inlet-temperature curves with
 the numeric point list underneath, charts share one time cursor, and sweeps run
 in the background with live progress and a cancel button — a 1600-run
 grind x temperature grid finishes in about four seconds and renders as a heat
-map. Every number on screen comes from the native solver; the browser computes
-nothing.
+map.
+
+A cross-section panel replays the shot beside the charts: water entering the
+bed, the saturation level rising while nothing reaches the cup, then the stream
+leaving the spout and the cup filling and darkening as TDS climbs. Lateral
+regions are drawn to scale by area fraction, so a channelled puck shows its
+narrow high-permeability region taking most of the flow. The panel plays on its
+own transport or follows the shared chart cursor.
+
+Every number on screen comes from the native solver. The one piece of browser
+arithmetic is the cross-section's spout, which differences beverage mass between
+neighbouring samples to know how fast the cup is filling — the sampled flow is
+the Darcy flow *into* the bed, which is a different number until the pores are
+full.
 
 ## Architecture
 

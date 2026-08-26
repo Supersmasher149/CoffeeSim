@@ -8,6 +8,7 @@ import { ChartStack } from "./features/shot/ChartStack";
 import { ControlRail } from "./features/shot/ControlRail";
 import { DiagnosticsDrawer } from "./features/shot/DiagnosticsDrawer";
 import { MetricStrip } from "./features/shot/MetricStrip";
+import { PuckView } from "./features/shot/PuckView";
 import { SweepPanel } from "./features/sweeps/SweepPanel";
 import {
   fallbackRecipe,
@@ -153,6 +154,11 @@ export function App() {
         {active ? (
           <>
             <MetricStrip result={active} />
+            <PuckView
+              result={active}
+              targetBeverageG={workspace.draftRecipe.stop.target_beverage_g}
+              cursorTimeSeconds={workspace.cursorTimeSeconds}
+            />
             <ChartStack
               result={active}
               comparisons={comparisons}

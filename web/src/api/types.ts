@@ -3,6 +3,11 @@
 
 export type ProfilePoint = [number, number];
 
+export interface ParallelRegion {
+  area_fraction: number;
+  permeability_multiplier: number;
+}
+
 export interface Recipe {
   schema_version: string;
   name: string;
@@ -13,6 +18,10 @@ export interface Recipe {
     particle_diameter_um: number;
     particle_spread_factor: number;
   };
+  // Optional in the dashboard: a recipe without it is a single region, and the
+  // field is carried through an edit untouched so a multi-region recipe from
+  // the catalogue keeps its regions on the way back to the solver.
+  parallel_regions?: ParallelRegion[];
   pressure_profile_bar: ProfilePoint[];
   temperature_profile_c: ProfilePoint[];
   stop: {
@@ -31,6 +40,17 @@ export interface ShotSample {
   tds_percent: number;
   extraction_yield_percent: number;
   saturation: number;
+}
+
+// Regions are reported once per run, not per sample: the solver emits a
+// lateral summary, and the sample series is already region-aggregated.
+export interface RegionSummary {
+  area_fraction: number;
+  permeability_multiplier: number;
+  beverage_mass_g: number;
+  flow_fraction: number;
+  tds_percent: number;
+  extraction_yield_percent: number;
 }
 
 export interface SimulationWarning {
@@ -78,6 +98,7 @@ export interface ShotResult {
   };
   warnings: SimulationWarning[];
   samples: ShotSample[];
+  regions?: RegionSummary[];
 }
 
 export interface SweepRunRow {

@@ -6,7 +6,7 @@
 // principle"). These are the version strings stamped into every artifact.
 namespace espressolab::version {
 
-inline constexpr std::string_view kSolver = "solver-0.2.0";
+inline constexpr std::string_view kSolver = "solver-0.3.0";
 inline constexpr std::string_view kRecipeSchema = "1.0";
 inline constexpr std::string_view kResultSchema = "1.0";
 

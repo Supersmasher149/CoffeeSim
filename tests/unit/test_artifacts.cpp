@@ -73,6 +73,15 @@ TEST_CASE("nonphysical values fail validation rather than simulating", "[artifac
     REQUIRE_THROWS_AS(Simulator().run(recipe, testing::baseline_coefficients()), InvalidInputError);
 }
 
+TEST_CASE("parallel-region validation rejects nonphysical partitions", "[artifacts]") {
+    Recipe recipe = testing::baseline_recipe();
+    recipe.parallel_regions = {{0.7, 1.0}, {0.2, 2.0}};
+
+    const ValidationResult result = recipe.validate();
+    REQUIRE_FALSE(result.ok());
+    REQUIRE(result.issues().front().path == "recipe.parallel_regions");
+}
+
 TEST_CASE("a recipe survives a JSON round trip", "[artifacts]") {
     // FR-07: exported JSON can be reloaded.
     const Recipe original = testing::baseline_recipe();
@@ -131,6 +140,18 @@ TEST_CASE("result hashes include saturation", "[artifacts]") {
     const std::string dry_hash = artifact_io::result_hash(recipe, coefficients, config, samples);
     samples.front().saturation = 1.0;
     REQUIRE(artifact_io::result_hash(recipe, coefficients, config, samples) != dry_hash);
+}
+
+TEST_CASE("result hashes include parallel-region summaries", "[artifacts]") {
+    const Recipe recipe = testing::baseline_recipe();
+    const ModelCoefficients coefficients = testing::baseline_coefficients();
+    const SimulationConfig config;
+    std::vector<ShotSample> samples(1);
+    std::vector<RegionSummary> regions(1);
+
+    const std::string uniform_hash = artifact_io::result_hash(recipe, coefficients, config, samples, regions);
+    regions.front().flow_fraction = 1.0;
+    REQUIRE(artifact_io::result_hash(recipe, coefficients, config, samples, regions) != uniform_hash);
 }
 
 TEST_CASE("sha256 matches the published test vectors", "[artifacts]") {

@@ -123,6 +123,38 @@ TEST_CASE("the same inputs reproduce the same result hash", "[integration]") {
     REQUIRE(third.manifest.result_hash != first.manifest.result_hash);
 }
 
+TEST_CASE("parallel regions split flow and retain independent extraction", "[integration][regions]") {
+    const Recipe recipe = testing::channelled_recipe();
+    const ModelCoefficients coeff = testing::baseline_coefficients();
+    const ShotResult result = Simulator().run(recipe, coeff);
+
+    REQUIRE(result.regions.size() == 2);
+    const RegionSummary& slow = result.regions[0];
+    const RegionSummary& channel = result.regions[1];
+    REQUIRE(channel.flow_fraction > slow.flow_fraction);
+    REQUIRE(channel.beverage_mass_kg > slow.beverage_mass_kg);
+    REQUIRE(channel.tds_fraction != Catch::Approx(slow.tds_fraction));
+    REQUIRE(channel.extraction_yield_fraction != Catch::Approx(slow.extraction_yield_fraction));
+    REQUIRE(slow.flow_fraction + channel.flow_fraction == Catch::Approx(1.0));
+    REQUIRE(slow.beverage_mass_kg + channel.beverage_mass_kg ==
+            Catch::Approx(result.summary.beverage_mass_kg));
+    REQUIRE(std::abs(result.diagnostics.water_mass_residual_kg) < 1.0e-9);
+    REQUIRE(std::abs(result.diagnostics.solids_mass_residual_kg) < 1.0e-9);
+}
+
+TEST_CASE("a uniform region preserves the aggregate Level 1 output", "[integration][regions]") {
+    const Recipe recipe = testing::baseline_recipe();
+    const ShotResult result = Simulator().run(recipe, testing::baseline_coefficients());
+
+    REQUIRE(result.regions.size() == 1);
+    REQUIRE(result.regions.front().flow_fraction == Catch::Approx(1.0));
+    REQUIRE(result.regions.front().beverage_mass_kg ==
+            Catch::Approx(result.summary.beverage_mass_kg));
+    REQUIRE(result.regions.front().tds_fraction == Catch::Approx(result.summary.tds_fraction));
+    REQUIRE(result.regions.front().extraction_yield_fraction ==
+            Catch::Approx(result.summary.extraction_yield_fraction));
+}
+
 TEST_CASE("a 60 second shot at 100 Hz simulates well inside the budget",
           "[integration][performance]") {
     // Non-functional target from 2.1: under 20 ms in a release build. The bound

@@ -70,6 +70,30 @@ TEST_CASE("a mass-target shot agrees across step sizes", "[convergence]") {
             Catch::Approx(fine.summary.elapsed_time_s).margin(0.5));
 }
 
+TEST_CASE("parallel-region results converge as the time step halves", "[convergence][regions]") {
+    Recipe recipe = testing::channelled_recipe();
+    recipe.target_beverage_mass_kg.reset();
+    recipe.maximum_time_s = 30.0;
+    const ModelCoefficients coeff = testing::baseline_coefficients();
+
+    const auto run_at = [&](double dt) {
+        SimulationConfig config;
+        config.dt_s = dt;
+        return Simulator().run(recipe, coeff, config);
+    };
+
+    const ShotResult medium = run_at(0.01);
+    const ShotResult fine = run_at(0.005);
+    REQUIRE(medium.regions.size() == 2);
+    REQUIRE(fine.regions.size() == 2);
+    REQUIRE(medium.summary.beverage_mass_kg ==
+            Catch::Approx(fine.summary.beverage_mass_kg).margin(2.0e-4));
+    REQUIRE(medium.summary.extraction_yield_fraction ==
+            Catch::Approx(fine.summary.extraction_yield_fraction).margin(0.003));
+    REQUIRE(medium.regions[1].flow_fraction ==
+            Catch::Approx(fine.regions[1].flow_fraction).margin(0.002));
+}
+
 TEST_CASE("the sample interval does not change the physics", "[convergence]") {
     const Recipe recipe = testing::baseline_recipe();
     const ModelCoefficients coeff = testing::baseline_coefficients();

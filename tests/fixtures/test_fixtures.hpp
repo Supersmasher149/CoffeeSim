@@ -40,4 +40,8 @@ inline Recipe gusher_recipe() {
     return recipe;
 }
 
+inline Recipe channelled_recipe() {
+    return artifact_io::load_recipe_file(asset_dir() / "recipes" / "channelled.json");
+}
+
 }  // namespace espressolab::testing

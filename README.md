@@ -29,7 +29,7 @@ A baseline shot on an M-series laptop:
   extraction      18.18 %
   mass residuals  water -4.86e-17 kg, solids 2.17e-18 kg
   clamps          0
-  result hash     ba04fea5c54433e0950fc58b8a627ad1a176f177e2ffc15f714e42824b84dcc6
+  result hash     b8228d4a4a2a93ae341d0633b2d1ddc9d140a98e8a4be1cff898a9ac6ac6128b
 ```
 
 `espressolab_cli bench` runs a 60-second shot at 100 Hz in **0.49 ms** median —
@@ -89,14 +89,15 @@ See [docs/architecture.md](docs/architecture.md).
 
 ## Model assumptions and limitations
 
-A one-dimensional lumped puck: Darcy flow through a Kozeny-Carman-shaped
-permeability, a bounded empirical compression curve, one thermal mass, and
-bounded first-order extraction into a well-mixed pore liquid. Every equation is
-in [docs/model.md](docs/model.md).
+A lateral parallel-region puck: Darcy flow through a Kozeny-Carman-shaped
+permeability, a bounded empirical compression curve, and region-local lumped
+thermal and extraction states. Every equation is in
+[docs/model.md](docs/model.md).
 
 What it does **not** do:
 
-- No channelling, no spatial structure, no CFD or particle-resolved model.
+- No dynamic channelling, lateral exchange, axial structure, CFD, or
+  particle-resolved model.
 - No mapping from a grinder dial number to particle size. Grind is a physical
   input in micrometres.
 - **No flavour prediction.** Estimated TDS and extraction yield are engineering
@@ -147,7 +148,7 @@ outputs/sweeps/<sweep-id>/{sweep.json,runs.jsonl,aggregate.csv,manifest.json}
 ./scripts/test.sh
 ```
 
-78 test cases, ~14.5k assertions: unit tests for every correlation, whole-shot
+91 test cases, ~14.5k assertions: unit tests for every correlation, whole-shot
 integration tests, generated-input property tests, mass-balance invariants, a
 step-size convergence test, sweep progress and cancellation tests, calibration
 recovery tests, and deterministic leave-one-out validation tests. See

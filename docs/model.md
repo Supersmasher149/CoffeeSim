@@ -6,10 +6,12 @@ tuned behind an unexplained constant.
 
 ## Fidelity
 
-Level 1 of the ladder in section 4.1: a one-dimensional lumped puck with
-time-varying flow and extraction. Not level 2 (parallel regions and
-channelling), not level 3 (axial finite-volume cells), and explicitly not level
-4 (CFD or particle-resolved).
+Level 2 of the ladder in section 4.1: one to eight lateral regions in hydraulic
+parallel. Regions share the imposed pressure and inlet-temperature profiles,
+but carry their own wetting, flow, lumped temperature, retained liquid, and
+extraction state. Unequal permeability multipliers represent a fixed,
+first-order channel. This is not level 3 (axial finite-volume cells), level 4
+(CFD or particle-resolved), or a dynamic channel-formation model.
 
 ## State
 
@@ -24,6 +26,24 @@ Two bookkeeping members are carried alongside the documented vector —
 `dissolved_solids_in_cup_kg` — so the mass balances close without re-deriving
 them from the output series.
 
+## Parallel regions
+
+Each region receives an `area_fraction` of the basket area and coffee dose. The
+fractions sum to one. Its permeability uses the Level 1 relationship multiplied
+by its configured `permeability_multiplier`:
+
+```
+k_region = k_eff * permeability_multiplier
+Q_total  = sum(Q_region)
+```
+
+Every region sees the same pressure drop but its own local saturation and water
+temperature. Pore filling, heat transfer, extraction, and output transport are
+therefore evaluated per region. Aggregate beverage mass and cup solids are sums
+of the regional values; aggregate TDS and extraction yield are calculated from
+those totals. Reported aggregate temperature, saturation, and permeability are
+thermal-capacity-, pore-capacity-, and area-weighted respectively.
+
 ## Flow
 
 Darcy flow through a porous bed:
@@ -36,11 +56,10 @@ with permeability from a Kozeny-Carman-shaped relationship:
 
 ```
 k0        = d_p^2 * eps^3 / (C_k * (1 - eps)^2)
-k_eff     = k0 * distribution_factor * wetting_factor * channel_factor
+k_eff     = k0 * distribution_factor * wetting_factor
 ```
 
-`channel_factor` is exactly 1.0 in the MVP uniform-puck model. `C_k` in the
-default coefficient file is about 4.0e6, not the textbook 180 — see
+`C_k` in the default coefficient file is about 4.0e6, not the textbook 180 — see
 `assets/coefficients/default-v1.json`, which states why in full. Short version:
 a single representative particle diameter cannot express a real fines-filled,
 tamped bed, and `C_k` is where that discrepancy is parked until measured shots
@@ -124,7 +143,8 @@ brew_ratio       = beverage_mass / dry_coffee_mass
 
 ## What this does not model
 
-- Channelling, uneven distribution, or any spatial structure in the puck.
+- Lateral exchange between regions, dynamic channel formation, or any axial
+  structure in the puck.
 - Grinder dial settings. Particle diameter is a physical input; there is no
   universal mapping from a number on a grinder.
 - Flavour. Estimated TDS and extraction yield are engineering outputs. Taste

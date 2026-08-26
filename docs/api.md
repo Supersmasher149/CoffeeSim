@@ -31,6 +31,11 @@ curl -s -X POST localhost:8734/api/v1/shots \
 The body accepts `recipe` (required), `coefficients` (defaults to
 `assets/coefficients/default-v1.json`) and `solver` (`dt_s`,
 `sample_interval_s`). The response follows `schemas/shot-result.schema.json`.
+Recipes may include `parallel_regions`: one to eight objects with
+`area_fraction` and `permeability_multiplier`. They share the pressure profile
+but evolve independently in the Level 2 solver. The response's `regions` array
+contains each final region's beverage mass, integrated flow fraction, TDS, and
+extraction yield; the existing samples and summary remain aggregate values.
 
 ## Running a sweep
 

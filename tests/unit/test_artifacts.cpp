@@ -107,6 +107,25 @@ TEST_CASE("coefficients survive a JSON round trip", "[artifacts]") {
     REQUIRE(artifact_io::coefficient_hash(reloaded) == artifact_io::coefficient_hash(original));
 }
 
+// Section 10.2: a run stamped "default v1.0.0" has to mean one thing. The CLI
+// leaves ModelCoefficients default-constructed when --coefficients is omitted,
+// and the server falls back to these values if the asset file is missing, so
+// the compiled-in defaults are a second copy of the shipped set. Nothing else
+// in the suite exercises them: every other fixture loads the file.
+TEST_CASE("compiled-in coefficient defaults match the shipped default set", "[artifacts]") {
+    const ModelCoefficients compiled;
+    const ModelCoefficients shipped = testing::baseline_coefficients();
+
+    REQUIRE(compiled.id == shipped.id);
+    REQUIRE(compiled.version == shipped.version);
+
+    // Named individually so a drift says which knob moved,
+    REQUIRE(compiled.kozeny_constant == Catch::Approx(shipped.kozeny_constant));
+    REQUIRE(compiled.extraction_rate_ref_s == Catch::Approx(shipped.extraction_rate_ref_s));
+    // and hashed so a drift in any other value cannot slip through unnamed.
+    REQUIRE(artifact_io::coefficient_hash(compiled) == artifact_io::coefficient_hash(shipped));
+}
+
 TEST_CASE("coefficient JSON requires every typed serialized value", "[artifacts]") {
     const ModelCoefficients original = testing::baseline_coefficients();
     std::string document = artifact_io::dump_coefficients_json(original);

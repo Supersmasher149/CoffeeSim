@@ -40,7 +40,13 @@ struct ModelCoefficients {
     std::string version = "1.0.0";
 
     double initial_porosity = 0.42;
-    double kozeny_constant = 180.0;
+    // Not the textbook Kozeny-Carman 180: a single representative particle
+    // diameter cannot express a fines-filled, tamped bed, and a textbook 180 at
+    // d_p = 350 um predicts a permeability near 1e-10 m^2 where espresso pucks
+    // measure nearer 1e-15. These defaults must stay identical to
+    // assets/coefficients/default-v1.json, which carries the full reasoning and
+    // the provenance; a test in test_artifacts.cpp holds the two in agreement.
+    double kozeny_constant = 4.0e6;
     double dry_permeability_multiplier = 0.25;
     double pressure_compressibility = 0.06;
     double maximum_compression = 0.20;
@@ -54,7 +60,7 @@ struct ModelCoefficients {
     double initial_puck_temperature_k = 313.15;
 
     double extractable_solids_fraction = 0.30;
-    double extraction_rate_ref_s = 0.16;
+    double extraction_rate_ref_s = 0.21;
     double activation_energy_j_mol = 30000.0;
     double reference_temperature_k = 366.15;
     double grind_exponent = 1.0;

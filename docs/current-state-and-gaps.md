@@ -89,7 +89,7 @@ TDS and extraction yield are engineering outputs, not taste predictions.
 
 The repository documents the following local checks:
 
-- `./scripts/test.sh` passes 146 test cases and 18,110 assertions.
+- `./scripts/test.sh` passes 148 test cases and 18,116 assertions.
 - Native build, dashboard production build, and the CLI demo pass locally,
   including the `ESPRESSOLAB_WARNINGS_AS_ERRORS` build.
 - The demo covers a baseline shot, a nine-run grind sweep, JSON/CSV artifacts,
@@ -139,7 +139,6 @@ and output should be presented as a model result rather than a prediction.
 | Gap | Impact | Completion signal |
 | --- | --- | --- |
 | Hosted CI evidence has not been confirmed | Clean-clone macOS/Linux claims are not yet backed by observed hosted runs | First hosted workflow runs pass native tests, dashboard build, and demo on both platforms |
-| Warnings-as-errors native build fails | A shadowing diagnostic prevents treating compiler warnings as a release gate | Fix the diagnostic and record a clean `ESPRESSOLAB_WARNINGS_AS_ERRORS=ON` build |
 | CFD input and convergence hardening is incomplete | Non-finite time steps, saturation overshoot, and non-converged pressure solves need explicit rejection before CFD output can be relied upon operationally | Reject invalid controls, fail or adapt unstable steps, and add regression tests |
 | Full browser interaction pass is outstanding | API and served-page checks pass, but profile editing, pinned comparison overlays, synchronized chart behavior, and UI downloads have not all been exercised literally in a browser | A repeatable browser checklist is run and recorded |
 | Dashboard has a non-blocking 571.82 kB minified JavaScript chunk warning | Does not block the MVP, but indicates a performance/packaging follow-up for a polished release | Chunk is reduced or the warning is explicitly accepted with measured load impact |

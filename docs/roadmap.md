@@ -22,7 +22,7 @@ cross-platform build.
 
 ## Verified Locally
 
-- `./scripts/test.sh` passes: 118 test cases and 17,398 assertions.
+- `./scripts/test.sh` passes: 148 test cases and 18,116 assertions.
 - `npm run build` succeeds for the dashboard. Vite reports a non-blocking
   559 kB JavaScript chunk-size warning.
 - `./scripts/demo.sh` completes the documented CLI acceptance path:

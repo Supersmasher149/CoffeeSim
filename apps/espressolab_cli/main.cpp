@@ -27,6 +27,7 @@ using namespace espressolab;
 constexpr int kOk = 0;
 constexpr int kUsageError = 2;
 constexpr int kInputError = 3;
+constexpr int kSolverFailure = 4;
 
 void print_usage() {
     std::cout << R"(espressolab_cli - deterministic espresso extraction simulator
@@ -116,6 +117,15 @@ bool reject_unknown_options(int argc, char** argv, int start, const std::set<std
     return true;
 }
 
+// Audit F3, issue #4: simulate/cfd/cfd3d printed the termination reason but
+// always returned kOk, so automation could treat a numerical_failure or
+// invalid_state result as a successful run. target_mass_reached and
+// time_limit_reached are both successful completions; only these two
+// reasons (see TerminationReason in result.hpp) are solver-side failures.
+bool is_failure_termination(TerminationReason reason) {
+    return reason == TerminationReason::numerical_failure || reason == TerminationReason::invalid_state;
+}
+
 // Section 12.2 error shape, printed to stderr so scripts can separate it from
 // the artifact paths on stdout.
 void print_error(const std::string& code, const std::string& message, const std::string& path) {
@@ -185,7 +195,7 @@ int command_simulate(int argc, char** argv) {
     if (!outcome.artifacts_dir.empty()) {
         std::cout << "\nartifacts: " << outcome.artifacts_dir.string() << '\n';
     }
-    return kOk;
+    return is_failure_termination(outcome.result.summary.termination) ? kSolverFailure : kOk;
 }
 
 int command_sweep(int argc, char** argv) {
@@ -496,7 +506,7 @@ int command_cfd(int argc, char** argv) {
             std::cout << '\n';
         }
     }
-    return 0;
+    return is_failure_termination(result.termination) ? kSolverFailure : kOk;
 }
 
 int command_cfd3d(int argc, char** argv) {
@@ -553,7 +563,7 @@ int command_cfd3d(int argc, char** argv) {
         std::cout << "\nartifacts: " << outcome.artifacts_dir.string() << '\n'
                   << "result hash: " << outcome.manifest->result_hash << '\n';
     }
-    return kOk;
+    return is_failure_termination(result.termination) ? kSolverFailure : kOk;
 }
 
 }  // namespace

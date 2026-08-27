@@ -2,6 +2,7 @@
 #include <memory>
 #include <stdexcept>
 
+#include "espressolab/execution.hpp"
 #include "espressolab/result.hpp"
 #include "espressolab/types.hpp"
 #include "espressolab/water_properties.hpp"
@@ -32,7 +33,8 @@ public:
     explicit Simulator(std::shared_ptr<const WaterProperties> water);
 
     [[nodiscard]] ShotResult run(const Recipe& recipe, const ModelCoefficients& coeff,
-                                 const SimulationConfig& config = {}) const;
+                                 const SimulationConfig& config = {},
+                                 const CancellationCallback& is_cancelled = {}) const;
 
 private:
     std::shared_ptr<const WaterProperties> water_;

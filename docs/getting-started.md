@@ -98,12 +98,53 @@ direct API use, see [api.md](api.md).
   --spec assets/sweeps/grind-size.json
 ```
 
-The CLI also exposes `calibrate`, `synthesize`, `bench`, and a separate `cfd`
-command. The default `simulate` pipeline is the Level 1-3 model used by the
-REST server and dashboard. `cfd` is an experimental, separate two-dimensional
-solver; it does not alter dashboard results, standard artifacts, or their
-hashes. See [model.md](model.md) before interpreting either solver as a
+The CLI also exposes `calibrate`, `synthesize`, `bench`, and separate `cfd`
+and `cfd3d` commands. The default `simulate` pipeline is the Level 1-3 model
+used by the REST server and dashboard. `cfd`/`cfd3d` are experimental,
+separate solvers; neither alters dashboard results, standard artifacts, or
+their hashes. See [model.md](model.md) before interpreting either solver as a
 real-world prediction.
+
+## Use the Interactive Terminal UI
+
+```bash
+./build/apps/espressolab_cli/espressolab_cli tui
+```
+
+This launches a guided, form-based frontend to every command above, on an
+interactive macOS or Linux terminal. It calls the same native loaders,
+solvers, calibration APIs, and artifact writers as the file-oriented commands
+-- not the REST server, and not the CLI itself -- so it produces the same
+units, artifacts, and result hashes for the same inputs.
+
+A short walkthrough:
+
+1. Launch the TUI. The home screen groups every workflow under Run
+   (`simulate`, `sweep`, `cfd`, `cfd3d`, `bench`), Calibration/Data
+   (`calibrate`, `synthesize`), and Info (`params`, `fit-params`, `version`).
+2. Use Up/Down to select `simulate` and press Enter. Its form opens with the
+   same defaults as the file-oriented command (`assets/recipes/baseline.json`,
+   `assets/coefficients/default-v1.json`, `dt=0.01`, `sample-interval=0.05`).
+   Press Enter on a field to edit it, Enter again to stop editing, Tab/Down to
+   move to the next field, including past the last one to the trailing
+   `[ Run ]` action.
+3. Press Enter on `[ Run ]` to start the run. Long-running work runs off the
+   render loop, so the screen keeps responding; press `c` or Ctrl-C to
+   request cancellation. A cancelled single run never writes a partial
+   artifact; a cancelled sweep keeps and exports the runs it already
+   completed.
+4. The result screen shows the same termination state, metrics, warnings, and
+   result hash the file-oriented command would print, plus the artifact path
+   if you set one. Press Enter or Esc to return to the command list, `q` to
+   quit.
+
+Resize and Ctrl-C are handled at every screen; terminal state (raw mode, the
+alternate screen buffer, cursor visibility) is always restored on exit,
+whether that exit is normal, an error, a cancellation, or Ctrl-C. Running the
+TUI with stdin or stdout redirected away from a terminal (for example under
+`< /dev/null` or in a CI job) fails immediately with a
+`NONINTERACTIVE_TERMINAL` error and a nonzero exit code, rather than entering
+the render loop.
 
 ## Next Reading
 

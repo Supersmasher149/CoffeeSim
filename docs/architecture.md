@@ -17,6 +17,10 @@ web (React/TS)  ->  tool_server (REST)  ->  experiment_runner
 
 CLI and CFD tests  ->  cfd (separate Level 4 axisymmetric solver) -> espresso_core + model_library
 CLI and REST tests ->  cfd3d (Level 4b Cartesian solver)          -> espresso_core + model_library
+
+espressolab_cli tui  ->  espressolab_cli_support (workflows.cpp, tui/tui_forms.cpp)
+                                                     |
+                                    same call every legacy command_* handler makes
 ```
 
 | Target | Owns | Must not own |
@@ -31,6 +35,8 @@ CLI and REST tests ->  cfd3d (Level 4b Cartesian solver)          -> espresso_co
 | `espressolab_cfd3d` | Level 4b Cartesian 3D REV-scale pressure and transport solver | Default Level 1-3 path, equation ownership outside the solver |
 | `espressolab_references` | Published reference-shot metadata and partial-load reporting | Simulation, fitting, or validation decisions |
 | `espressolab_server` | REST endpoints, jobs and threads, error translation, file boundaries | Equation implementations |
+| `espressolab_cli_support` | Shared CLI workflow services (load, validate, run, write artifacts) and pure TUI navigation/form logic, called by both the legacy commands and the TUI | FTXUI, terminal I/O, argv parsing |
+| `apps/espressolab_cli/tui` | FTXUI rendering, input handling, the one-job-at-a-time worker thread | Physics, artifact formats, validation rules (all in `espressolab_cli_support`) |
 | `web` | Controls, charts, comparisons, warnings, exports | Authoritative calculations |
 | `tests/fixtures` | Golden recipes, expected invariants | Production defaults |
 
@@ -47,6 +53,15 @@ result hashes emitted by the default solver.
 dedicated REST endpoints invoke it explicitly. Its case, summary, snapshot
 fields, and `ELF3D-1` field artifacts are separate contracts and never alter
 the standard shot result or its hashes.
+
+`espressolab_cli tui` is an application-layer frontend: it calls
+`espressolab_cli_support` directly (native loaders, solvers, calibration APIs,
+experiment runner, artifact writers), never the REST server and never the
+file-oriented CLI itself. FTXUI is a private dependency of the
+`espressolab_cli` executable only -- `espressolab_cli_support` links the same
+engine libraries as every other target above and has no terminal UI
+dependency, so it stays usable from `espressolab_tests` (and could, in
+principle, back a future non-terminal frontend) without pulling FTXUI along.
 
 ## Runtime data flow
 
@@ -72,13 +87,25 @@ builds a circular Cartesian cut-cell mesh, runs the Level 4b solver, and emits
 `Cfd3dResult` plus optional time-indexed field snapshots.
 ```
 
-## Threads live in the server, not the engine
+## Threads live in the server and the TUI, not the engine
 
 `ExperimentRunner::run` takes an optional `(completed, total) -> bool` callback:
 it reports progress through it and stops when it returns false. That is the
-whole of the engine's involvement in background sweeps. The server owns the
-worker thread, the cancellation flag and the job registry, so the same runner
-still works unchanged in the CLI and in tests, where there is no thread at all.
+whole of the engine's involvement in background sweeps. The server (for REST)
+and `apps/espressolab_cli/tui` (for the interactive shell) each own their own
+worker thread, cancellation flag and job registry, so the same runner still
+works unchanged in the CLI, the TUI, and in tests, where there is no thread at
+all.
+
+Native execution beyond sweeps is thread-agnostic the same way: `Simulator`,
+`CfdSolver`, `Cfd3dSolver`, and `calibration::fit`/`leave_one_out` each accept
+an optional `espressolab::CancellationCallback` (`include/espressolab/execution.hpp`),
+checked at safe solver, pressure-iteration, calibration, and sweep boundaries.
+A cancelled call throws `ExecutionCancelled` rather than returning a partial
+result, which is what lets a caller guarantee it never writes an incomplete
+artifact -- it simply never reaches the write step. These controls are
+deliberately outside recipe, coefficient, configuration, and result hashes:
+whether a run was cancelled changes nothing about what the run *meant*.
 
 ## Why the boundary is where it is
 
@@ -98,7 +125,8 @@ engine/artifact_io/         JSON/CSV, SHA-256, manifests, ELF3D fields
 engine/experiment_runner/   sweep axes, cartesian product, aggregation
 engine/reference_io/        reference-shot catalogue loader
 include/espressolab/        public headers
-apps/espressolab_cli/       simulate, sweep, params, version
+apps/espressolab_cli/       simulate, sweep, params, version, calibrate, synthesize, bench, cfd, cfd3d
+apps/espressolab_cli/tui/   interactive terminal UI over the same shared workflow services
 apps/espressolab_server/    REST endpoints on cpp-httplib
 web/src/features/           shot, sweeps, comparison, calibration
 assets/                     recipes, coefficients, sweep specs, measured shots

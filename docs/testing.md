@@ -9,7 +9,11 @@
 Tags: `[units]` `[profile]` `[water]` `[permeability]` `[flow]` `[heat]`
 `[extraction]` `[artifacts]` `[integration]` `[invariants]` `[convergence]`
 `[sweep]` `[calibration]` `[recovery]` `[property]` `[performance]` `[regions]`
-`[axial]` `[cfd]` `[verification]`.
+`[axial]` `[cfd]` `[verification]` `[cancellation]` `[tui]` `[cli_workflows]`.
+
+```bash
+python3 tests/pty/tui_smoke.py    # separate POSIX PTY smoke matrix for the TUI
+```
 
 ## What each layer is for
 
@@ -87,6 +91,27 @@ metrics remain deterministic, acceptance thresholds reject poor held-out fits,
 and synthetic, mixed-machine, or incomplete datasets are refused before they
 can be described as real-world validation. The tests use model-generated inputs
 as fixtures and explicitly avoid treating them as real calibration evidence.
+
+**Cancellation tests** call `Simulator::run`, `CfdSolver::run`, `Cfd3dSolver::run`,
+`calibration::fit`, and `calibration::evaluate_shot_loss` with a callback that
+always reports "cancelled" and require `ExecutionCancelled` rather than a
+completed result -- the checkpoints the TUI's cancel button and Ctrl-C
+handling rely on. A companion test in `test_cli_workflows.cpp` requires that a
+cancelled `run_simulate` never reaches the artifact writer: the output
+directory must not exist afterward. Sweep cancellation and partial-run export
+are covered separately, in `test_sweeps.cpp`, since `ExperimentRunner` predates
+this contract.
+
+**TUI tests** (`[tui]`, `[cli_workflows]`) are pure and terminal-free: they
+call `tui_forms.cpp`'s navigation, field defaults, and validation directly
+(never through FTXUI), and `workflows.cpp`'s shared services directly (never
+through argv parsing). One test checks that `run_simulate`'s result hash
+matches calling `Simulator::run` directly with the same recipe and
+coefficients -- the equivalence the legacy CLI and the TUI both depend on now
+that they call the same function. What these tests cannot cover -- FTXUI
+rendering, raw-mode/alternate-screen lifecycle, resize, and real Ctrl-C
+delivery through a terminal's line discipline -- is the separate PTY smoke
+matrix's job; see `tests/pty/tui_smoke.py`.
 
 ## On golden fixtures
 

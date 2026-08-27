@@ -9,6 +9,21 @@
 #include "espressolab/units.hpp"
 #include "espressolab/version.hpp"
 
+// GCC's -Wdangling-reference flags every `const json& x = require_object(...)`
+// call below as a possibly-dangling reference. It's a false positive: the
+// referenced json_io.cpp:require_object legitimately returns a reference into
+// its own reference parameter's subtree, whose lifetime already outlives the
+// call; GCC's conservative heuristic can't see that through the call
+// boundary. Clang has no equivalent warning, so this pair is GCC-only.
+#if defined(__GNUC__) && !defined(__clang__)
+#define ESPRESSOLAB_SUPPRESS_DANGLING_REF_BEGIN \
+    _Pragma("GCC diagnostic push") _Pragma("GCC diagnostic ignored \"-Wdangling-reference\"")
+#define ESPRESSOLAB_SUPPRESS_DANGLING_REF_END _Pragma("GCC diagnostic pop")
+#else
+#define ESPRESSOLAB_SUPPRESS_DANGLING_REF_BEGIN
+#define ESPRESSOLAB_SUPPRESS_DANGLING_REF_END
+#endif
+
 namespace espressolab::artifact_io {
 namespace {
 
@@ -139,7 +154,9 @@ Recipe load_recipe_json(const std::string& json_text) {
     }
     recipe.name = optional_string(root, "name", "recipe", "unnamed");
 
+    ESPRESSOLAB_SUPPRESS_DANGLING_REF_BEGIN
     const json& puck = require_object(root, "puck", "recipe");
+    ESPRESSOLAB_SUPPRESS_DANGLING_REF_END
     recipe.dose_kg = units::grams_to_kg(require_number(puck, "dose_g", "recipe.puck"));
     recipe.basket_diameter_m =
         units::mm_to_m(require_number(puck, "basket_diameter_mm", "recipe.puck"));
@@ -185,7 +202,9 @@ Recipe load_recipe_json(const std::string& json_text) {
                                                "recipe.temperature_profile_c",
                                                units::celsius_to_kelvin);
 
+    ESPRESSOLAB_SUPPRESS_DANGLING_REF_BEGIN
     const json& stop = require_object(root, "stop", "recipe");
+    ESPRESSOLAB_SUPPRESS_DANGLING_REF_END
     recipe.maximum_time_s = require_number(stop, "maximum_time_s", "recipe.stop");
     if (stop.contains("target_beverage_g") && !stop.at("target_beverage_g").is_null()) {
         recipe.target_beverage_mass_kg =
@@ -234,7 +253,9 @@ ModelCoefficients load_coefficients_json(const std::string& json_text) {
     ModelCoefficients c;
     c.id = require_string(root, "id", "coefficients");
     c.version = require_string(root, "version", "coefficients");
+    ESPRESSOLAB_SUPPRESS_DANGLING_REF_BEGIN
     const json& v = require_object(root, "values", "coefficients");
+    ESPRESSOLAB_SUPPRESS_DANGLING_REF_END
     c.initial_porosity = required_number(v, "initial_porosity", "coefficients.values");
     c.kozeny_constant = required_number(v, "kozeny_constant", "coefficients.values");
     c.dry_permeability_multiplier =
@@ -419,3 +440,6 @@ void write_shot_artifacts(const std::filesystem::path& directory, const Recipe& 
 }
 
 }  // namespace espressolab::artifact_io
+
+#undef ESPRESSOLAB_SUPPRESS_DANGLING_REF_BEGIN
+#undef ESPRESSOLAB_SUPPRESS_DANGLING_REF_END

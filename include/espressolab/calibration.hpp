@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "espressolab/execution.hpp"
 #include "espressolab/result.hpp"
 #include "espressolab/simulator.hpp"
 #include "espressolab/types.hpp"
@@ -148,7 +149,8 @@ struct LeaveOneOutReport {
 
 // Mean loss of one coefficient set against one shot.
 LossBreakdown evaluate_shot_loss(const MeasuredShot& shot, const ModelCoefficients& coefficients,
-                                  const SimulationConfig& config, const LossWeights& weights);
+                                  const SimulationConfig& config, const LossWeights& weights,
+                                  const CancellationCallback& is_cancelled = {});
 
 // Dataset checks specific to real-world leave-one-out validation. Regular fits
 // retain support for synthetic fixtures so the calibration machinery can be
@@ -157,13 +159,15 @@ ValidationResult validate_leave_one_out_dataset(const std::vector<MeasuredShot>&
 
 // Deterministic Nelder-Mead over the normalised parameter box. The same spec
 // always produces the same fit.
-CalibrationReport fit(const CalibrationSpec& spec);
+CalibrationReport fit(const CalibrationSpec& spec,
+                      const CancellationCallback& is_cancelled = {});
 
 // Fits one model per held-out shot. `spec.fitting_shots` is the complete
 // dataset; `validation_shots` must be empty because every shot becomes a
 // validation case exactly once.
 LeaveOneOutReport leave_one_out(const CalibrationSpec& spec,
-                                const LeaveOneOutThresholds& thresholds = {});
+                                 const LeaveOneOutThresholds& thresholds = {},
+                                 const CancellationCallback& is_cancelled = {});
 
 // Linear interpolation of a simulated mass curve at an arbitrary time, so a
 // measured sample at 7.3 s can be compared against a 0.05 s sample grid.

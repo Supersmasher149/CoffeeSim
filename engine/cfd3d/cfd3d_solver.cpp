@@ -806,7 +806,8 @@ bool solve_uniform_layers(const PressureLevel& system, std::vector<double>& pres
 }
 
 PressureSolveResult solve_pressure(const PressureLevel& system, std::vector<double>& pressure,
-                                   double tolerance, int maximum_iterations) {
+                                   double tolerance, int maximum_iterations,
+                                   const CancellationCallback& is_cancelled) {
     std::vector<double> applied;
     apply_operator(system, pressure, applied);
     std::vector<double> residual(system.rhs.size(), 0.0);
@@ -841,6 +842,7 @@ PressureSolveResult solve_pressure(const PressureLevel& system, std::vector<doub
     std::vector<double> search = direction;
     std::vector<double> matrix_search;
     for (int iteration = 1; iteration <= maximum_iterations; ++iteration) {
+        if ((iteration & 31) == 1) throw_if_cancelled(is_cancelled);
         apply_operator(system, search, matrix_search);
         const long double denominator = dot_product(search, matrix_search);
         if (!std::isfinite(static_cast<double>(denominator)) || denominator <= 0.0L) {
@@ -983,7 +985,8 @@ Cfd3dSolver::Cfd3dSolver() : water_(std::make_shared<TabulatedWaterProperties>()
 Cfd3dSolver::Cfd3dSolver(std::shared_ptr<const WaterProperties> water) : water_(std::move(water)) {}
 
 Cfd3dResult Cfd3dSolver::run(const Recipe& recipe, const ModelCoefficients& coeff,
-                             const Cfd3dConfig& config) const {
+                              const Cfd3dConfig& config,
+                              const CancellationCallback& is_cancelled) const {
     ValidationResult validation = recipe.validate();
     validation.merge(coeff.validate());
     const Cfd3dMesh& mesh = config.mesh;
@@ -1342,6 +1345,7 @@ Cfd3dResult Cfd3dSolver::run(const Recipe& recipe, const ModelCoefficients& coef
     double last_step_s = config.dt_s;
     bool failed = false;
     while (time_s < recipe.maximum_time_s - 1.0e-12) {
+        throw_if_cancelled(is_cancelled);
         const double inlet_pressure_pa = recipe.pressure_pa.sample(time_s);
         const double inlet_temperature_k = recipe.inlet_temperature_k.sample(time_s);
         last_mobility = compute_mobility(geometry, state, material, bed.porosity,
@@ -1352,7 +1356,8 @@ Cfd3dResult Cfd3dSolver::run(const Recipe& recipe, const ModelCoefficients& coef
         if (time_s == 0.0 && config.snapshot_sink && config.snapshot_initial) {
             initial_pressure_solve = solve_pressure(pressure_system, pressure,
                                                     config.pressure_tolerance,
-                                                    config.pressure_max_iterations);
+                                                    config.pressure_max_iterations,
+                                                    is_cancelled);
             result.diagnostics.pressure_iterations_total += initial_pressure_solve.iterations;
             result.diagnostics.pressure_residual = initial_pressure_solve.residual;
             if (!initial_pressure_solve.converged) {
@@ -1367,7 +1372,7 @@ Cfd3dResult Cfd3dSolver::run(const Recipe& recipe, const ModelCoefficients& coef
         } else {
             const PressureSolveResult pressure_solve =
                 solve_pressure(pressure_system, pressure, config.pressure_tolerance,
-                               config.pressure_max_iterations);
+                               config.pressure_max_iterations, is_cancelled);
             result.diagnostics.pressure_iterations_total += pressure_solve.iterations;
             result.diagnostics.pressure_residual = pressure_solve.residual;
             if (!pressure_solve.converged) {
@@ -1658,7 +1663,7 @@ Cfd3dResult Cfd3dSolver::run(const Recipe& recipe, const ModelCoefficients& coef
                                       coeff.outlet_pressure_pa);
         const PressureSolveResult final_pressure =
             solve_pressure(final_system, pressure, config.pressure_tolerance,
-                           config.pressure_max_iterations);
+                           config.pressure_max_iterations, is_cancelled);
         result.diagnostics.pressure_iterations_total += final_pressure.iterations;
         result.diagnostics.pressure_residual = final_pressure.residual;
         if (!final_pressure.converged) {

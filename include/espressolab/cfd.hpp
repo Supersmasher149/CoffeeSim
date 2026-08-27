@@ -1,7 +1,9 @@
 #pragma once
+#include <memory>
 #include <string>
 #include <vector>
 
+#include "espressolab/execution.hpp"
 #include "espressolab/result.hpp"
 #include "espressolab/types.hpp"
 #include "espressolab/water_properties.hpp"
@@ -105,7 +107,8 @@ public:
     explicit CfdSolver(std::shared_ptr<const WaterProperties> water);
 
     [[nodiscard]] CfdResult run(const Recipe& recipe, const ModelCoefficients& coeff,
-                                const CfdConfig& config = {}) const;
+                                const CfdConfig& config = {},
+                                const CancellationCallback& is_cancelled = {}) const;
 
 private:
     std::shared_ptr<const WaterProperties> water_;

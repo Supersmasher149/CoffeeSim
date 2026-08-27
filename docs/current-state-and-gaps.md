@@ -44,7 +44,8 @@ server is local and session-bound.
 | Simulation core | Deterministic C++20 shot solver with pressure and inlet-temperature profiles, wetting, thermal state, extraction, transport, termination, warnings, and mass-balance diagnostics | Implemented and locally tested |
 | Model fidelity | Level 1 lumped puck behavior, Level 2 lateral parallel regions, and Level 3 stacked axial finite-volume cells | Implemented |
 | CFD | Separate 2D axisymmetric finite-volume solver with pressure, saturation, enthalpy, and solute transport | Implemented as a separate CLI entry point; verified, not validated |
-| CLI | `simulate`, `sweep`, `calibrate`, `synthesize`, `cfd`, `bench`, `params`, `fit-params`, and `version` commands | Implemented |
+| CLI | `simulate`, `sweep`, `calibrate`, `synthesize`, `cfd`, `cfd3d`, `bench`, `params`, `fit-params`, and `version` commands | Implemented |
+| Terminal UI | `espressolab_cli tui`: guided forms over every CLI command, calling the same shared workflow services (loaders, solvers, calibration, artifact writers) as the file-oriented commands; cooperative cancellation; POSIX-only | Implemented and locally tested (native suite plus a manually-run POSIX PTY smoke matrix); not yet exercised in hosted CI |
 | REST server | Local API for health, recipes, shots, asynchronous sweeps, cancellation, status, and CSV artifacts | Implemented |
 | Dashboard | Recipe controls, draggable pressure and temperature profiles, synchronized charts, comparisons, sweep heat maps, progress/cancellation, exports, diagnostics, and puck cross-section replay | Implemented; some literal browser interactions remain unverified |
 | Artifacts | Versioned recipe, coefficient, summary, manifest, JSON/CSV output, and SHA-256 result hashes | Implemented |
@@ -88,8 +89,9 @@ TDS and extraction yield are engineering outputs, not taste predictions.
 
 The repository documents the following local checks:
 
-- `./scripts/test.sh` passes 115 test cases and 17,385 assertions.
-- Native build, dashboard production build, and the CLI demo pass locally.
+- `./scripts/test.sh` passes 146 test cases and 18,110 assertions.
+- Native build, dashboard production build, and the CLI demo pass locally,
+  including the `ESPRESSOLAB_WARNINGS_AS_ERRORS` build.
 - The demo covers a baseline shot, a nine-run grind sweep, JSON/CSV artifacts,
   and repeated-run hash equality.
 - The baseline reaches 36 g in approximately 29.03 seconds with no clamps and
@@ -98,7 +100,14 @@ The repository documents the following local checks:
   substantially inside the documented 20 ms budget.
 - Verification tests cover units, correlations, whole-shot behavior, generated
   inputs, invariants, convergence, sweeps, parallel regions, axial cells, CFD,
-  calibration recovery, and deterministic leave-one-out mechanics.
+  calibration recovery, deterministic leave-one-out mechanics, native
+  cancellation checkpoints, and the TUI's pure (terminal-free) navigation,
+  form, and shared-workflow logic.
+- A separate POSIX PTY smoke matrix (`tests/pty/tui_smoke.py`) was run
+  manually against the built `espressolab_cli` binary and passed 10/10 checks
+  (launch, resize, a representative guided command, Ctrl-C, terminal
+  restoration, and non-TTY rejection). It is not wired into `ctest` or hosted
+  CI.
 
 These checks establish implementation behavior and numerical consistency. They
 do not establish that the equations or coefficients describe real espresso.

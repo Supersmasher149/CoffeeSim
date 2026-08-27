@@ -177,7 +177,8 @@ BenchOutcome run_bench(const BenchRequest& request, const CancellationCallback& 
     std::sort(outcome.samples_ms.begin(), outcome.samples_ms.end());
     outcome.best_ms = outcome.samples_ms.front();
     outcome.median_ms = outcome.samples_ms[outcome.samples_ms.size() / 2];
-    outcome.p95_ms = outcome.samples_ms[static_cast<std::size_t>(0.95 * (outcome.samples_ms.size() - 1))];
+    outcome.p95_ms = outcome.samples_ms[static_cast<std::size_t>(
+        0.95 * static_cast<double>(outcome.samples_ms.size() - 1))];
     return outcome;
 }
 

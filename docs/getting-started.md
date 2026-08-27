@@ -126,9 +126,10 @@ A short walkthrough:
    same defaults as the file-oriented command (`assets/recipes/baseline.json`,
    `assets/coefficients/default-v1.json`, `dt=0.01`, `sample-interval=0.05`).
    Press Enter on a field to edit it, Enter again to stop editing, Tab/Down to
-   move to the next field.
-3. Press Enter on a non-editing field to start the run. Long-running work runs
-   off the render loop, so the screen keeps responding; press `c` or Ctrl-C to
+   move to the next field, including past the last one to the trailing
+   `[ Run ]` action.
+3. Press Enter on `[ Run ]` to start the run. Long-running work runs off the
+   render loop, so the screen keeps responding; press `c` or Ctrl-C to
    request cancellation. A cancelled single run never writes a partial
    artifact; a cancelled sweep keeps and exports the runs it already
    completed.

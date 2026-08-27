@@ -111,7 +111,9 @@ private:
             const std::string marker = i == field_index_ ? (editing_ ? "* " : "> ") : "  ";
             rows.push_back(text(marker + fields_[i].label + ": " + fields_[i].value));
         }
-        rows.push_back(text("Enter on a non-editing field starts the job."));
+        const std::string run_marker = field_index_ == fields_.size() ? "> " : "  ";
+        rows.push_back(text(run_marker + "[ Run ]"));
+        rows.push_back(text("Enter on Run starts the job."));
     }
 
     void render_running(std::vector<Element>& rows) const {
@@ -134,7 +136,7 @@ private:
 
     std::string help_text() const {
         if (view_ == View::menu) return "Up/Down select   Enter open   q exit";
-        if (view_ == View::form) return "Up/Down move   Enter edit/run   Tab next   Esc back";
+        if (view_ == View::form) return "Up/Down move   Enter edit field / run on Run   Esc back";
         if (view_ == View::running) return "c cancel   Esc return when complete";
         return "Enter/Esc return to commands   q exit";
     }
@@ -165,6 +167,12 @@ private:
     }
 
     bool handle_form(Event event) {
+        // field_index_ ranges over [0, fields_.size()]: positions below
+        // fields_.size() are editable fields, and fields_.size() itself is
+        // the trailing "Run" action rendered by render_form. Only a field
+        // position can ever set editing_ (see the Return branch below), so
+        // fields_[field_index_] is safe whenever editing_ is true.
+        const std::size_t stop_count = fields_.size() + 1;
         if (event == Event::Escape) {
             if (editing_) editing_ = false;
             else view_ = View::menu;
@@ -190,11 +198,12 @@ private:
             return true;
         }
         if (event == Event::ArrowDown || event == Event::Tab) {
-            if (!fields_.empty()) field_index_ = (field_index_ + 1) % fields_.size();
+            field_index_ = (field_index_ + 1) % stop_count;
             return true;
         }
         if (event == Event::Return) {
-            editing_ = true;
+            if (field_index_ == fields_.size()) start_job_locked();
+            else editing_ = true;
             return true;
         }
         return false;

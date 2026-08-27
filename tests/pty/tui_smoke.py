@@ -10,6 +10,11 @@ run by hand or in a POSIX CI job alongside it:
 
 Coverage, matching the issue's acceptance criteria:
   * launch on an interactive PTY and render the home screen
+  * a guided command with form fields (`simulate`) can actually be run: Tab
+    to the trailing Run action and Enter it, producing the same native
+    result the file-oriented command prints (this exact path -- reaching
+    Run past a non-empty field list -- once regressed silently because
+    every other guided-command check here used a zero-field command)
   * a representative guided command (`version`, which needs no fields) runs
     and shows the same native output the file-oriented command prints
   * resize (SIGWINCH) does not crash the app and it keeps responding
@@ -172,6 +177,47 @@ def run(binary):
             still_alive and ("ESPRESSOLAB" in after_resize or after_resize == ""),
         )
     )
+
+    # -- run a guided command that actually has form fields (`simulate`, the
+    # first menu entry): open it, Tab past all 5 fields to the trailing Run
+    # action without editing any of them (so it runs on its file defaults),
+    # and confirm Enter on Run submits the job rather than just re-entering
+    # edit mode on the last field. This is the path every other check here
+    # skips by using a zero-field command, and it's the one that regressed.
+    session.send(b"\r")  # open `simulate` (menu_index_ 0 already)
+    time.sleep(0.3)
+    form_screen = plain(session.read(0.3).decode(errors="replace"))
+    results.append(
+        check(
+            "`simulate` form screen renders its fields",
+            "Configure simulate" in form_screen,
+            form_screen[-300:],
+        )
+    )
+    for _ in range(5):  # recipe, coefficients, dt, sample interval, out -> Run
+        session.send(b"\t")
+        time.sleep(0.05)
+    on_run_screen = plain(session.read(0.3).decode(errors="replace"))
+    results.append(
+        check(
+            "Tab reaches the trailing Run action",
+            "> [ Run ]" in on_run_screen,
+            on_run_screen[-300:],
+        )
+    )
+    session.send(b"\r")  # Enter on Run must submit the job, not start editing
+    time.sleep(0.5)
+    simulate_result = plain(session.read(1.0).decode(errors="replace"))
+    results.append(
+        check(
+            "Enter on Run actually runs `simulate` and shows its result",
+            "result hash" in simulate_result and "beverage mass" in simulate_result,
+            simulate_result[-400:],
+        )
+    )
+    session.send(b"\x1b")  # back to the menu for the next check
+    time.sleep(0.2)
+    session.read(0.2)
 
     # -- run a representative guided command (`version`: no fields, instant).
     for _ in range(

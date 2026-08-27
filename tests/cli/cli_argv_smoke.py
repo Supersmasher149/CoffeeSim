@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Black-box CLI argument-parsing smoke test (Audit F10, issue #11).
+"""Black-box CLI argument-parsing smoke test (Audit F10/F12, issues #11/#14).
 
 `parse_flags()` in `apps/espressolab_cli/main.cpp` builds the actual
 executable; it is not linked into `espressolab_tests` (see
@@ -16,6 +16,7 @@ Coverage:
     a nonzero exit code instead of silently running with defaults
   * an unexpected positional argument is rejected
   * a duplicate option is rejected
+  * an unknown `cfd --field` value is rejected before the solver runs
   * legitimate usage is unaffected (still exits 0)
 
 Each check prints PASS/FAIL with a short diagnostic. The process exit code
@@ -92,6 +93,37 @@ def main():
     check(
         "legitimate usage still succeeds",
         ["simulate", "--recipe", recipe, "--quiet"],
+        want_zero_exit=True,
+    )
+    check(
+        "unknown --field value is rejected before the CFD solver runs (Audit F12, issue #14)",
+        [
+            "cfd",
+            "--recipe",
+            recipe,
+            "--radial",
+            "1",
+            "--axial",
+            "1",
+            "--field",
+            "bogus",
+        ],
+        want_zero_exit=False,
+        needle="UNKNOWN_OPTION",
+    )
+    check(
+        "known --field value still succeeds",
+        [
+            "cfd",
+            "--recipe",
+            recipe,
+            "--radial",
+            "1",
+            "--axial",
+            "1",
+            "--field",
+            "pressure",
+        ],
         want_zero_exit=True,
     )
 

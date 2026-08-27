@@ -433,6 +433,15 @@ int command_cfd(int argc, char** argv) {
         std::cerr << "cfd requires --recipe <file>\n";
         return 2;
     }
+    // Audit F12: validate --field before running the solver so an unknown
+    // name (e.g. a typo) fails loudly instead of silently falling through
+    // to the saturation field.
+    static const std::set<std::string> kFieldNames = {"pressure", "saturation", "temperature", "tds"};
+    if (flags.count("field") && !kFieldNames.count(flags.at("field"))) {
+        print_error("UNKNOWN_OPTION", "unrecognized --field '" + flags.at("field") + "' (expected pressure, "
+                    "saturation, temperature, or tds)", "field");
+        return kUsageError;
+    }
 
     cli_workflows::CfdRequest request;
     request.recipe_path = flags.at("recipe");

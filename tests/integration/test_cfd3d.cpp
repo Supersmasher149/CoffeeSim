@@ -123,6 +123,17 @@ TEST_CASE("cfd3d rejects unsupported mesh and snapshot budgets", "[cfd3d][artifa
     REQUIRE_THROWS_AS(Cfd3dSolver().run(recipe, coefficients, snapshots), InvalidInputError);
 }
 
+// Audit F4, issue #6: root.value("schema_version", ...) only tolerates a
+// *missing* key -- a present key of the wrong type still threw an uncaught
+// nlohmann::json::type_error instead of a structured MALFORMED_JSON.
+TEST_CASE("a wrongly typed cfd3d schema_version is a structured error", "[cfd3d][artifacts]") {
+    REQUIRE_THROWS_MATCHES(
+        cfd3d_artifact_io::load_case_json(R"({"schema_version":123,"recipe":{}})"), artifact_io::LoadError,
+        Catch::Matchers::Predicate<artifact_io::LoadError>([](const artifact_io::LoadError& e) {
+            return e.code == "MALFORMED_JSON" && e.path == "cfd3d.schema_version";
+        }));
+}
+
 // Audit F2, issue #5: parse_material() built a dense Cfd3dMaterialField from
 // mesh.nx/ny/nz before the solver's mesh-limit validation ran, so an
 // oversized scalar/uniform material request forced a large allocation on

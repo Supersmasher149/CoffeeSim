@@ -460,6 +460,13 @@ void write_fields(const std::filesystem::path& directory, const Cfd3dResult& res
 Cfd3dCase load_case_json(const std::string& json_text) {
     const json root = parse_json(json_text, "cfd3d");
     require_object(root, "cfd3d");
+    // Audit F4, issue #6: root.value("schema_version", ...) only tolerates a
+    // *missing* key -- a present key of the wrong type (e.g. a number) still
+    // throws nlohmann::json::type_error, which reached the CLI/server as an
+    // uncaught INTERNAL_ERROR instead of a structured MALFORMED_JSON.
+    if (root.contains("schema_version") && !root.at("schema_version").is_string()) {
+        fail("MALFORMED_JSON", "cfd3d.schema_version", "schema_version must be a string");
+    }
     const std::string schema = root.value("schema_version", std::string(version::kCfd3dCaseSchema));
     if (schema != version::kCfd3dCaseSchema) {
         fail("UNSUPPORTED_SCHEMA_VERSION", "cfd3d.schema_version",
@@ -467,41 +474,53 @@ Cfd3dCase load_case_json(const std::string& json_text) {
     }
     if (!root.contains("recipe")) fail("MISSING_FIELD", "cfd3d.recipe", "recipe is required");
 
-    Cfd3dCase result;
-    result.recipe = artifact_io::load_recipe_json(root.at("recipe").dump());
-    if (root.contains("coefficients")) {
-        result.coefficients = artifact_io::load_coefficients_json(root.at("coefficients").dump());
+    // Every field below this point already goes through a type-checked
+    // helper (require_object/integer_value/number_value/boolean_value) or a
+    // nested loader that raises LoadError itself. This catch is defense in
+    // depth: it guarantees any other malformed field anywhere in this
+    // document -- including inside the nested recipe/coefficients JSON --
+    // still surfaces as a stable MALFORMED_JSON rather than an uncaught
+    // nlohmann exception (LoadError itself is not a json::exception, so it
+    // passes through this catch unchanged).
+    try {
+        Cfd3dCase result;
+        result.recipe = artifact_io::load_recipe_json(root.at("recipe").dump());
+        if (root.contains("coefficients")) {
+            result.coefficients = artifact_io::load_coefficients_json(root.at("coefficients").dump());
+        }
+        if (root.contains("mesh")) {
+            require_object(root.at("mesh"), "cfd3d.mesh");
+            const json& mesh = root.at("mesh");
+            result.config.mesh.nx = integer_value(mesh, "nx", "cfd3d.mesh", result.config.mesh.nx);
+            result.config.mesh.ny = integer_value(mesh, "ny", "cfd3d.mesh", result.config.mesh.ny);
+            result.config.mesh.nz = integer_value(mesh, "nz", "cfd3d.mesh", result.config.mesh.nz);
+        }
+        if (root.contains("solver")) {
+            require_object(root.at("solver"), "cfd3d.solver");
+            const json& solver = root.at("solver");
+            result.config.dt_s = number_value(solver, "dt_s", "cfd3d.solver", result.config.dt_s);
+            result.config.sample_interval_s =
+                number_value(solver, "sample_interval_s", "cfd3d.solver", result.config.sample_interval_s);
+            result.config.cfl_number =
+                number_value(solver, "cfl_number", "cfd3d.solver", result.config.cfl_number);
+            result.config.pressure_tolerance =
+                number_value(solver, "pressure_tolerance", "cfd3d.solver", result.config.pressure_tolerance);
+            result.config.pressure_max_iterations = integer_value(
+                solver, "pressure_max_iterations", "cfd3d.solver", result.config.pressure_max_iterations);
+            result.config.snapshot_interval_s =
+                number_value(solver, "snapshot_interval_s", "cfd3d.solver", result.config.snapshot_interval_s);
+            result.config.snapshot_initial =
+                boolean_value(solver, "snapshot_initial", "cfd3d.solver", result.config.snapshot_initial);
+            result.config.snapshot_final =
+                boolean_value(solver, "snapshot_final", "cfd3d.solver", result.config.snapshot_final);
+        }
+        if (root.contains("material")) {
+            result.config.material = parse_material(root.at("material"), result.config.mesh, "cfd3d.material");
+        }
+        return result;
+    } catch (const json::exception& e) {
+        fail("MALFORMED_JSON", "cfd3d", e.what());
     }
-    if (root.contains("mesh")) {
-        require_object(root.at("mesh"), "cfd3d.mesh");
-        const json& mesh = root.at("mesh");
-        result.config.mesh.nx = integer_value(mesh, "nx", "cfd3d.mesh", result.config.mesh.nx);
-        result.config.mesh.ny = integer_value(mesh, "ny", "cfd3d.mesh", result.config.mesh.ny);
-        result.config.mesh.nz = integer_value(mesh, "nz", "cfd3d.mesh", result.config.mesh.nz);
-    }
-    if (root.contains("solver")) {
-        require_object(root.at("solver"), "cfd3d.solver");
-        const json& solver = root.at("solver");
-        result.config.dt_s = number_value(solver, "dt_s", "cfd3d.solver", result.config.dt_s);
-        result.config.sample_interval_s =
-            number_value(solver, "sample_interval_s", "cfd3d.solver", result.config.sample_interval_s);
-        result.config.cfl_number =
-            number_value(solver, "cfl_number", "cfd3d.solver", result.config.cfl_number);
-        result.config.pressure_tolerance =
-            number_value(solver, "pressure_tolerance", "cfd3d.solver", result.config.pressure_tolerance);
-        result.config.pressure_max_iterations = integer_value(
-            solver, "pressure_max_iterations", "cfd3d.solver", result.config.pressure_max_iterations);
-        result.config.snapshot_interval_s =
-            number_value(solver, "snapshot_interval_s", "cfd3d.solver", result.config.snapshot_interval_s);
-        result.config.snapshot_initial =
-            boolean_value(solver, "snapshot_initial", "cfd3d.solver", result.config.snapshot_initial);
-        result.config.snapshot_final =
-            boolean_value(solver, "snapshot_final", "cfd3d.solver", result.config.snapshot_final);
-    }
-    if (root.contains("material")) {
-        result.config.material = parse_material(root.at("material"), result.config.mesh, "cfd3d.material");
-    }
-    return result;
 }
 
 Cfd3dCase load_case_file(const std::filesystem::path& file) {

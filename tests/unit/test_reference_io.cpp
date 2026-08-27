@@ -84,6 +84,22 @@ TEST_CASE("reference catalogue reports individual file errors", "[references]") 
     REQUIRE(catalogue.load_errors.front().code == "REFERENCE_FILE_INVALID");
 }
 
+// Audit F4, issue #6: manifest.value("schema_version", ...) only tolerates a
+// *missing* key -- a present key of the wrong type still threw an uncaught
+// nlohmann::json::type_error instead of a structured REFERENCE_MANIFEST_INVALID.
+TEST_CASE("a wrongly typed manifest schema_version is a structured error", "[references]") {
+    TemporaryDirectory directory;
+    write_text(directory.path / "manifest.json", R"({
+      "schema_version": 123,
+      "references": []
+    })");
+
+    REQUIRE_THROWS_MATCHES(
+        reference_io::load_directory(directory.path), reference_io::LoadError,
+        Catch::Matchers::Predicate<reference_io::LoadError>(
+            [](const reference_io::LoadError& e) { return e.code == "REFERENCE_MANIFEST_INVALID"; }));
+}
+
 TEST_CASE("incomplete reference records are reported as file errors", "[references]") {
     TemporaryDirectory directory;
     write_text(directory.path / "manifest.json", R"({

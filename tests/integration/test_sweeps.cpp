@@ -1,11 +1,26 @@
 #include <algorithm>
+#include <fstream>
+
 #include <catch_amalgamated.hpp>
 
 #include "../fixtures/test_fixtures.hpp"
+#include "espressolab/artifact_io.hpp"
 #include "espressolab/experiment.hpp"
 #include "espressolab/units.hpp"
 
 using namespace espressolab;
+
+namespace {
+
+std::filesystem::path write_temp_sweep_spec(const std::string& contents) {
+    const std::filesystem::path path =
+        std::filesystem::temp_directory_path() / "espressolab-sweep-spec-test.json";
+    std::ofstream stream(path, std::ios::trunc);
+    stream << contents;
+    return path;
+}
+
+}  // namespace
 
 // Section 14.2: a sweep contains the expected run count with stable parameter
 // ordering. FR-05: at least 100 runs complete without a browser.
@@ -96,6 +111,29 @@ TEST_CASE("sweep parameters apply in the recipe's own units", "[sweep]") {
     REQUIRE(units::pa_to_bar(scaled.pressure_pa.sample(0.0)) == Catch::Approx(1.0));
     REQUIRE(units::pa_to_bar(scaled.pressure_pa.sample(20.0)) == Catch::Approx(4.5));
     REQUIRE(scaled.pressure_pa.points().size() == baseline.pressure_pa.points().size());
+}
+
+// Audit F4, issue #6: a sweep spec whose JSON root is the wrong type (e.g.
+// `[]`) passed parsing but then threw an uncaught nlohmann::json::type_error
+// on the first `.value()` call in load_sweep_spec_file() instead of a
+// structured MALFORMED_JSON error.
+TEST_CASE("a sweep spec with a non-object root is a structured error", "[sweep][artifacts]") {
+    const std::filesystem::path path = write_temp_sweep_spec("[]");
+    REQUIRE_THROWS_MATCHES(
+        artifact_io_sweep::load_sweep_spec_file(path), artifact_io::LoadError,
+        Catch::Matchers::Predicate<artifact_io::LoadError>(
+            [](const artifact_io::LoadError& e) { return e.code == "MALFORMED_JSON"; }));
+}
+
+TEST_CASE("a sweep spec with a wrongly typed field is a structured error", "[sweep][artifacts]") {
+    // baseline_recipe is a number instead of a path string: root.at(...)
+    // .get<std::string>() threw an uncaught nlohmann::json::type_error
+    // before this fix's boundary translation caught it.
+    const std::filesystem::path path = write_temp_sweep_spec(R"({"baseline_recipe": 123, "axes": []})");
+    REQUIRE_THROWS_MATCHES(
+        artifact_io_sweep::load_sweep_spec_file(path), artifact_io::LoadError,
+        Catch::Matchers::Predicate<artifact_io::LoadError>(
+            [](const artifact_io::LoadError& e) { return e.code == "MALFORMED_JSON"; }));
 }
 
 TEST_CASE("an out-of-range corner is recorded instead of aborting the sweep", "[sweep]") {

@@ -1,5 +1,9 @@
 #include <catch_amalgamated.hpp>
 #include <cmath>
+#include <functional>
+#include <limits>
+#include <string>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 
@@ -75,6 +79,52 @@ TEST_CASE("nonphysical values fail validation rather than simulating", "[artifac
     REQUIRE_FALSE(result.ok());
     REQUIRE(result.issues().front().path == "recipe.puck.particle_diameter_um");
     REQUIRE_THROWS_AS(Simulator().run(recipe, testing::baseline_coefficients()), InvalidInputError);
+}
+
+// Audit F5, issue #3: ModelCoefficients::validate() omitted outlet_pressure_pa
+// (the field the finding was filed for, despite the schema requiring it to
+// be nonnegative) and several other fields entirely. Cover every field this
+// fix added checks for, with both a nonphysical finite value and a
+// non-finite one where relevant.
+TEST_CASE("every previously-omitted coefficient field is validated", "[artifacts]") {
+    struct Case {
+        std::string name;
+        std::string path;
+        std::function<void(ModelCoefficients&)> mutate;
+    };
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const std::vector<Case> cases = {
+        {"negative outlet pressure", "coefficients.outlet_pressure_pa",
+         [](ModelCoefficients& c) { c.outlet_pressure_pa = -100000.0; }},
+        {"NaN outlet pressure", "coefficients.outlet_pressure_pa",
+         [nan](ModelCoefficients& c) { c.outlet_pressure_pa = nan; }},
+        {"negative porosity_compression_factor", "coefficients.porosity_compression_factor",
+         [](ModelCoefficients& c) { c.porosity_compression_factor = -0.1; }},
+        {"NaN ambient_heat_loss_w_k", "coefficients.ambient_heat_loss_w_k",
+         [nan](ModelCoefficients& c) { c.ambient_heat_loss_w_k = nan; }},
+        {"negative ambient_temperature_k", "coefficients.ambient_temperature_k",
+         [](ModelCoefficients& c) { c.ambient_temperature_k = -1.0; }},
+        {"non-finite initial_puck_temperature_k", "coefficients.initial_puck_temperature_k",
+         [](ModelCoefficients& c) {
+             c.initial_puck_temperature_k = std::numeric_limits<double>::infinity();
+         }},
+        {"NaN activation_energy_j_mol", "coefficients.activation_energy_j_mol",
+         [nan](ModelCoefficients& c) { c.activation_energy_j_mol = nan; }},
+        {"distribution_factor_floor out of range", "coefficients.distribution_factor_floor",
+         [](ModelCoefficients& c) { c.distribution_factor_floor = 0.0; }},
+    };
+
+    for (const Case& test_case : cases) {
+        SECTION(test_case.name) {
+            ModelCoefficients coefficients = testing::baseline_coefficients();
+            test_case.mutate(coefficients);
+
+            const ValidationResult result = coefficients.validate();
+            REQUIRE_FALSE(result.ok());
+            REQUIRE(result.issues().front().path == test_case.path);
+            REQUIRE_THROWS_AS(Simulator().run(testing::baseline_recipe(), coefficients), InvalidInputError);
+        }
+    }
 }
 
 TEST_CASE("parallel-region validation rejects nonphysical partitions", "[artifacts][regions]") {

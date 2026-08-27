@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <stdexcept>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -132,6 +133,39 @@ TEST_CASE("a wrongly typed cfd3d schema_version is a structured error", "[cfd3d]
         Catch::Matchers::Predicate<artifact_io::LoadError>([](const artifact_io::LoadError& e) {
             return e.code == "MALFORMED_JSON" && e.path == "cfd3d.schema_version";
         }));
+}
+
+// Audit P3, issue #20: Cfd3dField/Cfd3dMaterialField's 4-arg constructors
+// are public and called field_size() directly, which had no checked
+// multiplication and no maximum -- a caller constructing one directly
+// (bypassing both Cfd3dSolver::run()'s mesh check and
+// cfd3d_artifact_io::validate_mesh_bounds, issue #5's loader-side guard for
+// the JSON path) could overflow std::size_t or force an unbounded
+// allocation. Both constructors must now enforce the same 128x128x256 /
+// 262144-cell policy the solver and loader already do.
+TEST_CASE("Cfd3dField/Cfd3dMaterialField constructors reject oversized and overflowing dimensions",
+          "[cfd3d]") {
+    SECTION("negative dimensions are still rejected") {
+        REQUIRE_THROWS_AS(Cfd3dField(-1, 4, 4), std::invalid_argument);
+        REQUIRE_THROWS_AS(Cfd3dMaterialField(4, -1, 4), std::invalid_argument);
+    }
+    SECTION("zero dimensions are rejected") { REQUIRE_THROWS_AS(Cfd3dField(0, 4, 4), std::invalid_argument); }
+    SECTION("one axis over the per-axis cap is rejected") {
+        REQUIRE_THROWS_AS(Cfd3dField(129, 1, 1), std::invalid_argument);
+        REQUIRE_THROWS_AS(Cfd3dMaterialField(1, 1, 257), std::invalid_argument);
+    }
+    SECTION("within each axis cap but over the cell-product cap is rejected") {
+        REQUIRE_THROWS_AS(Cfd3dField(100, 100, 100), std::invalid_argument);
+    }
+    SECTION("dimensions large enough to overflow size_t are rejected, not truncated") {
+        constexpr int huge = 1'000'000'000;
+        REQUIRE_THROWS_AS(Cfd3dField(huge, huge, huge), std::invalid_argument);
+    }
+    SECTION("a mesh within every limit still constructs normally") {
+        const Cfd3dField field(6, 6, 8, 2.5);
+        REQUIRE(field.size() == 6u * 6u * 8u);
+        REQUIRE(field.at(0, 0, 0) == Catch::Approx(2.5));
+    }
 }
 
 // Audit F2, issue #5: parse_material() built a dense Cfd3dMaterialField from

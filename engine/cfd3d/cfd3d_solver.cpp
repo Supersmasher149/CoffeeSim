@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <map>
 #include <numbers>
@@ -47,12 +48,42 @@ Point operator*(const Point& a, double factor) { return {a.x * factor, a.y * fac
 
 double squared_norm(const Point& point) { return dot(point, point); }
 
+// Audit P3, issue #20: field_size() multiplied raw dimensions with no
+// checked multiplication and no maximum, and Cfd3dField/Cfd3dMaterialField's
+// 4-arg constructors are public -- a caller constructing one directly
+// (bypassing both Cfd3dSolver::run()'s own mesh check, lines below, and
+// cfd3d_artifact_io::validate_mesh_bounds, issue #5's equivalent guard for
+// the JSON loader) could overflow std::size_t with large-but-positive
+// dimensions, silently truncating the allocation while nx_/ny_/nz_ still
+// hold the original (too-large) values used for indexing in at() -- an
+// out-of-bounds vector access, not just an allocation-size mistake.
+// kMaximumMesh{Nx,Ny,Nz,Cells} mirror the exact limits Cfd3dSolver::run()
+// enforces just below and cfd3d_artifact_io::validate_mesh_bounds enforces
+// in the loader; all three must move together.
+constexpr int kMaximumMeshNx = 128;
+constexpr int kMaximumMeshNy = 128;
+constexpr int kMaximumMeshNz = 256;
+constexpr std::uint64_t kMaximumMeshCells = 262144;
+
 std::size_t field_size(int nx, int ny, int nz) {
-    if (nx < 0 || ny < 0 || nz < 0) {
-        throw std::invalid_argument("Cfd3dField dimensions must not be negative");
+    if (nx < 1 || ny < 1 || nz < 1) {
+        throw std::invalid_argument("Cfd3dField dimensions must be positive");
     }
-    return static_cast<std::size_t>(nx) * static_cast<std::size_t>(ny) *
-           static_cast<std::size_t>(nz);
+    if (nx > kMaximumMeshNx || ny > kMaximumMeshNy || nz > kMaximumMeshNz) {
+        throw std::invalid_argument("Cfd3dField dimensions exceed the maximum supported mesh size");
+    }
+    const auto ux = static_cast<std::uint64_t>(nx);
+    const auto uy = static_cast<std::uint64_t>(ny);
+    const auto uz = static_cast<std::uint64_t>(nz);
+    if (ux > std::numeric_limits<std::uint64_t>::max() / uy ||
+        ux * uy > std::numeric_limits<std::uint64_t>::max() / uz) {
+        throw std::invalid_argument("Cfd3dField dimensions overflow the field size");
+    }
+    const std::uint64_t count = ux * uy * uz;
+    if (count > kMaximumMeshCells) {
+        throw std::invalid_argument("Cfd3dField cell count exceeds the maximum supported mesh size");
+    }
+    return static_cast<std::size_t>(count);
 }
 
 double circle_triangle_intersection_area(const Point& a, const Point& b, double radius_m) {
@@ -990,23 +1021,27 @@ Cfd3dResult Cfd3dSolver::run(const Recipe& recipe, const ModelCoefficients& coef
     ValidationResult validation = recipe.validate();
     validation.merge(coeff.validate());
     const Cfd3dMesh& mesh = config.mesh;
-    if (mesh.nx < 1 || mesh.nx > 128) {
-        validation.add("NONPHYSICAL_INPUT", "cfd3d mesh.nx must be between 1 and 128",
+    if (mesh.nx < 1 || mesh.nx > kMaximumMeshNx) {
+        validation.add("NONPHYSICAL_INPUT",
+                       "cfd3d mesh.nx must be between 1 and " + std::to_string(kMaximumMeshNx),
                        "cfd3d.mesh.nx");
     }
-    if (mesh.ny < 1 || mesh.ny > 128) {
-        validation.add("NONPHYSICAL_INPUT", "cfd3d mesh.ny must be between 1 and 128",
+    if (mesh.ny < 1 || mesh.ny > kMaximumMeshNy) {
+        validation.add("NONPHYSICAL_INPUT",
+                       "cfd3d mesh.ny must be between 1 and " + std::to_string(kMaximumMeshNy),
                        "cfd3d.mesh.ny");
     }
-    if (mesh.nz < 1 || mesh.nz > 256) {
-        validation.add("NONPHYSICAL_INPUT", "cfd3d mesh.nz must be between 1 and 256",
+    if (mesh.nz < 1 || mesh.nz > kMaximumMeshNz) {
+        validation.add("NONPHYSICAL_INPUT",
+                       "cfd3d mesh.nz must be between 1 and " + std::to_string(kMaximumMeshNz),
                        "cfd3d.mesh.nz");
     }
     if (mesh.nx > 0 && mesh.ny > 0 && mesh.nz > 0 &&
-        static_cast<std::size_t>(mesh.nx) * static_cast<std::size_t>(mesh.ny) *
-                static_cast<std::size_t>(mesh.nz) >
-            262144U) {
-        validation.add("NONPHYSICAL_INPUT", "cfd3d mesh cell product must not exceed 262144",
+        static_cast<std::uint64_t>(mesh.nx) * static_cast<std::uint64_t>(mesh.ny) *
+                static_cast<std::uint64_t>(mesh.nz) >
+            kMaximumMeshCells) {
+        validation.add("NONPHYSICAL_INPUT",
+                       "cfd3d mesh cell product must not exceed " + std::to_string(kMaximumMeshCells),
                        "cfd3d.mesh");
     }
     if (!std::isfinite(config.dt_s) || config.dt_s <= 0.0) {

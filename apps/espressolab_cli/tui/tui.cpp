@@ -68,10 +68,24 @@ public:
         rows.push_back(text("ESPRESSOLAB // TERMINAL WORKBENCH") | bold);
         rows.push_back(text("Native numbers. Reproducible artifacts. No browser formulas."));
         rows.push_back(separator());
-        if (view_ == View::menu) render_menu(rows);
-        if (view_ == View::form) render_form(rows);
-        if (view_ == View::running) render_running(rows);
-        if (view_ == View::result) render_result(rows);
+
+        // The body (menu/form/running/result) can be taller than the
+        // terminal -- e.g. cfd3d's 11-field form, or a long result report's
+        // warnings. Render it into its own vbox, wrapped in `yframe` and
+        // marked with `focus()` on the currently active row, so FTXUI
+        // scrolls the frame to keep that row on screen. `yflex` lets the
+        // frame claim whatever vertical space is left after the fixed
+        // header/footer lines, instead of requesting its full unclipped
+        // content height (which is what let the form's trailing "Run"
+        // action, or the tail of a long report, render past the bottom of
+        // the terminal with no way to scroll to it).
+        std::vector<Element> body;
+        if (view_ == View::menu) render_menu(body);
+        if (view_ == View::form) render_form(body);
+        if (view_ == View::running) render_running(body);
+        if (view_ == View::result) render_result(body);
+        rows.push_back(vbox(std::move(body)) | yframe | yflex);
+
         rows.push_back(separator());
         rows.push_back(text(help_text()));
         return vbox(std::move(rows)) | border;
@@ -99,8 +113,11 @@ private:
     void render_menu(std::vector<Element>& rows) const {
         rows.push_back(text("Choose a workflow") | bold);
         for (std::size_t i = 0; i < commands().size(); ++i) {
-            const std::string marker = i == menu_index_ ? "> " : "  ";
-            rows.push_back(text(marker + commands()[i].title + "  " + commands()[i].help));
+            const bool active = i == menu_index_;
+            const std::string marker = active ? "> " : "  ";
+            Element row = text(marker + commands()[i].title + "  " + commands()[i].help);
+            if (active) row = focus(std::move(row));
+            rows.push_back(std::move(row));
         }
     }
 
@@ -108,11 +125,17 @@ private:
         rows.push_back(text("Configure " + commands()[selected_].title) | bold);
         rows.push_back(text("Enter edits the focused field. Empty values use command defaults."));
         for (std::size_t i = 0; i < fields_.size(); ++i) {
-            const std::string marker = i == field_index_ ? (editing_ ? "* " : "> ") : "  ";
-            rows.push_back(text(marker + fields_[i].label + ": " + fields_[i].value));
+            const bool active = i == field_index_;
+            const std::string marker = active ? (editing_ ? "* " : "> ") : "  ";
+            Element row = text(marker + fields_[i].label + ": " + fields_[i].value);
+            if (active) row = focus(std::move(row));
+            rows.push_back(std::move(row));
         }
-        const std::string run_marker = field_index_ == fields_.size() ? "> " : "  ";
-        rows.push_back(text(run_marker + "[ Run ]"));
+        const bool run_active = field_index_ == fields_.size();
+        const std::string run_marker = run_active ? "> " : "  ";
+        Element run_row = text(run_marker + "[ Run ]");
+        if (run_active) run_row = focus(std::move(run_row));
+        rows.push_back(std::move(run_row));
         rows.push_back(text("Enter on Run starts the job."));
     }
 
@@ -126,19 +149,28 @@ private:
             rows.push_back(text("progress: native workflow in progress"));
         }
         rows.push_back(text("elapsed: " + seconds_text(started_) + " s"));
-        rows.push_back(text("Press c or Ctrl-C to request cancellation."));
+        // No navigation state exists in this view (nothing to scroll to
+        // with the keyboard), so pin the frame to the cancellation hint
+        // rather than the title: that is the one actionable line, and it
+        // is the line most likely to scroll out of view while a long
+        // native workflow (e.g. cfd3d) is running.
+        rows.push_back(focus(text("Press c or Ctrl-C to request cancellation.")));
     }
 
     void render_result(std::vector<Element>& rows) const {
         rows.push_back(text(result_title_) | bold);
-        for (const std::string& line : result_lines_) rows.push_back(text(line));
+        for (std::size_t i = 0; i < result_lines_.size(); ++i) {
+            Element row = text(result_lines_[i]);
+            if (i == result_scroll_) row = focus(std::move(row));
+            rows.push_back(std::move(row));
+        }
     }
 
     std::string help_text() const {
         if (view_ == View::menu) return "Up/Down select   Enter open   q exit";
         if (view_ == View::form) return "Up/Down move   Enter edit field / run on Run   Esc back";
         if (view_ == View::running) return "c cancel   Esc return when complete";
-        return "Enter/Esc return to commands   q exit";
+        return "Up/Down scroll   Enter/Esc return to commands   q exit";
     }
 
     bool handle_menu(Event event) {
@@ -219,6 +251,14 @@ private:
     }
 
     bool handle_result(Event event) {
+        if (event == Event::ArrowUp) {
+            if (result_scroll_ > 0) --result_scroll_;
+            return true;
+        }
+        if (event == Event::ArrowDown) {
+            if (!result_lines_.empty() && result_scroll_ + 1 < result_lines_.size()) ++result_scroll_;
+            return true;
+        }
         if (event == Event::Return || event == Event::Escape) {
             view_ = View::menu;
             return true;
@@ -237,6 +277,7 @@ private:
         const std::vector<Field> fields = fields_;
         result_title_ = "Result: " + commands()[selected_].title;
         result_lines_.clear();
+        result_scroll_ = 0;
         progress_completed_ = 0;
         progress_total_ = 0;
         status_ = "starting";
@@ -296,6 +337,7 @@ private:
     std::string status_;
     std::string result_title_;
     std::vector<std::string> result_lines_;
+    std::size_t result_scroll_ = 0;
     std::atomic<bool> cancel_requested_{false};
     std::thread worker_;
     std::chrono::steady_clock::time_point started_ = std::chrono::steady_clock::now();

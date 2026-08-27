@@ -17,6 +17,9 @@ Coverage, matching the issue's acceptance criteria:
     every other guided-command check here used a zero-field command)
   * a representative guided command (`version`, which needs no fields) runs
     and shows the same native output the file-oriented command prints
+  * a form taller than the terminal (`cfd3d`, 11 fields) scrolls as you
+    navigate past the bottom of a short PTY, so the trailing Run action is
+    always reachable rather than rendering past the edge of the screen
   * resize (SIGWINCH) does not crash the app and it keeps responding
   * Ctrl-C from the menu exits cleanly
   * quitting restores the terminal (leaves the alternate screen, shows the
@@ -30,12 +33,15 @@ binary) are checked explicitly rather than assumed, per issue #30: "PTY tests
 ... fail with diagnostics when prerequisites are absent."
 """
 
+import fcntl
 import os
 import re
 import select
 import signal
+import struct
 import subprocess
 import sys
+import termios
 import time
 
 try:
@@ -59,8 +65,16 @@ def default_binary():
 class Session:
     """A `tui` process attached to one end of a PTY."""
 
-    def __init__(self, binary):
+    def __init__(self, binary, size=None):
+        """`size`, if given, is a (rows, cols) pair applied to the PTY
+        before the process starts, so the app's very first frame already
+        sees the constrained terminal (no SIGWINCH round-trip needed)."""
         self.master, slave = pty.openpty()
+        if size is not None:
+            rows, cols = size
+            fcntl.ioctl(
+                slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0)
+            )
         self.proc = subprocess.Popen(
             [binary, "tui"], stdin=slave, stdout=slave, stderr=slave, close_fds=True
         )
@@ -277,6 +291,48 @@ def run(binary):
             repr(tail2[-120:]),
         )
     )
+
+    # -- a form taller than the terminal must scroll to reveal every field
+    # and the trailing Run action (regression: `cfd3d` has 11 fields, and on
+    # a short terminal the body used to render past the bottom of the screen
+    # with no way to scroll down to it at all). Force a short PTY -- 15 rows
+    # -- so the form cannot possibly fit without scrolling.
+    session3 = Session(binary, size=(15, 80))
+    session3.read_until("ESPRESSOLAB")
+    for _ in range(6):  # simulate, sweep, calibrate, synthesize, bench, cfd -> cfd3d
+        session3.send(b"\x1b[B")
+        time.sleep(0.05)
+    session3.send(b"\r")  # open cfd3d
+    time.sleep(0.3)
+    cfd3d_form = plain(session3.read(0.3).decode(errors="replace"))
+    results.append(
+        check(
+            "`cfd3d` form screen renders on a short terminal",
+            "Configure cfd3d" in cfd3d_form,
+            cfd3d_form[-300:],
+        )
+    )
+    reached_run = False
+    last_screen = cfd3d_form
+    for _ in range(15):  # cfd3d has 11 fields; this comfortably overshoots
+        session3.send(b"\x1b[B")
+        time.sleep(0.05)
+        chunk = plain(session3.read(0.2).decode(errors="replace"))
+        if chunk:
+            last_screen = chunk
+        if "> [ Run ]" in last_screen:
+            reached_run = True
+            break
+    results.append(
+        check(
+            "short terminal scrolls down to the focused Run action",
+            reached_run,
+            last_screen[-300:],
+        )
+    )
+    session3.send(b"\x1b")  # back to the menu without running the solve
+    time.sleep(0.2)
+    session3.kill()
 
     return results
 

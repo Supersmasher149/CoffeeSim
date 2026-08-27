@@ -399,7 +399,7 @@ std::vector<Field> default_fields(Command command) {
                     {"field", "saturation"}};
         case Command::cfd3d:
             return {{"case", ""},
-                    {"recipe", "assets/recipes/baseline.json"},
+                    {"recipe", ""},
                     {"coefficients", ""},
                     {"nx", "32"},
                     {"ny", "32"},

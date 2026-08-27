@@ -311,6 +311,9 @@ CfdOutcome run_cfd(const CfdRequest& request, const CancellationCallback& is_can
 
 // ------------------------------------------------------------------ cfd3d ---
 Cfd3dOutcome run_cfd3d(const Cfd3dRequest& request, const CancellationCallback& is_cancelled) {
+    if (request.case_path.empty() && request.recipe_path.empty()) {
+        throw_single_issue("MISSING_ARGUMENT", "a case file or a recipe file is required", "recipe");
+    }
     Cfd3dOutcome outcome;
     outcome.cfd3d_case =
         request.case_path.empty() ? cfd3d_artifact_io::Cfd3dCase{} : cfd3d_artifact_io::load_case_file(request.case_path);

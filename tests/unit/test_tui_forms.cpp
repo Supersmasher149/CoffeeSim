@@ -40,6 +40,18 @@ TEST_CASE("default_fields preserves existing command defaults and units", "[tui]
     REQUIRE(default_fields(Command::version).empty());
 }
 
+TEST_CASE("cfd3d defaults leave recipe empty so a loaded case's own recipe is not silently overwritten",
+         "[tui][unit]") {
+    // Regression: "recipe" used to default to baseline.json here, so
+    // run_cfd3d's `if (!request.recipe_path.empty())` fired even when the
+    // user never touched the field, discarding a --case file's own recipe.
+    // It must stay empty, like the other case-override fields.
+    const auto cfd3d = default_fields(Command::cfd3d);
+    REQUIRE(field_value(cfd3d, "case").empty());
+    REQUIRE(field_value(cfd3d, "recipe").empty());
+    REQUIRE(field_value(cfd3d, "coefficients").empty());
+}
+
 TEST_CASE("split_list trims whitespace and drops empty entries", "[tui][unit]") {
     REQUIRE(split_list("a, b ,, c") == std::vector<std::string>{"a", "b", "c"});
     REQUIRE(split_list("").empty());

@@ -102,6 +102,28 @@ TEST_CASE("run_bench validates seconds and repeats before running", "[cli_workfl
     REQUIRE_NOTHROW(run_bench(request));
 }
 
+TEST_CASE("run_cfd3d requires a case file or a recipe file", "[cli_workflows][unit]") {
+    // Regression: this used to be enforced only by main.cpp's flag parsing,
+    // so a caller that builds a Cfd3dRequest directly (namely the TUI, once
+    // its "recipe" field default was fixed to not mask a missing --case)
+    // could reach the solver with a default-constructed, invalid recipe.
+    Cfd3dRequest request;
+    try {
+        run_cfd3d(request);
+        FAIL("expected InvalidInputError");
+    } catch (const InvalidInputError& error) {
+        REQUIRE(error.validation().issues().size() == 1);
+        REQUIRE(error.validation().issues().front().code == "MISSING_ARGUMENT");
+    }
+
+    request.recipe_path = baseline_recipe_path().string();
+    request.nx = 6;
+    request.ny = 6;
+    request.nz = 8;
+    request.dt_s = 0.02;
+    REQUIRE_NOTHROW(run_cfd3d(request));
+}
+
 TEST_CASE("run_calibrate maps an unknown fit parameter to the legacy error code",
          "[cli_workflows][unit]") {
     CalibrateRequest request;

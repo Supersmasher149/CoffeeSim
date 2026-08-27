@@ -1,4 +1,7 @@
 #include <algorithm>
+#include <cmath>
+#include <limits>
+
 #include <catch_amalgamated.hpp>
 
 #include "../fixtures/test_fixtures.hpp"
@@ -55,6 +58,45 @@ TEST_CASE("all required series contain finite values", "[integration]") {
         REQUIRE(std::isfinite(s.beverage_mass_kg));
         REQUIRE(std::isfinite(s.tds_fraction));
         REQUIRE(std::isfinite(s.extraction_yield_fraction));
+    }
+}
+
+// Audit F1, issue #7: dt_s and sample_interval_s were only checked with
+// `<= 0.0`, which NaN and infinity pass, letting non-finite controls reach
+// the stepping loop instead of failing validation up front.
+TEST_CASE("non-finite dt_s is rejected before stepping", "[integration]") {
+    const double bad_values[] = {std::numeric_limits<double>::quiet_NaN(),
+                                 std::numeric_limits<double>::infinity(),
+                                 -std::numeric_limits<double>::infinity()};
+    for (const double bad : bad_values) {
+        SimulationConfig config;
+        config.dt_s = bad;
+        try {
+            const ShotResult result =
+                Simulator().run(testing::baseline_recipe(), testing::baseline_coefficients(), config);
+            (void)result;
+            FAIL("expected InvalidInputError for dt_s = " << bad);
+        } catch (const InvalidInputError& e) {
+            REQUIRE(e.validation().issues().front().path == "config.dt_s");
+        }
+    }
+}
+
+TEST_CASE("non-finite sample_interval_s is rejected before stepping", "[integration]") {
+    const double bad_values[] = {std::numeric_limits<double>::quiet_NaN(),
+                                 std::numeric_limits<double>::infinity(),
+                                 -std::numeric_limits<double>::infinity()};
+    for (const double bad : bad_values) {
+        SimulationConfig config;
+        config.sample_interval_s = bad;
+        try {
+            const ShotResult result =
+                Simulator().run(testing::baseline_recipe(), testing::baseline_coefficients(), config);
+            (void)result;
+            FAIL("expected InvalidInputError for sample_interval_s = " << bad);
+        } catch (const InvalidInputError& e) {
+            REQUIRE(e.validation().issues().front().path == "config.sample_interval_s");
+        }
     }
 }
 

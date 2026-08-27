@@ -16,9 +16,10 @@ Unequal permeability multipliers represent a fixed, first-order channel.
 `axial_cells = 1` is the Level 2 lumped puck and reproduces it exactly, which is
 the default for a recipe that does not set the field.
 
-Level 4 exists as a **separate solver**, `CfdSolver`, described below. The
-Level 1-3 pipeline above remains the default, and is what the CLI's `simulate`,
-the REST server, and the dashboard use.
+Level 4 exists as a **separate solver**, `CfdSolver`, described below. Level 4b
+is the separate Cartesian solver, `Cfd3dSolver`, described in the final section.
+The Level 1-3 pipeline above remains the default, and is what the CLI's
+`simulate`, the standard shot REST endpoint, and the dashboard use.
 
 ## State
 
@@ -294,3 +295,37 @@ A radial coordinate. A channelled recipe at Level 2 or 3 is *told* how the flow
 splits between regions; the CFD solver is told only where the permeability
 differs, and resolves the resulting radial pressure gradient and cross-flow
 itself.
+
+## Level 4b: Cartesian 3D CFD
+
+`Cfd3dSolver` is a separate structured Cartesian solver over `(x, y, z)` plus
+time. It is invoked explicitly by `espressolab_cli cfd3d` or the 3D REST
+endpoints. It does not replace the Level 1-3 solver, change standard shot
+artifacts, or change standard result hashes.
+
+The circular puck is embedded in an `nx x ny x nz` cell-centred grid. Each
+`x/y` cell stores its analytic circle intersection area and each internal face
+stores its analytic circle-line aperture. Cells with less than five percent of a
+full Cartesian cell are deterministically agglomerated into a neighbouring
+active cell. The geometry uses a relative tolerance of `1e-12`; all fields are
+stored x-fastest, then y, then z.
+
+For each axial column, the solver applies Darcy mobility using the existing
+water and dry-phase closures. The pressure equation is assembled from aperture
+and harmonic transmissibility coefficients and solved with a bounded
+deterministic PCG iteration. A uniform-permeability XY state uses an exact
+column reduction of that same discrete system; heterogeneous material fields
+use the full Cartesian system. Saturation, temperature, pore TDS, extraction,
+and velocity fields are advanced at a fixed timestep with the same guardrails
+and mass-balance accounting as the native model.
+
+The v1 3D material input is a cell-centred permeability multiplier in `[0.05,
+20]`. It is deliberately not a new equation or a dynamic channel model. The
+solver reports seven optional snapshot fields: pressure, saturation,
+temperature, pore TDS, and the three velocity components. Snapshot emission is
+bounded to 128 snapshots and 1 GiB of float64 field data.
+
+This remains an engineering REV-scale Darcy model, not pore-resolved CFD. The
+coefficients are the same uncalibrated defaults used elsewhere in the project,
+so the current verification establishes geometry, determinism, invariants and
+convergence properties rather than validation against measured shots.

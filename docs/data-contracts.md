@@ -13,6 +13,7 @@ The C++ loaders and serializers are the executable contract:
 | Recipe | `Recipe` in `types.hpp` | `artifact_io::load_recipe_json` | Recipe JSON and a normalized artifact copy |
 | Coefficients | `ModelCoefficients` in `types.hpp` | `artifact_io::load_coefficients_json` | Coefficient JSON and a normalized artifact copy |
 | Simulation result | `ShotResult` in `result.hpp` | `artifact_io::dump_result_json` | REST response, summary, manifest, and samples CSV |
+| 3D CFD case/result | `Cfd3dCase` and `Cfd3dResult` in `cfd3d_artifact_io.hpp` | `cfd3d_artifact_io` | 3D REST status/snapshots, JSON case, summary, manifest, samples CSV, and `ELF3D-1` fields |
 | Sweep | `SweepSpec` and `SweepResult` in `experiment.hpp` | `artifact_io_sweep` and the server | Sweep JSON, JSONL runs, aggregate CSV, and REST status |
 | Reference catalogue | `reference_io::Catalogue` | `reference_io::load_directory` | `GET /api/v1/reference-shots` response |
 
@@ -92,6 +93,37 @@ The result hash covers canonicalized inputs, solver controls, ordered samples,
 and final region summaries. Changing serialization order or the set of hashed
 fields changes reproducibility identity and must be treated as a deliberate,
 tested contract change.
+
+## Cartesian 3D CFD
+
+The Level 4b case is a JSON object containing the shared `recipe`, optional
+`coefficients`, a Cartesian `mesh` (`nx`, `ny`, `nz`), solver controls, and an
+optional cell-centred permeability multiplier `material`. The mesh is
+x-fastest in storage, followed by y and z. Dimensions are bounded at runtime
+to 128 x 128 x 256 and 262144 cells total.
+
+The solver emits a separate `Cfd3dResult` summary with terminal metrics,
+diagnostics, warnings, final fields, and circular cut-cell geometry metadata.
+Optional snapshots contain seven float64 fields: pressure, saturation,
+temperature, pore TDS, and the three velocity components. Snapshot fields use
+the same x-fastest ordering and are served directly by the explicit 3D REST
+API.
+
+File-oriented 3D runs additionally write:
+
+| File | Purpose |
+| --- | --- |
+| `case.json` | Normalized 3D case and material input |
+| `summary.json` | Terminal 3D metrics and diagnostics |
+| `manifest.json` | 3D schema versions, hashes, solver controls, and field metadata |
+| `samples.csv` | Ordered aggregate time series |
+| `mesh.json` | Cut-cell geometry and classification metadata |
+| `fields.elf3d` | Appendable little-endian float64 snapshot chunks |
+| `index.json` | Snapshot offsets, times, fields, and dimensions |
+
+The 3D case/result schemas and field format are versioned independently from
+the standard shot result. `ELF3D-1` is little-endian, uncompressed, and has no
+implicit browser-side calculations.
 
 ## Sweeps and References
 

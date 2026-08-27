@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://espressolab.local/schemas/cfd3d-result.schema.json",
+  "title": "EspressoLab 3D CFD result metadata",
+  "type": "object",
+  "required": ["termination", "elapsed_time_s", "beverage_mass_g", "tds_percent",
+                "extraction_yield_percent", "mesh", "diagnostics", "warnings"],
+  "properties": {
+    "termination": { "type": "string" },
+    "elapsed_time_s": { "type": "number" },
+    "beverage_mass_g": { "type": "number" },
+    "tds_percent": { "type": "number" },
+    "extraction_yield_percent": { "type": "number" },
+    "mesh": {
+      "type": "object",
+      "required": ["nx", "ny", "nz"],
+      "properties": {
+        "nx": { "type": "integer" },
+        "ny": { "type": "integer" },
+        "nz": { "type": "integer" }
+      },
+      "additionalProperties": false
+    },
+    "diagnostics": { "type": "object" },
+    "warnings": { "type": "array" }
+  },
+  "additionalProperties": false
+}

@@ -230,6 +230,74 @@ export interface ApiError {
   };
 }
 
+export interface Cfd3dMesh {
+  nx: number;
+  ny: number;
+  nz: number;
+}
+
+export type Cfd3dFieldName =
+  | "pressure_pa"
+  | "saturation"
+  | "temperature_k"
+  | "pore_tds_fraction"
+  | "velocity_x_m_s"
+  | "velocity_y_m_s"
+  | "velocity_z_m_s";
+
+export interface Cfd3dRunRequest {
+  recipe: Recipe;
+  coefficients?: Record<string, unknown>;
+  mesh?: Cfd3dMesh;
+  solver?: {
+    dt_s?: number;
+    sample_interval_s?: number;
+    cfl_number?: number;
+    pressure_tolerance?: number;
+    pressure_max_iterations?: number;
+    snapshot_interval_s?: number;
+    snapshot_initial?: boolean;
+    snapshot_final?: boolean;
+  };
+  material?: number | { uniform?: number; values?: number[] };
+}
+
+export type Cfd3dRunStatusName = "queued" | "running" | "complete" | "failed";
+
+export interface Cfd3dRunAccepted {
+  run_id: string;
+  status: Cfd3dRunStatusName;
+  poll: string;
+}
+
+export interface Cfd3dRunStatus {
+  run_id: string;
+  status: Cfd3dRunStatusName;
+  snapshot_count: number;
+  elapsed_s: number;
+  result?: {
+    termination: string;
+    elapsed_time_s: number;
+    beverage_mass_g: number;
+    tds_percent: number;
+    extraction_yield_percent: number;
+    mesh: Cfd3dMesh;
+    diagnostics: Record<string, number>;
+    warnings: SimulationWarning[];
+  };
+  error?: { code: string; message: string };
+}
+
+export interface Cfd3dFieldSnapshot {
+  run_id: string;
+  snapshot_index: number;
+  time_s: number;
+  field: Cfd3dFieldName;
+  mesh: Cfd3dMesh;
+  ordering: "x-fastest, then y, then z";
+  values: number[];
+}
+
 export interface ValidationIssue {
   code: string;
   message: string;

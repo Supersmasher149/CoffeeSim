@@ -4,9 +4,10 @@ add_library(espressolab_artifacts
   sha256.cpp
   json_io.cpp
   hashing.cpp
+  cfd3d_io.cpp
 )
 add_library(espressolab::artifacts ALIAS espressolab_artifacts)
 target_include_directories(espressolab_artifacts PUBLIC ${PROJECT_SOURCE_DIR}/include)
 target_link_libraries(espressolab_artifacts
-  PUBLIC espressolab_core
+  PUBLIC espressolab_core espressolab_cfd3d
   PRIVATE tp_json espressolab_warnings)

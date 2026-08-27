@@ -19,6 +19,8 @@
 #include <nlohmann/json.hpp>
 
 #include "espressolab/artifact_io.hpp"
+#include "espressolab/cfd3d.hpp"
+#include "espressolab/cfd3d_artifact_io.hpp"
 #include "espressolab/experiment.hpp"
 #include "espressolab/reference_io.hpp"
 #include "espressolab/simulator.hpp"
@@ -289,6 +291,177 @@ private:
     std::vector<Worker> workers_;
 };
 
+class Cfd3dJob {
+public:
+    enum class Status { queued, running, complete, failed };
+
+    Cfd3dJob(std::string id, cfd3d_artifact_io::Cfd3dCase cfd3d_case)
+        : id_(std::move(id)), case_(std::move(cfd3d_case)) {}
+
+    void execute() {
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            status_ = Status::running;
+            started_at_ = std::chrono::steady_clock::now();
+        }
+        try {
+            Cfd3dConfig config = case_.config;
+            config.snapshot_sink = [this](const Cfd3dSnapshot& snapshot) {
+                const std::lock_guard<std::mutex> lock(mutex_);
+                snapshots_.push_back(snapshot);
+            };
+            Cfd3dResult result = Cfd3dSolver().run(case_.recipe, case_.coefficients, config);
+            const std::lock_guard<std::mutex> lock(mutex_);
+            result_ = std::move(result);
+            status_ = Status::complete;
+        } catch (const std::exception& error) {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            status_ = Status::failed;
+            error_ = error.what();
+        }
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            finished_at_ = std::chrono::steady_clock::now();
+            finished_ = true;
+        }
+        done_.notify_all();
+    }
+
+    void wait() {
+        std::unique_lock<std::mutex> lock(mutex_);
+        done_.wait(lock, [this] { return finished_; });
+    }
+
+    struct Snapshot {
+        Status status = Status::queued;
+        std::size_t snapshot_count = 0;
+        double elapsed_s = 0.0;
+        std::string error;
+        Cfd3dResult result;
+    };
+
+    [[nodiscard]] Snapshot snapshot() const {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        Snapshot out;
+        out.status = status_;
+        out.snapshot_count = snapshots_.size();
+        out.error = error_;
+        out.result = result_;
+        if (status_ != Status::queued) {
+            out.elapsed_s = std::chrono::duration<double>(
+                                (finished_ ? finished_at_ : std::chrono::steady_clock::now()) -
+                                started_at_)
+                                .count();
+        }
+        return out;
+    }
+
+    [[nodiscard]] const std::string& id() const { return id_; }
+
+    bool snapshot_at(std::size_t index, Cfd3dSnapshot& out) const {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        if (status_ != Status::complete || index >= snapshots_.size()) return false;
+        out = snapshots_[index];
+        return true;
+    }
+
+    [[nodiscard]] bool finished() const {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        return finished_;
+    }
+
+private:
+    mutable std::mutex mutex_;
+    std::condition_variable done_;
+    std::string id_;
+    cfd3d_artifact_io::Cfd3dCase case_;
+    Status status_ = Status::queued;
+    bool finished_ = false;
+    std::string error_;
+    Cfd3dResult result_;
+    std::vector<Cfd3dSnapshot> snapshots_;
+    std::chrono::steady_clock::time_point started_at_{};
+    std::chrono::steady_clock::time_point finished_at_{};
+};
+
+const char* to_string(Cfd3dJob::Status status) {
+    switch (status) {
+        case Cfd3dJob::Status::queued: return "queued";
+        case Cfd3dJob::Status::running: return "running";
+        case Cfd3dJob::Status::complete: return "complete";
+        case Cfd3dJob::Status::failed: return "failed";
+    }
+    return "unknown";
+}
+
+class Cfd3dJobStore {
+public:
+    ~Cfd3dJobStore() { join_all(); }
+
+    std::shared_ptr<Cfd3dJob> start(const std::string& id,
+                                    cfd3d_artifact_io::Cfd3dCase cfd3d_case) {
+        reap_finished();
+        auto job = std::make_shared<Cfd3dJob>(id, std::move(cfd3d_case));
+        const std::lock_guard<std::mutex> lock(mutex_);
+        jobs_[id] = job;
+        order_.push_back(id);
+        while (order_.size() > kMaxRetained) {
+            jobs_.erase(order_.front());
+            order_.pop_front();
+        }
+        workers_.push_back({job, std::thread([job] { job->execute(); })});
+        return job;
+    }
+
+    [[nodiscard]] std::shared_ptr<Cfd3dJob> find(const std::string& id) const {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        const auto it = jobs_.find(id);
+        return it == jobs_.end() ? nullptr : it->second;
+    }
+
+    void join_all() {
+        std::vector<Worker> pending;
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            pending.swap(workers_);
+        }
+        for (auto& worker : pending) {
+            if (worker.thread.joinable()) worker.thread.join();
+        }
+    }
+
+private:
+    struct Worker {
+        std::shared_ptr<Cfd3dJob> job;
+        std::thread thread;
+    };
+
+    void reap_finished() {
+        std::vector<Worker> completed;
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            auto worker = workers_.begin();
+            while (worker != workers_.end()) {
+                if (worker->job->finished()) {
+                    completed.push_back(std::move(*worker));
+                    worker = workers_.erase(worker);
+                } else {
+                    ++worker;
+                }
+            }
+        }
+        for (auto& worker : completed) {
+            if (worker.thread.joinable()) worker.thread.join();
+        }
+    }
+
+    static constexpr std::size_t kMaxRetained = 4;
+    mutable std::mutex mutex_;
+    std::unordered_map<std::string, std::shared_ptr<Cfd3dJob>> jobs_;
+    std::deque<std::string> order_;
+    std::vector<Worker> workers_;
+};
+
 SimulationConfig parse_solver_config(const json& root) {
     SimulationConfig config;
     if (root.contains("solver")) {
@@ -393,7 +566,9 @@ int main(int argc, char** argv) {
 
     RunStore store;
     SweepJobStore sweeps;
+    Cfd3dJobStore cfd3d_runs;
     std::atomic<int> next_sweep_serial{1};
+    std::atomic<int> next_cfd3d_serial{1};
     httplib::Server server;
 
     // Serialises a finished sweep for the status and artifact endpoints.
@@ -441,11 +616,30 @@ int main(int argc, char** argv) {
         return body;
     };
 
+    const auto cfd3d_body = [](const Cfd3dJob& job) {
+        const Cfd3dJob::Snapshot snapshot = job.snapshot();
+        json body = {{"run_id", job.id()},
+                     {"status", to_string(snapshot.status)},
+                     {"snapshot_count", snapshot.snapshot_count},
+                     {"elapsed_s", snapshot.elapsed_s}};
+        if (snapshot.status == Cfd3dJob::Status::failed) {
+            body["error"] = {{"code", "CFD3D_FAILED"}, {"message", snapshot.error}};
+            return body;
+        }
+        if (snapshot.status == Cfd3dJob::Status::complete) {
+            body["result"] = json::parse(cfd3d_artifact_io::dump_summary_json(snapshot.result, -1));
+        }
+        return body;
+    };
+
     server.Get("/api/v1/health", [&](const httplib::Request&, httplib::Response& response) {
         const json body = {{"status", "ok"},
                            {"solver_version", version::kSolver},
                            {"recipe_schema_version", version::kRecipeSchema},
                            {"result_schema_version", version::kResultSchema},
+                           {"cfd3d_case_schema_version", version::kCfd3dCaseSchema},
+                           {"cfd3d_result_schema_version", version::kCfd3dResultSchema},
+                           {"cfd3d_field_format", version::kCfd3dFieldFormat},
                            {"asset_root", std::filesystem::absolute(assets).string()},
                            {"reference_root", std::filesystem::absolute(references).string()},
                            {"sweepable_parameters", supported_parameter_paths()}};
@@ -491,6 +685,121 @@ int main(int argc, char** argv) {
         });
         response.set_content(json({{"recipes", list}}).dump(2), "application/json");
     });
+
+    server.Post("/api/v1/cfd3d/runs",
+                [&](const httplib::Request& request, httplib::Response& response) {
+                    json root;
+                    try {
+                        root = json::parse(request.body);
+                    } catch (const json::parse_error& e) {
+                        send_error(response, 400, "MALFORMED_JSON", e.what(), "body");
+                        return;
+                    }
+                    if (!root.is_object()) {
+                        send_error(response, 400, "MALFORMED_JSON",
+                                   "request body must be a JSON object", "body");
+                        return;
+                    }
+                    try {
+                        if (!root.contains("coefficients")) {
+                            const std::filesystem::path file = assets / "coefficients" / "default-v1.json";
+                            if (std::filesystem::exists(file)) {
+                                root["coefficients"] = json::parse(
+                                    artifact_io::dump_coefficients_json(
+                                        artifact_io::load_coefficients_file(file), -1));
+                            }
+                        }
+                        const cfd3d_artifact_io::Cfd3dCase cfd3d_case =
+                            cfd3d_artifact_io::load_case_json(root.dump());
+                        const std::string id =
+                            "cfd3d-" + std::to_string(next_cfd3d_serial.fetch_add(1));
+                        cfd3d_runs.start(id, cfd3d_case);
+                        response.status = 202;
+                        response.set_content(
+                            json{{"run_id", id}, {"status", "queued"},
+                                 {"poll", "/api/v1/cfd3d/runs/" + id}}
+                                .dump(2),
+                            "application/json");
+                    } catch (const artifact_io::LoadError& e) {
+                        send_error(response, 400, e.code, e.what(), e.path);
+                    } catch (const InvalidInputError& e) {
+                        const auto& issues = e.validation().issues();
+                        send_error(response, 422,
+                                   issues.empty() ? "INVALID_INPUT" : issues.front().code,
+                                   issues.empty() ? e.what() : issues.front().message,
+                                   issues.empty() ? "cfd3d" : issues.front().path);
+                    }
+                });
+
+    server.Get(R"(/api/v1/cfd3d/runs/([A-Za-z0-9\-]+))",
+               [&](const httplib::Request& request, httplib::Response& response) {
+                   const std::string id = request.matches[1];
+                   const auto job = cfd3d_runs.find(id);
+                   if (!job) {
+                       send_error(response, 404, "RUN_NOT_FOUND", "no 3D run with id '" + id + "'",
+                                  "cfd3d.id");
+                       return;
+                   }
+                   response.set_content(cfd3d_body(*job).dump(2), "application/json");
+               });
+
+    server.Get(R"(/api/v1/cfd3d/runs/([A-Za-z0-9\-]+)/snapshots/([0-9]+))",
+               [&](const httplib::Request& request, httplib::Response& response) {
+                   const std::string id = request.matches[1];
+                   const auto job = cfd3d_runs.find(id);
+                   if (!job) {
+                       send_error(response, 404, "RUN_NOT_FOUND", "no 3D run with id '" + id + "'",
+                                  "cfd3d.id");
+                       return;
+                   }
+                   const auto status = job->snapshot();
+                   if (status.status != Cfd3dJob::Status::complete) {
+                       send_error(response, 409, "RUN_NOT_FINISHED",
+                                  "3D run '" + id + "' is not complete", "cfd3d.id");
+                       return;
+                   }
+                   std::size_t index = 0;
+                   try {
+                       index = static_cast<std::size_t>(std::stoull(request.matches[2]));
+                   } catch (const std::exception&) {
+                       send_error(response, 400, "MALFORMED_JSON", "snapshot index is invalid",
+                                  "cfd3d.snapshot");
+                       return;
+                   }
+                   Cfd3dSnapshot snapshot;
+                   if (!job->snapshot_at(index, snapshot)) {
+                       send_error(response, 404, "SNAPSHOT_NOT_FOUND", "snapshot does not exist",
+                                  "cfd3d.snapshot");
+                       return;
+                   }
+                   const std::string field_name =
+                       request.has_param("field") ? request.get_param_value("field") : "saturation";
+                   const Cfd3dField* field = nullptr;
+                   if (field_name == "pressure_pa") field = &snapshot.pressure_pa;
+                   if (field_name == "saturation") field = &snapshot.saturation;
+                   if (field_name == "temperature_k") field = &snapshot.temperature_k;
+                   if (field_name == "pore_tds_fraction") field = &snapshot.pore_tds_fraction;
+                   if (field_name == "velocity_x_m_s") field = &snapshot.velocity_x_m_s;
+                   if (field_name == "velocity_y_m_s") field = &snapshot.velocity_y_m_s;
+                   if (field_name == "velocity_z_m_s") field = &snapshot.velocity_z_m_s;
+                   if (!field) {
+                       send_error(response, 400, "UNKNOWN_FIELD", "unknown 3D field '" + field_name + "'",
+                                  "field");
+                       return;
+                   }
+                   response.set_content(
+                       json{{"run_id", id},
+                            {"snapshot_index", index},
+                            {"time_s", snapshot.time_s},
+                            {"field", field_name},
+                            {"mesh", {{"nx", field->x_cells()},
+                                       {"ny", field->y_cells()},
+                                       {"nz", field->z_cells()}}},
+                            {"ordering", "x-fastest, then y, then z"},
+                            {"values", field->values()}}
+                           .dump(),
+                       "application/json");
+               });
 
     server.Post("/api/v1/shots", [&](const httplib::Request& request, httplib::Response& response) {
         json root;

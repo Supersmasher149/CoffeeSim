@@ -18,6 +18,7 @@ add_executable(espressolab_tests
   integration/test_convergence.cpp
   integration/test_axial_cells.cpp
   integration/test_cfd.cpp
+  integration/test_cfd3d.cpp
   integration/test_sweeps.cpp
   integration/test_calibration_recovery.cpp
 )

@@ -8,11 +8,16 @@
 #include <iostream>
 #include <map>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
 #include "espressolab/artifact_io.hpp"
 #include "espressolab/cfd.hpp"
+#include "espressolab/cfd3d.hpp"
+#include "espressolab/cfd3d_artifact_io.hpp"
 #include "espressolab/calibration.hpp"
 #include "espressolab/experiment.hpp"
 #include "espressolab/simulator.hpp"
@@ -45,6 +50,11 @@ Usage:
                              [--noise <g>] [--seed <n>] --out <file>
 
   espressolab_cli bench [--seconds <s>] [--repeats <n>]
+  espressolab_cli cfd3d --recipe <file> [--coefficients <file>] [--out <dir>]
+                         [--nx <n>] [--ny <n>] [--nz <n>] [--dt <s>]
+                         [--sample-interval <s>] [--snapshot-interval <s>]
+                         [--material <file>] [--quiet]
+  espressolab_cli cfd3d --case <file> [--out <dir>] [--quiet]
 
   espressolab_cli params      # sweepable recipe parameters
   espressolab_cli fit-params  # fittable coefficients, with bounds
@@ -598,6 +608,128 @@ int command_cfd(int argc, char** argv) {
     return 0;
 }
 
+std::string read_text_file(const std::filesystem::path& path) {
+    std::ifstream stream(path, std::ios::binary);
+    if (!stream) throw artifact_io::LoadError("FILE_NOT_FOUND", path.string(),
+                                              "could not open " + path.string());
+    std::ostringstream contents;
+    contents << stream.rdbuf();
+    return contents.str();
+}
+
+Cfd3dMaterialField load_cfd3d_material(const std::filesystem::path& path, const Cfd3dMesh& mesh) {
+    using nlohmann::json;
+    json root;
+    try {
+        root = json::parse(read_text_file(path));
+    } catch (const json::parse_error& error) {
+        throw artifact_io::LoadError("MALFORMED_JSON", path.string(), error.what());
+    }
+    if (root.is_number()) {
+        return Cfd3dMaterialField(mesh.nx, mesh.ny, mesh.nz, root.get<double>());
+    }
+    if (root.is_array()) root = json{{"values", std::move(root)}};
+    if (!root.is_object()) {
+        throw artifact_io::LoadError("MALFORMED_JSON", path.string(),
+                                     "material must be a number, array, or object");
+    }
+    const std::size_t expected = static_cast<std::size_t>(mesh.nx) *
+                                 static_cast<std::size_t>(mesh.ny) *
+                                 static_cast<std::size_t>(mesh.nz);
+    if (root.contains("uniform")) {
+        if (!root.at("uniform").is_number()) {
+            throw artifact_io::LoadError("MALFORMED_JSON", path.string(),
+                                         "material uniform must be a number");
+        }
+        return Cfd3dMaterialField(mesh.nx, mesh.ny, mesh.nz, root.at("uniform").get<double>());
+    }
+    if (!root.contains("values") || !root.at("values").is_array() ||
+        root.at("values").size() != expected) {
+        throw artifact_io::LoadError("OUT_OF_RANGE", path.string(),
+                                     "material values must match mesh dimensions");
+    }
+    Cfd3dMaterialField material(mesh.nx, mesh.ny, mesh.nz, 1.0);
+    const std::size_t plane = static_cast<std::size_t>(mesh.nx) *
+                              static_cast<std::size_t>(mesh.ny);
+    for (std::size_t index = 0; index < expected; ++index) {
+        if (!root.at("values")[index].is_number()) {
+            throw artifact_io::LoadError("MALFORMED_JSON", path.string(),
+                                         "material values must be numbers");
+        }
+        const int x = static_cast<int>(index % static_cast<std::size_t>(mesh.nx));
+        const int y = static_cast<int>((index / static_cast<std::size_t>(mesh.nx)) %
+                                       static_cast<std::size_t>(mesh.ny));
+        const int z = static_cast<int>(index / plane);
+        material.at(x, y, z) = root.at("values")[index].get<double>();
+    }
+    return material;
+}
+
+int command_cfd3d(int argc, char** argv) {
+    const auto flags = parse_flags(argc, argv, 2);
+    if (!flags.count("recipe") && !flags.count("case")) {
+        print_error("MISSING_ARGUMENT", "--recipe <file> or --case <file> is required", "");
+        return kUsageError;
+    }
+    const bool quiet = flags.count("quiet") > 0;
+    cfd3d_artifact_io::Cfd3dCase cfd3d_case =
+        flags.count("case") ? cfd3d_artifact_io::load_case_file(flags.at("case"))
+                             : cfd3d_artifact_io::Cfd3dCase{};
+    if (flags.count("recipe")) cfd3d_case.recipe = artifact_io::load_recipe_file(flags.at("recipe"));
+    if (flags.count("coefficients")) {
+        cfd3d_case.coefficients = artifact_io::load_coefficients_file(flags.at("coefficients"));
+    }
+
+    Cfd3dConfig& config = cfd3d_case.config;
+    if (flags.count("nx")) config.mesh.nx = std::stoi(flags.at("nx"));
+    if (flags.count("ny")) config.mesh.ny = std::stoi(flags.at("ny"));
+    if (flags.count("nz")) config.mesh.nz = std::stoi(flags.at("nz"));
+    if (flags.count("dt")) config.dt_s = std::stod(flags.at("dt"));
+    if (flags.count("sample-interval")) config.sample_interval_s = std::stod(flags.at("sample-interval"));
+    if (flags.count("snapshot-interval")) {
+        config.snapshot_interval_s = std::stod(flags.at("snapshot-interval"));
+    }
+    if (flags.count("material")) config.material = load_cfd3d_material(flags.at("material"), config.mesh);
+
+    std::vector<Cfd3dSnapshot> snapshots;
+    if (flags.count("out")) {
+        config.snapshot_sink = [&](const Cfd3dSnapshot& snapshot) { snapshots.push_back(snapshot); };
+    }
+    const auto started = std::chrono::steady_clock::now();
+    const Cfd3dResult result = Cfd3dSolver().run(cfd3d_case.recipe, cfd3d_case.coefficients, config);
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+
+    if (!quiet) {
+        std::cout << "recipe: " << cfd3d_case.recipe.name << " (3D Cartesian CFD)\n"
+                  << "solver: " << result.solver_version << " mesh " << config.mesh.nx << " x "
+                  << config.mesh.ny << " x " << config.mesh.nz << " (x x y x z), dt="
+                  << config.dt_s << "s snapshots=" << snapshots.size() << "\n"
+                  << "wall time: "
+                  << std::chrono::duration<double, std::milli>(elapsed).count() << " ms\n\n"
+                  << std::fixed << std::setprecision(2)
+                  << "  termination     " << to_string(result.termination) << '\n'
+                  << "  shot time       " << result.elapsed_time_s << " s\n"
+                  << "  beverage mass   " << units::kg_to_grams(result.beverage_mass_kg) << " g\n"
+                  << "  TDS             " << result.tds_fraction * 100.0 << " %\n"
+                  << "  extraction      " << result.extraction_yield_fraction * 100.0 << " %\n"
+                  << std::scientific << std::setprecision(3)
+                  << "  water residual  " << result.diagnostics.water_mass_residual_kg << " kg\n"
+                  << "  solids residual " << result.diagnostics.solids_mass_residual_kg << " kg\n"
+                  << "  energy residual " << result.diagnostics.energy_residual_j << " J\n"
+                  << "  pressure resid  " << result.diagnostics.pressure_residual << '\n'
+                  << std::defaultfloat;
+    }
+    if (flags.count("out")) {
+        const std::filesystem::path directory = flags.at("out");
+        cfd3d_artifact_io::write_artifacts(directory, cfd3d_case, result, snapshots);
+        const cfd3d_artifact_io::Cfd3dRunManifest manifest =
+            cfd3d_artifact_io::make_manifest(cfd3d_case, result, snapshots);
+        std::cout << "\nartifacts: " << std::filesystem::absolute(directory).string() << '\n'
+                  << "result hash: " << manifest.result_hash << '\n';
+    }
+    return kOk;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -612,6 +744,7 @@ int main(int argc, char** argv) {
         if (command == "sweep") return command_sweep(argc, argv);
         if (command == "bench") return command_bench(argc, argv);
         if (command == "cfd") return command_cfd(argc, argv);
+        if (command == "cfd3d") return command_cfd3d(argc, argv);
         if (command == "calibrate") return command_calibrate(argc, argv);
         if (command == "synthesize") return command_synthesize(argc, argv);
         if (command == "fit-params") {

@@ -9,5 +9,8 @@ namespace espressolab::version {
 inline constexpr std::string_view kSolver = "solver-0.4.0";
 inline constexpr std::string_view kRecipeSchema = "1.0";
 inline constexpr std::string_view kResultSchema = "1.0";
+inline constexpr std::string_view kCfd3dCaseSchema = "1.0";
+inline constexpr std::string_view kCfd3dResultSchema = "1.0";
+inline constexpr std::string_view kCfd3dFieldFormat = "ELF3D-1";
 
 }  // namespace espressolab::version

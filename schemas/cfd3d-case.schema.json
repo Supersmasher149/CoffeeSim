@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://espressolab.local/schemas/cfd3d-case.schema.json",
+  "title": "EspressoLab 3D CFD case",
+  "type": "object",
+  "required": ["recipe"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "recipe": { "$ref": "recipe.schema.json" },
+    "coefficients": { "$ref": "coefficients.schema.json" },
+    "mesh": {
+      "type": "object",
+      "required": ["nx", "ny", "nz"],
+      "properties": {
+        "nx": { "type": "integer", "minimum": 1, "maximum": 128 },
+        "ny": { "type": "integer", "minimum": 1, "maximum": 128 },
+        "nz": { "type": "integer", "minimum": 1, "maximum": 256 }
+      },
+      "additionalProperties": false
+    },
+    "solver": {
+      "type": "object",
+      "properties": {
+        "dt_s": { "type": "number", "exclusiveMinimum": 0 },
+        "sample_interval_s": { "type": "number", "exclusiveMinimum": 0 },
+        "cfl_number": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+        "pressure_tolerance": { "type": "number", "exclusiveMinimum": 0, "maximum": 1e-8 },
+        "pressure_max_iterations": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "snapshot_interval_s": { "type": "number", "minimum": 0 },
+        "snapshot_initial": { "type": "boolean" },
+        "snapshot_final": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "material": {
+      "oneOf": [
+        { "type": "number" },
+        {
+          "type": "object",
+          "properties": {
+            "uniform": { "type": "number" },
+            "values": { "type": "array", "items": { "type": "number" } }
+          },
+          "oneOf": [{ "required": ["uniform"] }, { "required": ["values"] }],
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "additionalProperties": false
+}

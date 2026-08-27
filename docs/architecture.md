@@ -15,7 +15,8 @@ web (React/TS)  ->  tool_server (REST)  ->  experiment_runner
                                                      |
                                          model_library (water, permeability, heat, extraction)
 
-CLI and CFD tests  ->  cfd (separate Level 4 solver)  ->  espresso_core + model_library
+CLI and CFD tests  ->  cfd (separate Level 4 axisymmetric solver) -> espresso_core + model_library
+CLI and REST tests ->  cfd3d (Level 4b Cartesian solver)          -> espresso_core + model_library
 ```
 
 | Target | Owns | Must not own |
@@ -27,6 +28,7 @@ CLI and CFD tests  ->  cfd (separate Level 4 solver)  ->  espresso_core + model_
 | `espressolab_experiments` | Sweeps, run schedules, aggregation, artifact naming | Chart rendering |
 | `espressolab_calibration` | Measured shots, the loss function, the fit | Anything the solver depends on |
 | `espressolab_cfd` | Separate Level 4 axisymmetric pressure and transport solver | REST, dashboard, standard artifacts, default result hashes |
+| `espressolab_cfd3d` | Level 4b Cartesian 3D REV-scale pressure and transport solver | Default Level 1-3 path, equation ownership outside the solver |
 | `espressolab_references` | Published reference-shot metadata and partial-load reporting | Simulation, fitting, or validation decisions |
 | `espressolab_server` | REST endpoints, jobs and threads, error translation, file boundaries | Equation implementations |
 | `web` | Controls, charts, comparisons, warnings, exports | Authoritative calculations |
@@ -40,6 +42,11 @@ in section 13.2.
 The CLI invokes it directly and its verification tests exercise it separately.
 It must not change the dashboard response, standard artifact shape, or the
 result hashes emitted by the default solver.
+
+`espressolab_cfd3d` is also isolated from the default path. The CLI and the
+dedicated REST endpoints invoke it explicitly. Its case, summary, snapshot
+fields, and `ELF3D-1` field artifacts are separate contracts and never alter
+the standard shot result or its hashes.
 
 ## Runtime data flow
 
@@ -59,6 +66,10 @@ Recipe JSON + ModelCoefficients
   -> ShotResult + time series + hashes
   -> REST response / JSON / CSV
   -> React dashboard
+
+The explicit 3D path uses the same recipe and coefficient boundaries, then
+builds a circular Cartesian cut-cell mesh, runs the Level 4b solver, and emits
+`Cfd3dResult` plus optional time-indexed field snapshots.
 ```
 
 ## Threads live in the server, not the engine
@@ -82,7 +93,8 @@ sweep with no browser in the loop at all.
 engine/espresso_core/       solver, profiles, validation, domain types
 engine/model_library/       water properties, puck resistance, extraction kinetics
 engine/cfd/                 separate Level 4 axisymmetric CFD solver
-engine/artifact_io/         JSON/CSV, SHA-256, manifest stamping
+engine/cfd3d/               Level 4b Cartesian 3D CFD solver
+engine/artifact_io/         JSON/CSV, SHA-256, manifests, ELF3D fields
 engine/experiment_runner/   sweep axes, cartesian product, aggregation
 engine/reference_io/        reference-shot catalogue loader
 include/espressolab/        public headers
@@ -90,6 +102,6 @@ apps/espressolab_cli/       simulate, sweep, params, version
 apps/espressolab_server/    REST endpoints on cpp-httplib
 web/src/features/           shot, sweeps, comparison, calibration
 assets/                     recipes, coefficients, sweep specs, measured shots
-schemas/                    JSON Schema for recipe, coefficients, shot result
+schemas/                    JSON Schema for recipe, coefficients, shot result, CFD3D cases/results
 tests/                      unit, integration, fixtures
 ```

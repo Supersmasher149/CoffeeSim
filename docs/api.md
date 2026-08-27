@@ -18,6 +18,9 @@ versioning of every request and response document, see
 | GET | `/api/v1/reference-shots` | Read-only published shot metadata, separate from calibration |
 | POST | `/api/v1/shots` | Validate and execute one simulation |
 | GET | `/api/v1/shots/{id}` | Read a completed summary and its samples |
+| POST | `/api/v1/cfd3d/runs` | Start an explicit Cartesian 3D CFD run (202) |
+| GET | `/api/v1/cfd3d/runs/{id}` | Read 3D run status, summary and diagnostics |
+| GET | `/api/v1/cfd3d/runs/{id}/snapshots/{index}` | Read one 3D field snapshot; use `?field=` to select the field |
 | POST | `/api/v1/sweeps` | Start a parameter sweep in the background (202) |
 | GET | `/api/v1/sweeps` | List this session's sweeps and their progress |
 | GET | `/api/v1/sweeps/{id}` | Read status, progress and results |
@@ -49,6 +52,41 @@ Each region in the response then carries a `cells` array ordered from the screen
 side of the puck down to the basket, each entry reporting that cell's final
 `saturation`, `temperature_c`, `pore_tds_percent` and `extraction_yield_percent`.
 Samples and the CSV export stay aggregate at every cell count.
+
+## Running a Cartesian 3D CFD case
+
+The 3D endpoint is an explicit Level 4b path and does not change the standard
+shot response. It accepts the 3D case document directly:
+
+```bash
+curl -s -X POST localhost:8734/api/v1/cfd3d/runs \
+  -H 'Content-Type: application/json' \
+  -d '{"recipe": '"$(cat assets/recipes/baseline.json)"',
+       "mesh":{"nx":32,"ny":32,"nz":16},
+       "solver":{"snapshot_interval_s":1.0}}'
+```
+
+The response is **202 Accepted** with a `run_id` and `poll` path. The case uses
+the default coefficient file when `coefficients` is omitted. `material` may be
+a scalar multiplier or an object containing a dense x-fastest `values` array;
+it represents a permeability multiplier and is bounded to the solver's
+supported range. Mesh dimensions and solver controls are bounded by
+`schemas/cfd3d-case.schema.json` and the executable C++ loader.
+
+Poll `GET /api/v1/cfd3d/runs/{id}` until `status` is `complete` or `failed`.
+Completed status includes the terminal summary and `snapshot_count`. Retrieve
+a captured field with:
+
+```text
+GET /api/v1/cfd3d/runs/{id}/snapshots/{index}?field=saturation
+```
+
+Valid fields are `pressure_pa`, `saturation`, `temperature_k`,
+`pore_tds_fraction`, `velocity_x_m_s`, `velocity_y_m_s`, and `velocity_z_m_s`.
+Snapshot values are float64 JSON numbers in x-fastest, then y, then z order.
+The server retains the four most recent 3D jobs in memory and does not persist
+them across restart. Snapshot retrieval returns `409 RUN_NOT_FINISHED` until
+the run completes.
 
 ## Listing Recipes
 
@@ -139,7 +177,8 @@ Codes are stable and safe to switch on: `MALFORMED_JSON`, `MISSING_FIELD`,
 `UNSUPPORTED_SCHEMA_VERSION`, `MALFORMED_PROFILE_POINT`, `EMPTY_PROFILE`,
 `UNORDERED_PROFILE`, `OUT_OF_RANGE`, `NONPHYSICAL_INPUT`, `NONFINITE_INPUT`,
 `UNKNOWN_PARAMETER_PATH`, `SWEEP_TOO_LARGE`, `RUN_NOT_FOUND`,
-`SWEEP_NOT_FOUND`, `ARTIFACT_NOT_FOUND`, `SWEEP_NOT_FINISHED`, `EMPTY_SWEEP`,
+`SWEEP_NOT_FOUND`, `ARTIFACT_NOT_FOUND`, `SWEEP_NOT_FINISHED`, `RUN_NOT_FINISHED`,
+`SNAPSHOT_NOT_FOUND`, `UNKNOWN_FIELD`, `EMPTY_SWEEP`,
 `EMPTY_SWEEP_AXIS`, `DUPLICATE_SWEEP_AXIS`, `REFERENCE_CATALOG_NOT_FOUND`,
 `REFERENCE_MANIFEST_NOT_FOUND`, and `REFERENCE_MANIFEST_INVALID`.
 

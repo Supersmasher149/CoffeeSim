@@ -1,5 +1,10 @@
 import type {
   ApiError,
+  Cfd3dFieldName,
+  Cfd3dFieldSnapshot,
+  Cfd3dRunAccepted,
+  Cfd3dRunRequest,
+  Cfd3dRunStatus,
   Recipe,
   ReferenceCatalogue,
   ShotResult,
@@ -46,6 +51,9 @@ export interface HealthResponse {
   solver_version: string;
   recipe_schema_version: string;
   result_schema_version: string;
+  cfd3d_case_schema_version: string;
+  cfd3d_result_schema_version: string;
+  cfd3d_field_format: string;
   asset_root: string;
   reference_root: string;
   sweepable_parameters: string[];
@@ -60,6 +68,19 @@ export const api = {
 
   simulate: (recipe: Recipe) =>
     request<ShotResult>("/shots", { method: "POST", body: JSON.stringify({ recipe }) }),
+
+  cfd3dRun: (run: Cfd3dRunRequest) =>
+    request<Cfd3dRunAccepted>("/cfd3d/runs", {
+      method: "POST",
+      body: JSON.stringify(run),
+    }),
+
+  cfd3dStatus: (id: string) => request<Cfd3dRunStatus>(`/cfd3d/runs/${id}`),
+
+  cfd3dSnapshot: (id: string, index: number, field: Cfd3dFieldName = "saturation") =>
+    request<Cfd3dFieldSnapshot>(
+      `/cfd3d/runs/${id}/snapshots/${index}?field=${encodeURIComponent(field)}`,
+    ),
 
   // Returns as soon as the job is accepted; poll sweepStatus for progress.
   startSweep: (

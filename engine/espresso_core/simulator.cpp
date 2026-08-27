@@ -432,12 +432,12 @@ ShotResult Simulator::run(const Recipe& recipe, const ModelCoefficients& coeff,
             RegionState& region = regions[i];
             ShotState& state = region.shot;
             const Derived& d = derived[i];
-            const double cell_count = static_cast<double>(region.cells.size());
+            const double cells_in_region = static_cast<double>(region.cells.size());
             const double region_dose_kg = recipe.dose_kg * recipe.parallel_regions[i].area_fraction;
-            const double cell_dose_kg = region_dose_kg / cell_count;
+            const double cell_dose_kg = region_dose_kg / cells_in_region;
             // Ambient loss is a property of the region, not of the grid, so it
             // is divided across cells rather than applied once per cell.
-            const double cell_heat_loss_w_k = coeff.ambient_heat_loss_w_k / cell_count;
+            const double cell_heat_loss_w_k = coeff.ambient_heat_loss_w_k / cells_in_region;
 
             const double water_in_kg = d.flow.flow_m3_s * d.inlet_density_kg_m3 * dt;
             region.integrated_flow_m3 += d.flow.flow_m3_s * dt;

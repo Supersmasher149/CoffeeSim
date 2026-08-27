@@ -5,7 +5,10 @@
 #include <filesystem>
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
 #include "../fixtures/test_fixtures.hpp"
+#include "espressolab/artifact_io.hpp"
 #include "espressolab/cfd3d.hpp"
 #include "espressolab/cfd3d_artifact_io.hpp"
 
@@ -118,6 +121,26 @@ TEST_CASE("cfd3d rejects unsupported mesh and snapshot budgets", "[cfd3d][artifa
     Cfd3dConfig snapshots = small_config();
     snapshots.snapshot_interval_s = 0.01;
     REQUIRE_THROWS_AS(Cfd3dSolver().run(recipe, coefficients, snapshots), InvalidInputError);
+}
+
+// Audit F2, issue #5: parse_material() built a dense Cfd3dMaterialField from
+// mesh.nx/ny/nz before the solver's mesh-limit validation ran, so an
+// oversized scalar/uniform material request forced a large allocation on
+// load. The loader must reject the mesh before allocating anything.
+TEST_CASE("load_case_json rejects an oversized scalar material without allocating a field",
+          "[cfd3d][artifacts]") {
+    using nlohmann::json;
+    json root = json::parse(cfd3d_artifact_io::dump_case_json(
+        cfd3d_artifact_io::Cfd3dCase{testing::baseline_recipe(), testing::baseline_coefficients(), {}}, -1));
+    root["mesh"] = {{"nx", 129}, {"ny", 1}, {"nz", 1}};  // one past the documented 128 cap
+    root["material"] = 1.0;                              // scalar/uniform: the allocating branch
+    REQUIRE_THROWS_AS(cfd3d_artifact_io::load_case_json(root.dump()), artifact_io::LoadError);
+
+    json product_root = json::parse(cfd3d_artifact_io::dump_case_json(
+        cfd3d_artifact_io::Cfd3dCase{testing::baseline_recipe(), testing::baseline_coefficients(), {}}, -1));
+    product_root["mesh"] = {{"nx", 100}, {"ny", 100}, {"nz", 100}};  // within each axis cap, over the 262144 product
+    product_root["material"] = 1.0;
+    REQUIRE_THROWS_AS(cfd3d_artifact_io::load_case_json(product_root.dump()), artifact_io::LoadError);
 }
 
 TEST_CASE("cfd3d case artifacts round trip their executable contract", "[cfd3d][artifacts]") {

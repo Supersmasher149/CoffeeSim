@@ -85,9 +85,30 @@ bool boolean_value(const json& object, const char* key, const std::string& path,
     return object.at(key).get<bool>();
 }
 
-std::size_t checked_field_size(const Cfd3dMesh& mesh, const std::string& path) {
+// Cfd3dSolver::run() enforces these same bounds (128 x 128 x 256, product
+// <=262144), but only after a caller has already allocated a dense field.
+// validate_mesh_bounds() (declared in cfd3d_artifact_io.hpp so every loader
+// can share it) is the earlier, and only reliable, enforcement point (Audit
+// F2, issue #5).
+constexpr int kMaximumMeshNx = 128;
+constexpr int kMaximumMeshNy = 128;
+constexpr int kMaximumMeshNz = 256;
+constexpr std::uint64_t kMaximumMeshCells = 262144;
+
+}  // namespace
+
+void validate_mesh_bounds(const Cfd3dMesh& mesh, const std::string& path) {
     if (mesh.nx < 1 || mesh.ny < 1 || mesh.nz < 1) {
         fail("OUT_OF_RANGE", path, "mesh dimensions must be positive");
+    }
+    if (mesh.nx > kMaximumMeshNx) {
+        fail("OUT_OF_RANGE", path, "mesh.nx must not exceed " + std::to_string(kMaximumMeshNx));
+    }
+    if (mesh.ny > kMaximumMeshNy) {
+        fail("OUT_OF_RANGE", path, "mesh.ny must not exceed " + std::to_string(kMaximumMeshNy));
+    }
+    if (mesh.nz > kMaximumMeshNz) {
+        fail("OUT_OF_RANGE", path, "mesh.nz must not exceed " + std::to_string(kMaximumMeshNz));
     }
     const auto nx = static_cast<std::uint64_t>(mesh.nx);
     const auto ny = static_cast<std::uint64_t>(mesh.ny);
@@ -97,10 +118,24 @@ std::size_t checked_field_size(const Cfd3dMesh& mesh, const std::string& path) {
         fail("OUT_OF_RANGE", path, "mesh dimensions overflow the field size");
     }
     const std::uint64_t count = nx * ny * nz;
+    if (count > kMaximumMeshCells) {
+        fail("OUT_OF_RANGE", path, "mesh cell product must not exceed " + std::to_string(kMaximumMeshCells));
+    }
     if (count > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
         fail("OUT_OF_RANGE", path, "mesh field is too large for this platform");
     }
-    return static_cast<std::size_t>(count);
+}
+
+namespace {
+
+// checked_field_size() is the earlier, allocation-gating call site used
+// throughout this file; it now delegates bound-checking to the public
+// validate_mesh_bounds() so every caller (this loader and the CLI's
+// workflows.cpp material loader) enforces the same limits.
+std::size_t checked_field_size(const Cfd3dMesh& mesh, const std::string& path) {
+    validate_mesh_bounds(mesh, path);
+    return static_cast<std::size_t>(static_cast<std::uint64_t>(mesh.nx) * static_cast<std::uint64_t>(mesh.ny) *
+                                     static_cast<std::uint64_t>(mesh.nz));
 }
 
 Cfd3dMaterialField parse_material(const json& value, const Cfd3dMesh& mesh,

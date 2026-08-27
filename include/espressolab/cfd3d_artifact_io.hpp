@@ -32,6 +32,14 @@ struct Cfd3dRunManifest {
     std::uint64_t field_bytes = 0;
 };
 
+// Throws artifact_io::LoadError if `mesh` exceeds the documented dimension
+// or cell-product limits (128 x 128 x 256, <=262144 cells -- the same bounds
+// Cfd3dSolver::run() enforces). Callers that construct a dense
+// Cfd3dField/Cfd3dMaterialField from a caller-supplied mesh (Audit F2,
+// issue #5) must call this first, so an oversized mesh is rejected before
+// allocation rather than after.
+void validate_mesh_bounds(const Cfd3dMesh& mesh, const std::string& path);
+
 Cfd3dCase load_case_json(const std::string& json_text);
 Cfd3dCase load_case_file(const std::filesystem::path& file);
 std::string dump_case_json(const Cfd3dCase& cfd3d_case, int indent = 2);

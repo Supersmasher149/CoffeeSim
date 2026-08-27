@@ -43,6 +43,12 @@ void write_text_file(const std::filesystem::path& path, const std::string& conte
 }
 
 Cfd3dMaterialField load_cfd3d_material(const std::filesystem::path& path, const Cfd3dMesh& mesh) {
+    // Audit F2, issue #5: this loader built its own dense Cfd3dMaterialField
+    // straight from mesh.nx/ny/nz (set directly from --nx/--ny/--nz here)
+    // without the mesh-limit check cfd3d_io.cpp's loader now has, so an
+    // oversized mesh could force a large allocation before
+    // Cfd3dSolver::run() ever validated it. Share the same check.
+    cfd3d_artifact_io::validate_mesh_bounds(mesh, "cfd3d.mesh");
     using nlohmann::json;
     json root;
     try {

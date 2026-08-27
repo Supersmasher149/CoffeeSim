@@ -13,6 +13,8 @@ add_executable(espressolab_tests
   unit/test_artifacts.cpp
   unit/test_reference_io.cpp
   unit/test_calibration.cpp
+  unit/test_cli_workflows.cpp
+  unit/test_tui_forms.cpp
   integration/test_shots.cpp
   integration/test_invariants.cpp
   integration/test_convergence.cpp
@@ -21,12 +23,17 @@ add_executable(espressolab_tests
   integration/test_cfd3d.cpp
   integration/test_sweeps.cpp
   integration/test_calibration_recovery.cpp
+  integration/test_cancellation.cpp
 )
 # tp_json is header-only and lets the artifact tests assert the serialized
-# contract by parsing it rather than by matching substrings.
+# contract by parsing it rather than by matching substrings. espressolab_cli_support
+# (shared CLI workflow services and pure TUI form logic, issues #24/#25) has no
+# FTXUI dependency, so linking it here does not pull a terminal UI dependency
+# into the test binary (issue #30: "pure TUI tests are deterministic and do
+# not require a real terminal").
 target_link_libraries(espressolab_tests
   PRIVATE catch2_amalgamated espressolab_core espressolab_artifacts espressolab_references espressolab_experiments
-          espressolab_calibration espressolab_cfd espressolab_warnings tp_json)
+          espressolab_calibration espressolab_cfd espressolab_warnings tp_json espressolab_cli_support)
 target_compile_definitions(espressolab_tests
   PRIVATE ESPRESSOLAB_ASSET_DIR="${PROJECT_SOURCE_DIR}/assets"
           ESPRESSOLAB_REFERENCE_DIR="${PROJECT_SOURCE_DIR}/espresso_real_world_refs"

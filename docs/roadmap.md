@@ -22,7 +22,7 @@ cross-platform build.
 
 ## Verified Locally
 
-- `./scripts/test.sh` passes: 78 test cases and 14,474 assertions.
+- `./scripts/test.sh` passes: 118 test cases and 17,398 assertions.
 - `npm run build` succeeds for the dashboard. Vite reports a non-blocking
   559 kB JavaScript chunk-size warning.
 - `./scripts/demo.sh` completes the documented CLI acceptance path:
@@ -94,9 +94,80 @@ deferred feature from that list is the calibration dashboard view. Never cut
 deterministic artifacts, tests, warnings, or the uniform-puck flow/extraction
 core.
 
+## Fidelity Level 2
+
+Implemented. The puck is one to eight lateral regions in hydraulic parallel:
+they share the imposed pressure and inlet-temperature profiles but carry their
+own wetting, flow, lumped thermal, and extraction state, and unequal
+permeability multipliers stand in for a fixed, first-order channel. A recipe
+without `parallel_regions` resolves to one uniform region and reproduces the
+Level 1 numbers, which `tests/integration/test_shots.cpp` asserts.
+
+Aggregate samples, summary, diagnostics and the CSV export are unchanged, so
+the dashboard contract held across the change; each run additionally reports a
+final `regions` array. `assets/recipes/channelled.json` is the worked example.
+See [model.md](model.md) for the equations and `2026-08-25-level-2-parallel-regions-design.md`
+for the design.
+
+What Level 2 deliberately does not do: no lateral exchange between regions, no
+dynamic channel formation, no axial structure, and no dashboard region editor.
+
+## Fidelity Level 3
+
+Implemented. Each lateral region divides into 1 to 32 stacked axial
+finite-volume cells in hydraulic series, so the puck resolves a wetting front, a
+temperature profile, and a solute concentration gradient from the screen to the
+basket. `axial_cells` defaults to 1 and reproduces the Level 2 shot exactly.
+`assets/recipes/axial-resolved.json` is the worked example. See
+[model.md](model.md) and `2026-08-26-level-3-axial-cells-design.md`.
+
+Refining the grid raises the reported yield, because a resolved column lets the
+upper cells extract into fresh water while the lower cells work against liquid
+that is already loaded. The baseline moves from 18.18 % at one cell to 22.28 %
+at sixteen, with the gap between successive doublings roughly halving.
+
+## Fidelity Level 4: the CFD solver
+
+Implemented as a separate solver, `CfdSolver`, reached through
+`espressolab_cli cfd`. It is deliberately not wired into the default pipeline:
+the Level 1-3 core, the REST server, the dashboard, the artifacts and the result
+hashes are untouched by it.
+
+It solves `div(lambda_t grad p) = 0` on a 2D axisymmetric (r, z) finite-volume
+mesh by red-black SOR, then advances water saturation by IMPES fractional flow
+with donor-upwinded enthalpy and solute transport. Face fluxes are limited on
+the donor cell, and because the limiter scales the shared face value the
+balances close to machine precision. Full equations in [model.md](model.md).
+
+The radial coordinate is what it buys: a channelled recipe at Level 2 or 3 is
+told how the flow splits, whereas the CFD solver is told only where the
+permeability differs and resolves the radial pressure gradient itself.
+
+### Verified, not validated
+
+This distinction is the important one, so it is worth stating plainly. The
+`[cfd][verification]` tests check the solver against the equations it claims to
+solve: discrete divergence ~1e-8 1/s, mass residuals ~1e-17 kg, axisymmetry of a
+uniform bed below 1e-7, an isothermal pressure field linear in depth to 5e-4
+with the departure shrinking under refinement, Darcy velocity within 1 % of
+analytic, and monotone mesh convergence.
+
+None of that says the equations describe espresso. The coefficients are the same
+uncalibrated set as the rest of the project, so the CFD solver resolves
+structure that no measurement has checked. It is a more detailed answer to a
+question nobody has yet confirmed is the right question.
+
+### What it is not
+
+The momentum closure is Darcy at the representative-elementary-volume scale,
+which is the standard porous-media formulation. The pore geometry is not meshed,
+so this is not pore-resolved DNS, there is no turbulence model, and inertia
+inside the pores is not resolved. A Forchheimer inertial term is present in the
+configuration and defaults to zero.
+
 ## Recommended Next Modeling Extension
 
-After real-shot calibration, add parallel puck regions with different
-permeability (fidelity level 2). Channelling is the largest known limitation of
-the current uniform-puck model, and parallel flow regions extend the existing
-flow calculation more directly than axial thermal cells.
+Real-shot calibration, still, and now more urgently than before. Levels 2, 3 and
+4 each resolve more structure than the last, and none of it has been compared
+against a measured shot. Additional fidelity is the thing this project least
+needs; measurements are the thing it most needs.

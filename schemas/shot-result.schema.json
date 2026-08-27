@@ -74,7 +74,20 @@
           "beverage_mass_g": { "type": "number" },
           "flow_fraction": { "type": "number", "minimum": 0, "maximum": 1 },
           "tds_percent": { "type": "number" },
-          "extraction_yield_percent": { "type": "number" }
+          "extraction_yield_percent": { "type": "number" },
+          "cells": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["saturation", "temperature_c", "pore_tds_percent", "extraction_yield_percent"],
+              "properties": {
+                "saturation": { "type": "number", "minimum": 0, "maximum": 1 },
+                "temperature_c": { "type": "number" },
+                "pore_tds_percent": { "type": "number" },
+                "extraction_yield_percent": { "type": "number" }
+              }
+            }
+          }
         }
       }
     },

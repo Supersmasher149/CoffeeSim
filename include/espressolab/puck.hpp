@@ -1,4 +1,6 @@
 #pragma once
+#include <vector>
+
 #include "espressolab/types.hpp"
 
 namespace espressolab {
@@ -35,6 +37,21 @@ PuckGeometry compress_puck(const Recipe& recipe, const ModelCoefficients& coeff,
 // Q = (k * A / (mu * L)) * deltaP   (6.1), with the safety limits of 6.5.
 FlowSolution darcy_flow(double permeability_m2, double area_m2, double viscosity_pa_s,
                         double depth_m, double delta_p_pa, double maximum_flow_m3_s);
+
+// One axial finite-volume cell's contribution to a column's hydraulic
+// resistance. Level 3 stacks these in series along the flow direction.
+struct AxialCell {
+    double permeability_m2 = 0.0;
+    double viscosity_pa_s = 0.0;
+    double depth_m = 0.0;
+};
+
+// Cells in hydraulic series carry one flow and their resistances add:
+//   Q = deltaP / sum(mu_i * L_i / (k_i * A))
+// A single cell delegates to darcy_flow so Level 3 with one cell is Level 2.
+// Any cell that fails the 6.5 guards blocks the whole column.
+FlowSolution darcy_flow_series(const std::vector<AxialCell>& cells, double area_m2,
+                               double delta_p_pa, double maximum_flow_m3_s);
 
 double smoothstep(double x);
 

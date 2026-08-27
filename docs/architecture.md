@@ -8,11 +8,14 @@ unchanged in unit tests, the CLI, batch sweeps and the dashboard.
 
 ```
 web (React/TS)  ->  tool_server (REST)  ->  experiment_runner
-                                        ->  artifact_io (JSON/CSV/hashes)
-                                                    |
-                                        espresso_core (state, stepping, termination)
-                                                    |
-                                        model_library (water, permeability, heat, extraction)
+                                         ->  artifact_io (JSON/CSV/hashes)
+                                         ->  reference_io (published metadata)
+                                                     |
+                                         espresso_core (state, stepping, termination)
+                                                     |
+                                         model_library (water, permeability, heat, extraction)
+
+CLI and CFD tests  ->  cfd (separate Level 4 solver)  ->  espresso_core + model_library
 ```
 
 | Target | Owns | Must not own |
@@ -23,6 +26,8 @@ web (React/TS)  ->  tool_server (REST)  ->  experiment_runner
 | `espressolab_artifacts` | Versioned JSON/CSV load and dump, result hashes | Physics decisions |
 | `espressolab_experiments` | Sweeps, run schedules, aggregation, artifact naming | Chart rendering |
 | `espressolab_calibration` | Measured shots, the loss function, the fit | Anything the solver depends on |
+| `espressolab_cfd` | Separate Level 4 axisymmetric pressure and transport solver | REST, dashboard, standard artifacts, default result hashes |
+| `espressolab_references` | Published reference-shot metadata and partial-load reporting | Simulation, fitting, or validation decisions |
 | `espressolab_server` | REST endpoints, jobs and threads, error translation, file boundaries | Equation implementations |
 | `web` | Controls, charts, comparisons, warnings, exports | Authoritative calculations |
 | `tests/fixtures` | Golden recipes, expected invariants | Production defaults |
@@ -31,11 +36,16 @@ web (React/TS)  ->  tool_server (REST)  ->  experiment_runner
 vocabulary without linking the solver. It is the one addition to the target list
 in section 13.2.
 
+`espressolab_cfd` is deliberately outside the default Level 1-3 request path.
+The CLI invokes it directly and its verification tests exercise it separately.
+It must not change the dashboard response, standard artifact shape, or the
+result hashes emitted by the default solver.
+
 ## Runtime data flow
 
 ```
 Recipe JSON + ModelCoefficients
-  -> schema and range validation        (artifact_io, then Recipe::validate)
+  -> document and range validation      (artifact_io, then Recipe::validate)
   -> profile preprocessing              (precomputed segment slopes)
   -> initial puck and water state
   -> fixed-step solver loop
@@ -71,8 +81,10 @@ sweep with no browser in the loop at all.
 ```
 engine/espresso_core/       solver, profiles, validation, domain types
 engine/model_library/       water properties, puck resistance, extraction kinetics
+engine/cfd/                 separate Level 4 axisymmetric CFD solver
 engine/artifact_io/         JSON/CSV, SHA-256, manifest stamping
 engine/experiment_runner/   sweep axes, cartesian product, aggregation
+engine/reference_io/        reference-shot catalogue loader
 include/espressolab/        public headers
 apps/espressolab_cli/       simulate, sweep, params, version
 apps/espressolab_server/    REST endpoints on cpp-httplib

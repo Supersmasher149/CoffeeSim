@@ -115,7 +115,15 @@ def architecture(theme):
         f'fill="{t["muted"]}">coefficients)</text>'
     )
 
-    box(436, 96, 158, 52, "espresso_core", "state · stepping · termination", emphasis=True)
+    box(
+        436,
+        96,
+        158,
+        52,
+        "espresso_core",
+        "state · stepping · termination",
+        emphasis=True,
+    )
     arrow(515, 150, 515, 190, None)
     out.append(
         f'<text x="523" y="174" font-family="{SANS}" font-size="10" '
@@ -133,17 +141,21 @@ def architecture(theme):
     out.append(
         f'<text x="390" y="268" text-anchor="middle" font-family="{SANS}" font-size="11" '
         f'fill="{t["muted"]}">Every arrow points inward. The core has no dependency on '
-        f'HTTP, JSON or the browser.</text>'
+        f"HTTP, JSON or the browser.</text>"
     )
 
-    label = ("EspressoLab architecture: the CLI, the REST server and the tests all drive one "
-             "simulation core, which depends on the model library and knows nothing about "
-             "HTTP, JSON or the browser.")
+    label = (
+        "EspressoLab architecture: the CLI, the REST server and the tests all drive one "
+        "simulation core, which depends on the model library and knows nothing about "
+        "HTTP, JSON or the browser."
+    )
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" '
         f'height="{H}" role="img" aria-label="{esc(label)}">'
         f"<title>{esc(label)}</title>"
-        f'<rect width="{W}" height="{H}" fill="{t["surface"]}"/>' + "".join(out) + "</svg>"
+        f'<rect width="{W}" height="{H}" fill="{t["surface"]}"/>'
+        + "".join(out)
+        + "</svg>"
     )
 
 
@@ -171,12 +183,22 @@ def read_sweep():
 def sweep_chart(theme, rows):
     t = THEMES[theme]
     W, H = 720, 452
-    L, R = 62, 132        # right margin holds the direct labels
+    L, R = 62, 132  # right margin holds the direct labels
     panels = [
-        {"y": 44, "h": 126, "title": "Shot time to 36 g", "unit": "s",
-         "series": [("time", "shot time", 0)]},
-        {"y": 248, "h": 126, "title": "Strength and extraction", "unit": "%",
-         "series": [("yield", "extraction yield", 0), ("tds", "TDS", 1)]},
+        {
+            "y": 44,
+            "h": 126,
+            "title": "Shot time to 36 g",
+            "unit": "s",
+            "series": [("time", "shot time", 0)],
+        },
+        {
+            "y": 248,
+            "h": 126,
+            "title": "Strength and extraction",
+            "unit": "%",
+            "series": [("yield", "extraction yield", 0), ("tds", "TDS", 1)],
+        },
     ]
     xs = [r["grind"] for r in rows]
     x_min, x_max = min(xs), max(xs)
@@ -214,7 +236,9 @@ def sweep_chart(theme, rows):
 
         for key, name, slot in panel["series"]:
             colour = t["series"][slot]
-            points = " ".join(f"{to_x(r['grind']):.1f},{to_y(r[key]):.1f}" for r in rows)
+            points = " ".join(
+                f"{to_x(r['grind']):.1f},{to_y(r[key]):.1f}" for r in rows
+            )
             out.append(
                 f'<polyline points="{points}" fill="none" stroke="{colour}" '
                 f'stroke-width="2" stroke-linejoin="round"/>'
@@ -265,16 +289,20 @@ def sweep_chart(theme, rows):
         out.append(
             f'<text x="{L + 16}" y="{baseline + 24}" font-family="{SANS}" font-size="11" '
             f'fill="{t["muted"]}">hollow: hit the 45 s limit before reaching 36 g '
-            f'(not a completed shot)</text>'
+            f"(not a completed shot)</text>"
         )
 
-    label = ("Grind-size sweep: finer grind lengthens the shot and raises strength and "
-             "extraction, until the finest puck stalls at the time limit.")
+    label = (
+        "Grind-size sweep: finer grind lengthens the shot and raises strength and "
+        "extraction, until the finest puck stalls at the time limit."
+    )
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" '
         f'height="{H}" role="img" aria-label="{esc(label)}">'
         f"<title>{esc(label)}</title>"
-        f'<rect width="{W}" height="{H}" fill="{t["surface"]}"/>' + "".join(out) + "</svg>"
+        f'<rect width="{W}" height="{H}" fill="{t["surface"]}"/>'
+        + "".join(out)
+        + "</svg>"
     )
 
 

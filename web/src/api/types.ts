@@ -51,6 +51,14 @@ export interface RegionSummary {
   flow_fraction: number;
   tds_percent: number;
   extraction_yield_percent: number;
+  cells: AxialCellSummary[];
+}
+
+export interface AxialCellSummary {
+  saturation: number;
+  temperature_c: number;
+  pore_tds_percent: number;
+  extraction_yield_percent: number;
 }
 
 export interface SimulationWarning {
@@ -99,6 +107,80 @@ export interface ShotResult {
   warnings: SimulationWarning[];
   samples: ShotSample[];
   regions?: RegionSummary[];
+}
+
+export interface ReferenceSource {
+  author: string;
+  experiment: string;
+  article_url: string;
+  experiment_log_url: string;
+  de1_shot_file: string;
+  data_quality: Record<string, string>;
+}
+
+export interface ReferenceCoffee {
+  name: string;
+  origin: string;
+  process: string;
+  varieties: string[];
+  elevation_masl: string;
+}
+
+export interface ReferenceSetup {
+  machine: string;
+  shower_head: string;
+  basket: string;
+  profile: string;
+  target_brew_ratio: number;
+  bloom_time_s: number;
+  coffee: ReferenceCoffee;
+}
+
+export interface ReferenceGrinder {
+  model: string;
+  burrs: string | null;
+  setting: number;
+  rpm: number | null;
+}
+
+export interface ReferenceObserved {
+  dose_g: number;
+  final_beverage_mass_g: number;
+  final_shot_time_s: number | null;
+  drip_g: number;
+  peak_pressure_bar: number;
+  tds_raw_pct: number;
+  tds_filtered_pct: number;
+  tds_uncertainty_pct_points: number;
+  extraction_yield_raw_pct: number;
+  extraction_yield_filtered_pct: number;
+}
+
+export interface ReferenceRecord {
+  schema_version: string;
+  id: string;
+  file: string;
+  source: ReferenceSource;
+  setup: ReferenceSetup;
+  grinder: ReferenceGrinder;
+  observed: ReferenceObserved;
+  timeseries_fields: string[];
+  timeseries: unknown[];
+  telemetry_available: false;
+}
+
+export interface ReferenceLoadError {
+  file: string;
+  code: string;
+  message: string;
+}
+
+export interface ReferenceCatalogue {
+  schema_version: string;
+  telemetry_available: false;
+  limitation: string;
+  references: ReferenceRecord[];
+  load_errors: ReferenceLoadError[];
 }
 
 export interface SweepRunRow {

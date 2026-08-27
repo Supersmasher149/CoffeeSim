@@ -1,0 +1,77 @@
+{
+  "schema_version": "1.0",
+  "id": "real_gagne_eg1_07",
+  "source": {
+    "author": "Jonathan Gagne",
+    "experiment": "Gagne EG-1 vs Niche Decent Blooming Experiment",
+    "article_url": "https://coffeeadastra.com/2021/05/10/a-comparison-between-standard-and-low-fines-espresso-shots/",
+    "experiment_log_url": "https://docs.google.com/spreadsheets/d/1r33CI6lczJhuYcNjy8z3jABagZoxO8Z0kkd6h5Ppos0/edit?usp=sharing",
+    "de1_shot_file": "20210302T104228.shot",
+    "data_quality": {
+      "shot_level_metadata": "measured/reported",
+      "timeseries": "not populated; requires original DE1 .shot file",
+      "final_shot_time_s": "not populated; requires original DE1 .shot file"
+    }
+  },
+  "setup": {
+    "machine": "Decent DE1+",
+    "shower_head": "IMS",
+    "basket": "Decent 18g",
+    "profile": "Scott Rao blooming espresso",
+    "target_brew_ratio": 4.0,
+    "bloom_time_s": 30.0,
+    "main_phase_control": {
+      "mode": "flow_controlled",
+      "target_flow_ml_s": 2.0
+    },
+    "coffee": {
+      "name": "Asotbilbao",
+      "origin": "Planadas, Tolima, Colombia",
+      "process": "washed",
+      "varieties": [
+        "Caturra",
+        "Castillo",
+        "Colombia"
+      ],
+      "elevation_masl": "1600-2000"
+    },
+    "puck_prep": {
+      "wdt": "deep WDT",
+      "bottom_filter": "Cafelat Robot paper",
+      "top_filter": "Cafelat Robot paper",
+      "tamper": "The Force Tamper"
+    },
+    "tds_measurement": {
+      "instrument": "VST refractometer",
+      "primary_reference": "filtered TDS",
+      "sample_temperature": "room temperature",
+      "filtered_with": "VST syringe filter"
+    }
+  },
+  "grinder": {
+    "model": "Weber EG-1",
+    "burrs": "SSP Ultra-Low-Fines",
+    "setting": 4.7,
+    "rpm": 1500
+  },
+  "observed": {
+    "dose_g": 18.2,
+    "final_beverage_mass_g": 74.9,
+    "final_shot_time_s": null,
+    "drip_g": 3.4,
+    "peak_pressure_bar": 6.5,
+    "tds_raw_pct": 6.46,
+    "tds_filtered_pct": 5.83,
+    "tds_uncertainty_pct_points": 0.03,
+    "extraction_yield_raw_pct": 26.6,
+    "extraction_yield_filtered_pct": 24.0
+  },
+  "timeseries_fields": [
+    "time_s",
+    "pressure_bar",
+    "flow_ml_s",
+    "beverage_mass_g",
+    "temperature_c"
+  ],
+  "timeseries": []
+}

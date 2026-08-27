@@ -54,6 +54,10 @@ ValidationResult Recipe::validate() const {
                        "recipe.parallel_regions");
         }
     }
+    if (axial_cells < 1 || axial_cells > 32) {
+        result.add("NONPHYSICAL_INPUT", "recipe.axial_cells must be between 1 and 32",
+                   "recipe.axial_cells");
+    }
     require_in_range(result, maximum_time_s, 10.0, 60.0, "recipe.stop.maximum_time_s", "s");
 
     if (target_beverage_mass_kg.has_value()) {

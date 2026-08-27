@@ -51,6 +51,39 @@ TEST_CASE("mass balances close to within tolerance", "[invariants]") {
     }
 }
 
+// The Level 2 residuals are sums across regional balances, so a per-region
+// bookkeeping slip cancels in the aggregate only by luck. An eight-way split
+// with unequal permeability is where such a slip shows up.
+TEST_CASE("mass balances close across parallel regions", "[invariants][regions]") {
+    Recipe eight = testing::baseline_recipe();
+    eight.name = "eight unequal regions";
+    eight.parallel_regions.clear();
+    for (int i = 0; i < 8; ++i) {
+        eight.parallel_regions.push_back({0.125, 0.4 + 0.3 * static_cast<double>(i)});
+    }
+    REQUIRE(eight.validate().ok());
+
+    for (const Recipe& recipe : {testing::channelled_recipe(), eight}) {
+        const ShotResult result = Simulator().run(recipe, testing::baseline_coefficients());
+        INFO("recipe: " << recipe.name);
+        REQUIRE(std::abs(result.diagnostics.water_mass_residual_kg) < 1.0e-9);
+        REQUIRE(std::abs(result.diagnostics.solids_mass_residual_kg) < 1.0e-9);
+
+        // Every region reports a share of one shot's flow.
+        double flow_fraction_total = 0.0;
+        double regional_beverage_kg = 0.0;
+        for (const RegionSummary& region : result.regions) {
+            REQUIRE(std::isfinite(region.flow_fraction));
+            REQUIRE(region.flow_fraction >= 0.0);
+            REQUIRE(region.flow_fraction <= 1.0 + 1.0e-9);
+            flow_fraction_total += region.flow_fraction;
+            regional_beverage_kg += region.beverage_mass_kg;
+        }
+        REQUIRE(flow_fraction_total == Catch::Approx(1.0).margin(1.0e-9));
+        REQUIRE(regional_beverage_kg == Catch::Approx(result.summary.beverage_mass_kg));
+    }
+}
+
 TEST_CASE("zero pressure produces no flow and no beverage", "[invariants]") {
     Recipe recipe = testing::baseline_recipe();
     recipe.pressure_pa = PiecewiseLinearProfile::constant(0.0);
@@ -106,5 +139,75 @@ TEST_CASE("generated valid recipes never produce NaN or infinity", "[invariants]
         REQUIRE(result.summary.beverage_mass_kg >= 0.0);
         REQUIRE(result.summary.extraction_yield_fraction >= 0.0);
         REQUIRE(std::abs(result.diagnostics.water_mass_residual_kg) < 1.0e-9);
+    }
+}
+
+// Section 14.3 again, over the region partition itself: the solver must hold
+// its bounds for any legal split, not only the hand-written fixtures.
+TEST_CASE("generated region partitions stay finite and bounded", "[invariants][property][regions]") {
+    std::mt19937 rng(20260826);  // fixed seed: a failing partition must be reproducible
+    std::uniform_int_distribution<int> region_count(1, 8);
+    std::uniform_real_distribution<double> weight(0.2, 1.0);
+    std::uniform_real_distribution<double> permeability(0.2, 6.0);
+    std::uniform_real_distribution<double> particle_um(200.0, 600.0);
+
+    const ModelCoefficients coeff = testing::baseline_coefficients();
+
+    for (int i = 0; i < 60; ++i) {
+        Recipe recipe = testing::baseline_recipe();
+        recipe.name = "generated partition";
+        recipe.particle_diameter_m = units::microns_to_m(particle_um(rng));
+        recipe.maximum_time_s = 30.0;
+
+        const int count = region_count(rng);
+        std::vector<double> weights(static_cast<std::size_t>(count));
+        double total = 0.0;
+        for (double& w : weights) {
+            w = weight(rng);
+            total += w;
+        }
+        recipe.parallel_regions.clear();
+        double assigned = 0.0;
+        for (int r = 0; r < count; ++r) {
+            // The last fraction takes the remainder so the fractions sum to
+            // exactly one rather than to one within rounding.
+            const double fraction =
+                r == count - 1 ? 1.0 - assigned : weights[static_cast<std::size_t>(r)] / total;
+            assigned += fraction;
+            recipe.parallel_regions.push_back({fraction, permeability(rng)});
+        }
+
+        INFO("iteration " << i << " with " << count << " regions");
+        REQUIRE(recipe.validate().ok());
+
+        const ShotResult result = Simulator().run(recipe, coeff);
+        REQUIRE(result.summary.termination != TerminationReason::numerical_failure);
+        REQUIRE(result.summary.termination != TerminationReason::invalid_state);
+        REQUIRE(result.regions.size() == static_cast<std::size_t>(count));
+        REQUIRE_FALSE(result.samples.empty());  // the scan below is vacuous on an empty series
+        REQUIRE(std::abs(result.diagnostics.water_mass_residual_kg) < 1.0e-9);
+        REQUIRE(std::abs(result.diagnostics.solids_mass_residual_kg) < 1.0e-9);
+
+        // Scanned rather than asserted per sample: one REQUIRE per run keeps the
+        // suite's assertion count meaningful, and the index says where to look.
+        std::size_t bad_sample = result.samples.size();
+        for (std::size_t s = 0; s < result.samples.size(); ++s) {
+            const ShotSample& sample = result.samples[s];
+            if (!std::isfinite(sample.saturation) || sample.saturation < 0.0 ||
+                sample.saturation > 1.0 + 1.0e-9 || !std::isfinite(sample.flow_m3_s) ||
+                !std::isfinite(sample.puck_temperature_k) ||
+                !std::isfinite(sample.beverage_mass_kg)) {
+                bad_sample = s;
+                break;
+            }
+        }
+        INFO("first nonfinite or out-of-bounds sample: " << bad_sample);
+        REQUIRE(bad_sample == result.samples.size());
+        for (const RegionSummary& region : result.regions) {
+            REQUIRE(std::isfinite(region.beverage_mass_kg));
+            REQUIRE(std::isfinite(region.tds_fraction));
+            REQUIRE(std::isfinite(region.extraction_yield_fraction));
+            REQUIRE(region.extraction_yield_fraction >= 0.0);
+        }
     }
 }

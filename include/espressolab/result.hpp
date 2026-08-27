@@ -78,6 +78,15 @@ struct ShotSummary {
     int warning_count = 0;
 };
 
+// Level 3: the final state of one axial cell, ordered from the screen side of
+// the puck down to the basket. A Level 2 run reports one of these per region.
+struct AxialCellSummary {
+    double saturation = 0.0;
+    double temperature_k = 0.0;
+    double pore_tds_fraction = 0.0;
+    double extraction_yield_fraction = 0.0;
+};
+
 struct RegionSummary {
     double area_fraction = 0.0;
     double permeability_multiplier = 1.0;
@@ -85,6 +94,7 @@ struct RegionSummary {
     double flow_fraction = 0.0;
     double tds_fraction = 0.0;
     double extraction_yield_fraction = 0.0;
+    std::vector<AxialCellSummary> cells;
 };
 
 struct ShotResult {

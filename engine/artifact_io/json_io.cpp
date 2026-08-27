@@ -147,6 +147,13 @@ Recipe load_recipe_json(const std::string& json_text) {
     recipe.particle_diameter_m =
         units::microns_to_m(require_number(puck, "particle_diameter_um", "recipe.puck"));
     recipe.particle_spread_factor = require_number(puck, "particle_spread_factor", "recipe.puck");
+    if (root.contains("axial_cells")) {
+        const json& cells = root.at("axial_cells");
+        if (!cells.is_number_integer()) {
+            fail("MISSING_FIELD", "recipe.axial_cells", "axial_cells must be an integer");
+        }
+        recipe.axial_cells = cells.get<int>();
+    }
     if (root.contains("parallel_regions")) {
         const json& regions = root.at("parallel_regions");
         if (!regions.is_array() || regions.empty()) {
@@ -202,6 +209,7 @@ std::string dump_recipe_json(const Recipe& recipe, int indent) {
                     {"depth_mm", units::m_to_mm(recipe.puck_depth_m)},
                     {"particle_diameter_um", units::m_to_microns(recipe.particle_diameter_m)},
                      {"particle_spread_factor", recipe.particle_spread_factor}};
+    root["axial_cells"] = recipe.axial_cells;
     root["parallel_regions"] = json::array();
     for (const ParallelRegion& region : recipe.parallel_regions) {
         root["parallel_regions"].push_back({{"area_fraction", region.area_fraction},
@@ -343,13 +351,22 @@ std::string dump_summary_json(const ShotResult& result, int indent) {
          {"warnings", warnings_to_json(result.warnings)}};
     root["regions"] = json::array();
     for (const RegionSummary& region : result.regions) {
+        // Ordered from the screen side of the puck down to the basket.
+        json cells = json::array();
+        for (const AxialCellSummary& cell : region.cells) {
+            cells.push_back({{"saturation", cell.saturation},
+                             {"temperature_c", units::kelvin_to_celsius(cell.temperature_k)},
+                             {"pore_tds_percent", cell.pore_tds_fraction * 100.0},
+                             {"extraction_yield_percent", cell.extraction_yield_fraction * 100.0}});
+        }
         root["regions"].push_back(
             {{"area_fraction", region.area_fraction},
              {"permeability_multiplier", region.permeability_multiplier},
              {"beverage_mass_g", units::kg_to_grams(region.beverage_mass_kg)},
              {"flow_fraction", region.flow_fraction},
              {"tds_percent", region.tds_fraction * 100.0},
-             {"extraction_yield_percent", region.extraction_yield_fraction * 100.0}});
+             {"extraction_yield_percent", region.extraction_yield_fraction * 100.0},
+             {"cells", std::move(cells)}});
     }
     return root.dump(indent);
 }

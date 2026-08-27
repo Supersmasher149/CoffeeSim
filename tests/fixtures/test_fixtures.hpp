@@ -12,6 +12,7 @@ namespace espressolab::testing {
 
 inline std::filesystem::path asset_dir() { return ESPRESSOLAB_ASSET_DIR; }
 inline std::filesystem::path fixture_dir() { return ESPRESSOLAB_FIXTURE_DIR; }
+inline std::filesystem::path reference_dir() { return ESPRESSOLAB_REFERENCE_DIR; }
 
 inline Recipe baseline_recipe() {
     return artifact_io::load_recipe_file(asset_dir() / "recipes" / "baseline.json");

@@ -8,7 +8,8 @@
 
 Tags: `[units]` `[profile]` `[water]` `[permeability]` `[flow]` `[heat]`
 `[extraction]` `[artifacts]` `[integration]` `[invariants]` `[convergence]`
-`[sweep]` `[calibration]` `[recovery]` `[property]` `[performance]`.
+`[sweep]` `[calibration]` `[recovery]` `[property]` `[performance]` `[regions]`
+`[axial]` `[cfd]` `[verification]`.
 
 ## What each layer is for
 
@@ -27,7 +28,46 @@ same inputs reproduce the same result hash.
 **Property and invariant tests** generate 200 valid recipes from a fixed seed
 and require that none produce NaN or infinity, that masses stay nonnegative,
 that beverage mass and extraction yield never go backwards, and that both mass
-balances close to within 1e-9 kg.
+balances close to within 1e-9 kg. A second sweep generates 60 random one-to-
+eight region partitions and holds the same bounds over each one, because a
+partition is an input the hand-written fixtures cannot cover exhaustively.
+
+**Parallel-region tests** cover fidelity level 2 specifically. A uniform single
+region has to reproduce the Level 1 aggregate; an asymmetric two-region puck has
+to give its higher-permeability region the larger share of integrated flow; the
+water and solids residuals have to close across an eight-way unequal split,
+where a per-region bookkeeping slip cancels in the aggregate only by luck; and
+the `regions` array has to survive into the serialized summary and result with
+the configured partition echoed back in recipe order. That last one runs a real
+shot and parses the JSON, because the hash test beside it builds its region
+summaries by hand and would still pass if the serializer stopped emitting
+them.
+
+**Axial cell tests** cover fidelity level 3. One cell has to reproduce the
+Level 2 shot; doubling the cell count has to move shot time and yield by a
+shrinking amount, because a discretization that does not settle is not resolving
+anything; a run stopped mid pre-infusion has to show a wetting front, meaning no
+cell drier than the one above it and a real edge somewhere in the column; pore
+concentration has to rise and local yield has to fall with depth, which is the
+mechanism the lumped puck could not express; the balances have to close at 1, 3,
+8 and 32 cells; and the per-cell summary has to reach the serialized artifacts
+in screen-to-basket order.
+
+**CFD verification tests** are a different kind of test from everything else
+here, and the distinction matters. They do not ask whether the solver describes
+espresso; they ask whether it solves the equations it claims to. The discrete
+divergence of the total velocity field has to be ~1e-8 1/s against Darcy
+velocities four orders of magnitude larger, or the elliptic solve is not
+converged and nothing downstream means anything. Water and solute balances have
+to close at ~1e-17 kg, which the face-based limiter makes structural rather than
+approximate. A uniform bed has to produce an axisymmetric solution, since radial
+structure there would be an artefact of the mesh metrics. An isothermal column
+is a method-of-exact-solutions check: uniform mobility reduces the pressure
+equation to `d2p/dz2 = 0`, so the field must be linear in depth, and the residual
+5e-4 departure is identified as the saturation profile by the fact that it
+shrinks under refinement. The Darcy velocity is compared against the analytic
+value from the same coefficients. Refinement has to converge, and repeated runs
+have to reproduce identical fields.
 
 **Convergence tests** run the baseline at 0.02, 0.01 and 0.005 s and require the
 change to shrink as the step halves. This is the test that would catch a
@@ -58,6 +98,9 @@ for reproducibility, not for correctness.
 
 ## The acceptance test
 
-`./scripts/demo.sh` is the shipping gate from section 2.2: from a clean clone,
-run the baseline recipe, complete a grind-size sweep, export JSON and CSV, and
-rerun the same inputs to the same result hash. CI runs it on Linux and macOS.
+`./scripts/demo.sh` is the local acceptance workflow: from a clean clone, run
+the baseline recipe, complete a grind-size sweep, export JSON and CSV, and rerun
+the same inputs to the same result hash. It is the intended native CI gate for
+Linux and macOS, but hosted CI evidence should not be claimed until observed
+runs are recorded. See [current-state-and-gaps.md](current-state-and-gaps.md)
+for the evidence status.

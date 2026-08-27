@@ -20,6 +20,7 @@
 
 #include "espressolab/artifact_io.hpp"
 #include "espressolab/experiment.hpp"
+#include "espressolab/reference_io.hpp"
 #include "espressolab/simulator.hpp"
 #include "espressolab/units.hpp"
 #include "espressolab/version.hpp"
@@ -369,6 +370,13 @@ std::string asset_root(int argc, char** argv) {
     return "assets";
 }
 
+std::string reference_root(int argc, char** argv) {
+    for (int i = 1; i + 1 < argc; ++i) {
+        if (std::string(argv[i]) == "--references") return argv[i + 1];
+    }
+    return "espresso_real_world_refs";
+}
+
 int port_from_args(int argc, char** argv) {
     for (int i = 1; i + 1 < argc; ++i) {
         if (std::string(argv[i]) == "--port") return std::stoi(argv[i + 1]);
@@ -380,6 +388,7 @@ int port_from_args(int argc, char** argv) {
 
 int main(int argc, char** argv) {
     const std::filesystem::path assets = asset_root(argc, argv);
+    const std::filesystem::path references = reference_root(argc, argv);
     const int port = port_from_args(argc, argv);
 
     RunStore store;
@@ -438,9 +447,22 @@ int main(int argc, char** argv) {
                            {"recipe_schema_version", version::kRecipeSchema},
                            {"result_schema_version", version::kResultSchema},
                            {"asset_root", std::filesystem::absolute(assets).string()},
+                           {"reference_root", std::filesystem::absolute(references).string()},
                            {"sweepable_parameters", supported_parameter_paths()}};
         response.set_content(body.dump(2), "application/json");
     });
+
+    server.Get("/api/v1/reference-shots",
+               [&](const httplib::Request&, httplib::Response& response) {
+                   try {
+                       const reference_io::Catalogue catalogue =
+                           reference_io::load_directory(references);
+                       response.set_content(reference_io::dump_json(catalogue),
+                                            "application/json");
+                   } catch (const reference_io::LoadError& e) {
+                       send_error(response, 500, e.code, e.what(), e.path);
+                   }
+               });
 
     server.Get("/api/v1/recipes", [&](const httplib::Request&, httplib::Response& response) {
         json list = json::array();

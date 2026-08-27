@@ -1,7 +1,11 @@
 #include <catch_amalgamated.hpp>
+#include <cmath>
+
+#include <nlohmann/json.hpp>
 
 #include "../fixtures/test_fixtures.hpp"
 #include "espressolab/artifact_io.hpp"
+#include "espressolab/simulator.hpp"
 
 using namespace espressolab;
 
@@ -73,13 +77,93 @@ TEST_CASE("nonphysical values fail validation rather than simulating", "[artifac
     REQUIRE_THROWS_AS(Simulator().run(recipe, testing::baseline_coefficients()), InvalidInputError);
 }
 
-TEST_CASE("parallel-region validation rejects nonphysical partitions", "[artifacts]") {
+TEST_CASE("parallel-region validation rejects nonphysical partitions", "[artifacts][regions]") {
     Recipe recipe = testing::baseline_recipe();
-    recipe.parallel_regions = {{0.7, 1.0}, {0.2, 2.0}};
 
-    const ValidationResult result = recipe.validate();
-    REQUIRE_FALSE(result.ok());
-    REQUIRE(result.issues().front().path == "recipe.parallel_regions");
+    SECTION("area fractions that do not sum to one") {
+        recipe.parallel_regions = {{0.7, 1.0}, {0.2, 2.0}};
+        const ValidationResult result = recipe.validate();
+        REQUIRE_FALSE(result.ok());
+        REQUIRE(result.issues().front().path == "recipe.parallel_regions");
+    }
+
+    SECTION("an empty partition") {
+        recipe.parallel_regions.clear();
+        const ValidationResult result = recipe.validate();
+        REQUIRE_FALSE(result.ok());
+        REQUIRE(result.issues().front().path == "recipe.parallel_regions");
+    }
+
+    SECTION("more than eight regions") {
+        recipe.parallel_regions.assign(9, {1.0 / 9.0, 1.0});
+        const ValidationResult result = recipe.validate();
+        REQUIRE_FALSE(result.ok());
+        REQUIRE(result.issues().front().path == "recipe.parallel_regions");
+    }
+
+    SECTION("a permeability multiplier outside the validated range") {
+        recipe.parallel_regions = {{0.5, 1.0}, {0.5, 25.0}};
+        const ValidationResult result = recipe.validate();
+        REQUIRE_FALSE(result.ok());
+        // The failing region names itself by index, not just the array.
+        REQUIRE(result.issues().front().path ==
+                "recipe.parallel_regions[1].permeability_multiplier");
+    }
+
+    SECTION("an individual area fraction below the floor") {
+        recipe.parallel_regions = {{0.995, 1.0}, {0.005, 1.0}};
+        const ValidationResult result = recipe.validate();
+        REQUIRE_FALSE(result.ok());
+        REQUIRE(result.issues().front().path == "recipe.parallel_regions[1].area_fraction");
+    }
+
+    SECTION("a legal eight-way split is accepted") {
+        recipe.parallel_regions.assign(8, {0.125, 1.0});
+        REQUIRE(recipe.validate().ok());
+    }
+}
+
+TEST_CASE("axial cell counts outside the supported range are rejected", "[artifacts][axial]") {
+    Recipe recipe = testing::baseline_recipe();
+
+    SECTION("zero cells") {
+        recipe.axial_cells = 0;
+        const ValidationResult result = recipe.validate();
+        REQUIRE_FALSE(result.ok());
+        REQUIRE(result.issues().front().path == "recipe.axial_cells");
+    }
+
+    SECTION("a negative count") {
+        recipe.axial_cells = -4;
+        REQUIRE_FALSE(recipe.validate().ok());
+    }
+
+    SECTION("more cells than the solver supports") {
+        recipe.axial_cells = 33;
+        const ValidationResult result = recipe.validate();
+        REQUIRE_FALSE(result.ok());
+        REQUIRE(result.issues().front().path == "recipe.axial_cells");
+    }
+
+    SECTION("the supported bounds are accepted") {
+        recipe.axial_cells = 1;
+        REQUIRE(recipe.validate().ok());
+        recipe.axial_cells = 32;
+        REQUIRE(recipe.validate().ok());
+    }
+}
+
+TEST_CASE("axial_cells survives a recipe round trip", "[artifacts][axial]") {
+    Recipe original = testing::baseline_recipe();
+    original.axial_cells = 12;
+    const Recipe reloaded = artifact_io::load_recipe_json(artifact_io::dump_recipe_json(original));
+
+    REQUIRE(reloaded.axial_cells == 12);
+    REQUIRE(artifact_io::recipe_hash(reloaded) == artifact_io::recipe_hash(original));
+
+    // A recipe written before Level 3 has no field and must load as one cell.
+    const Recipe legacy = testing::baseline_recipe();
+    REQUIRE(legacy.axial_cells == 1);
 }
 
 TEST_CASE("a recipe survives a JSON round trip", "[artifacts]") {
@@ -159,6 +243,51 @@ TEST_CASE("result hashes include saturation", "[artifacts]") {
     const std::string dry_hash = artifact_io::result_hash(recipe, coefficients, config, samples);
     samples.front().saturation = 1.0;
     REQUIRE(artifact_io::result_hash(recipe, coefficients, config, samples) != dry_hash);
+}
+
+// The hash test below builds RegionSummary values by hand, so it would still
+// pass if the serializer stopped emitting them. This one runs a real two-region
+// shot and reads the region contract back out of the JSON.
+TEST_CASE("region summaries reach the serialized artifacts", "[artifacts][regions]") {
+    const Recipe recipe = testing::channelled_recipe();
+    const ShotResult result = Simulator().run(recipe, testing::baseline_coefficients());
+    REQUIRE(result.regions.size() == 2);
+
+    for (const std::string& document :
+         {artifact_io::dump_summary_json(result), artifact_io::dump_result_json(result)}) {
+        const nlohmann::json root = nlohmann::json::parse(document);
+        REQUIRE(root.contains("regions"));
+        const nlohmann::json& regions = root.at("regions");
+        REQUIRE(regions.is_array());
+        REQUIRE(regions.size() == recipe.parallel_regions.size());
+
+        double flow_fraction_total = 0.0;
+        for (std::size_t i = 0; i < regions.size(); ++i) {
+            const nlohmann::json& region = regions[i];
+            // The configured partition is echoed back in recipe order.
+            REQUIRE(region.at("area_fraction").get<double>() ==
+                    Catch::Approx(recipe.parallel_regions[i].area_fraction));
+            REQUIRE(region.at("permeability_multiplier").get<double>() ==
+                    Catch::Approx(recipe.parallel_regions[i].permeability_multiplier));
+            for (const char* field : {"beverage_mass_g", "flow_fraction", "tds_percent",
+                                      "extraction_yield_percent"}) {
+                REQUIRE(region.contains(field));
+                REQUIRE(std::isfinite(region.at(field).get<double>()));
+            }
+            flow_fraction_total += region.at("flow_fraction").get<double>();
+        }
+        REQUIRE(flow_fraction_total == Catch::Approx(1.0).margin(1.0e-9));
+
+        // channelled.json gives its narrow region four times the permeability,
+        // so that region must carry the larger share of the flow.
+        REQUIRE(regions[1].at("flow_fraction").get<double>() >
+                regions[0].at("flow_fraction").get<double>());
+    }
+
+    // Samples stay aggregate: the CSV export is the dashboard contract and
+    // gains no per-region columns at Level 2.
+    const std::string csv = artifact_io::dump_samples_csv(result);
+    REQUIRE(csv.find("region") == std::string::npos);
 }
 
 TEST_CASE("result hashes include parallel-region summaries", "[artifacts]") {

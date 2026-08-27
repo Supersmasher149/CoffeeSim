@@ -1,0 +1,28 @@
+{
+  "schema_version": "1.0",
+  "name": "Real-world espresso reference shots",
+  "description": "Four shot-level references from Jonathan Gagne's EG-1 vs Niche blooming espresso experiment.",
+  "important_note": "No telemetry was fabricated. final_shot_time_s is null and timeseries is empty until the original DE1 .shot files are parsed.",
+  "references": [
+    {
+      "id": "real_gagne_eg1_01",
+      "file": "gagne_eg1_01.json",
+      "source_shot_file": "20210302T094131.shot"
+    },
+    {
+      "id": "real_gagne_niche_02",
+      "file": "gagne_niche_02.json",
+      "source_shot_file": "20210302T095711.shot"
+    },
+    {
+      "id": "real_gagne_eg1_07",
+      "file": "gagne_eg1_07.json",
+      "source_shot_file": "20210302T104228.shot"
+    },
+    {
+      "id": "real_gagne_niche_06",
+      "file": "gagne_niche_06.json",
+      "source_shot_file": "20210302T103452.shot"
+    }
+  ]
+}

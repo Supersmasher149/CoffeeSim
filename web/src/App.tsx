@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { ApiFailure, api, type HealthResponse } from "./api/client";
-import type { Recipe, ShotResult } from "./api/types";
+import type { Recipe, ReferenceCatalogue, ShotResult } from "./api/types";
 import { CalibrationNotice } from "./features/calibration/CalibrationNotice";
 import { ComparisonTray } from "./features/comparison/ComparisonTray";
+import { ReferenceShotsPanel } from "./features/references/ReferenceShotsPanel";
 import { ChartStack } from "./features/shot/ChartStack";
 import { ControlRail } from "./features/shot/ControlRail";
 import { DiagnosticsDrawer } from "./features/shot/DiagnosticsDrawer";
@@ -22,6 +23,8 @@ export function App() {
   const [catalogue, setCatalogue] = useState<{ id: string; name: string; recipe: Recipe }[]>([]);
   const [selectedId, setSelectedId] = useState("baseline");
   const [error, setError] = useState<string>();
+  const [referenceError, setReferenceError] = useState<string>();
+  const [referenceCatalogue, setReferenceCatalogue] = useState<ReferenceCatalogue>();
   const [pinned, setPinned] = useState<ShotResult[]>([]);
 
   const [workspace, setWorkspace] = useState<ShotWorkspace>({
@@ -49,6 +52,12 @@ export function App() {
         }
       })
       .catch(() => undefined);
+    api
+      .referenceShots()
+      .then(setReferenceCatalogue)
+      .catch((failure) =>
+        setReferenceError(failure instanceof Error ? failure.message : String(failure)),
+      );
   }, []);
 
   const setRecipe = useCallback((recipe: Recipe) => {
@@ -189,6 +198,13 @@ export function App() {
             no calculations of its own.
           </p>
         )}
+
+        <ReferenceShotsPanel
+          catalogue={referenceCatalogue}
+          error={referenceError}
+          active={active}
+          recipe={workspace.draftRecipe}
+        />
 
         <SweepPanel
           baseline={workspace.draftRecipe}

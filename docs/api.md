@@ -1,17 +1,21 @@
 # Local API
 
 `espressolab_server` binds `127.0.0.1` (default port 8734) and serves the
-endpoints of section 12.1. It is a local tool server: no accounts, no auth, no
-cloud deployment.
+endpoints below. It is a local tool server: no accounts, no auth, no cloud
+deployment, and no persistence across a server restart. For ownership and
+versioning of every request and response document, see
+[data-contracts.md](data-contracts.md).
 
 ```bash
-./build/apps/espressolab_server/espressolab_server --assets assets --port 8734
+./build/apps/espressolab_server/espressolab_server --assets assets \
+  --references espresso_real_world_refs --port 8734
 ```
 
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/api/v1/health` | Build, schema and solver versions, plus the sweepable parameter list |
 | GET | `/api/v1/recipes` | The recipes in `assets/recipes/`, sorted by id |
+| GET | `/api/v1/reference-shots` | Read-only published shot metadata, separate from calibration |
 | POST | `/api/v1/shots` | Validate and execute one simulation |
 | GET | `/api/v1/shots/{id}` | Read a completed summary and its samples |
 | POST | `/api/v1/sweeps` | Start a parameter sweep in the background (202) |
@@ -30,12 +34,48 @@ curl -s -X POST localhost:8734/api/v1/shots \
 
 The body accepts `recipe` (required), `coefficients` (defaults to
 `assets/coefficients/default-v1.json`) and `solver` (`dt_s`,
-`sample_interval_s`). The response follows `schemas/shot-result.schema.json`.
+`sample_interval_s`). The runtime loader and serializer are the executable
+contract; `schemas/shot-result.schema.json` documents the intended external
+shape and must be kept synchronized with that behavior.
 Recipes may include `parallel_regions`: one to eight objects with
 `area_fraction` and `permeability_multiplier`. They share the pressure profile
 but evolve independently in the Level 2 solver. The response's `regions` array
 contains each final region's beverage mass, integrated flow fraction, TDS, and
 extraction yield; the existing samples and summary remain aggregate values.
+
+Recipes may also set `axial_cells`, an integer from 1 to 32 (default 1), which
+divides every region into stacked finite-volume cells along the flow direction.
+Each region in the response then carries a `cells` array ordered from the screen
+side of the puck down to the basket, each entry reporting that cell's final
+`saturation`, `temperature_c`, `pore_tds_percent` and `extraction_yield_percent`.
+Samples and the CSV export stay aggregate at every cell count.
+
+## Listing Recipes
+
+`GET /api/v1/recipes` returns a `recipes` array sorted by id. A valid entry has
+`id`, `name`, and a normalized `recipe` object. If one asset cannot be loaded,
+the endpoint keeps the rest of the catalogue available and emits an entry with
+`id` and an `error` object instead. API clients must treat these as distinct
+shapes and must not attempt to simulate an error entry.
+
+## Reading real-world references
+
+`GET /api/v1/reference-shots` reads the manifest in the directory supplied with
+`--references` and returns its records in manifest order. The default directory
+is `espresso_real_world_refs`; `scripts/dev.sh` passes it explicitly. These
+records preserve source links, setup metadata, grinder metadata, and reported
+shot-level values from the source documents.
+
+The catalogue is intentionally separate from `assets/measured_shots/` and the
+calibration workflow. The current records have no DE1 time series and no final
+shot time, so the response keeps those values null/empty and reports
+`telemetry_available: false`. The dashboard presents them as contextual
+comparison material, not as validation data or a recipe input.
+
+If the catalogue directory or manifest is unavailable, the endpoint returns a
+structured `REFERENCE_CATALOG_NOT_FOUND`, `REFERENCE_MANIFEST_NOT_FOUND`, or
+`REFERENCE_MANIFEST_INVALID` error. An individual malformed record is reported
+in `load_errors` while valid records remain available.
 
 ## Running a sweep
 
@@ -100,7 +140,8 @@ Codes are stable and safe to switch on: `MALFORMED_JSON`, `MISSING_FIELD`,
 `UNORDERED_PROFILE`, `OUT_OF_RANGE`, `NONPHYSICAL_INPUT`, `NONFINITE_INPUT`,
 `UNKNOWN_PARAMETER_PATH`, `SWEEP_TOO_LARGE`, `RUN_NOT_FOUND`,
 `SWEEP_NOT_FOUND`, `ARTIFACT_NOT_FOUND`, `SWEEP_NOT_FINISHED`, `EMPTY_SWEEP`,
-`EMPTY_SWEEP_AXIS`, `DUPLICATE_SWEEP_AXIS`.
+`EMPTY_SWEEP_AXIS`, `DUPLICATE_SWEEP_AXIS`, `REFERENCE_CATALOG_NOT_FOUND`,
+`REFERENCE_MANIFEST_NOT_FOUND`, and `REFERENCE_MANIFEST_INVALID`.
 
 ## Warnings are not errors
 

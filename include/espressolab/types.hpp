@@ -24,6 +24,9 @@ struct Recipe {
     double particle_diameter_m = 350.0e-6;
     double particle_spread_factor = 0.55;
     std::vector<ParallelRegion> parallel_regions{{}};
+    // Fidelity level 3: stacked finite-volume cells along the flow direction,
+    // applied uniformly to every region. One cell is the Level 2 lumped puck.
+    int axial_cells = 1;
     PiecewiseLinearProfile pressure_pa;
     PiecewiseLinearProfile inlet_temperature_k;
     double maximum_time_s = 45.0;

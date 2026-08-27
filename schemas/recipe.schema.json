@@ -29,6 +29,10 @@
     },
     "pressure_profile_bar": { "$ref": "#/$defs/profile", "description": "Gauge pressure across the puck, 0-12 bar." },
     "temperature_profile_c": { "$ref": "#/$defs/profile", "description": "Inlet water temperature, 85-100 C." },
+    "axial_cells": {
+      "type": "integer", "minimum": 1, "maximum": 32, "default": 1,
+      "description": "Fidelity level 3: stacked finite-volume cells along the flow direction, applied to every region. 1 is the lumped Level 2 puck."
+    },
     "parallel_regions": {
       "type": "array",
       "minItems": 1,

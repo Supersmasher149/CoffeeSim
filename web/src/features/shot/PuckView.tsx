@@ -86,6 +86,7 @@ const SINGLE_REGION: RegionSummary = {
   flow_fraction: 1,
   tds_percent: 0,
   extraction_yield_percent: 0,
+  cells: [],
 };
 
 interface Column {

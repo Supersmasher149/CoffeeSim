@@ -1,6 +1,7 @@
 import type {
   ApiError,
   Recipe,
+  ReferenceCatalogue,
   ShotResult,
   SweepAccepted,
   SweepResult,
@@ -46,6 +47,7 @@ export interface HealthResponse {
   recipe_schema_version: string;
   result_schema_version: string;
   asset_root: string;
+  reference_root: string;
   sweepable_parameters: string[];
 }
 
@@ -53,6 +55,8 @@ export const api = {
   health: () => request<HealthResponse>("/health"),
 
   recipes: () => request<{ recipes: { id: string; name: string; recipe: Recipe }[] }>("/recipes"),
+
+  referenceShots: () => request<ReferenceCatalogue>("/reference-shots"),
 
   simulate: (recipe: Recipe) =>
     request<ShotResult>("/shots", { method: "POST", body: JSON.stringify({ recipe }) }),

@@ -75,4 +75,42 @@ FlowSolution darcy_flow(double permeability_m2, double area_m2, double viscosity
     return flow;
 }
 
+FlowSolution darcy_flow_series(const std::vector<AxialCell>& cells, double area_m2,
+                               double delta_p_pa, double maximum_flow_m3_s) {
+    FlowSolution flow;
+    if (cells.empty() || area_m2 <= 0.0) return flow;
+
+    // One cell is the Level 1 law untouched, so a Level 3 recipe with a single
+    // cell reproduces Level 2 arithmetic exactly rather than to within rounding.
+    if (cells.size() == 1) {
+        return darcy_flow(cells.front().permeability_m2, area_m2, cells.front().viscosity_pa_s,
+                          cells.front().depth_m, delta_p_pa, maximum_flow_m3_s);
+    }
+
+    // 6.5, applied per cell: a blocked cell blocks its column rather than being
+    // skipped, which is what makes a dry cell throttle the ones above it.
+    double resistance_pa_s_m3 = 0.0;
+    for (const AxialCell& cell : cells) {
+        if (cell.permeability_m2 <= 0.0 || cell.viscosity_pa_s <= 0.0 || cell.depth_m <= 0.0) {
+            return flow;
+        }
+        resistance_pa_s_m3 += (cell.viscosity_pa_s * cell.depth_m) / (cell.permeability_m2 * area_m2);
+    }
+    if (resistance_pa_s_m3 <= 0.0) return flow;
+    if (delta_p_pa <= 0.0) {
+        flow.clamped_by_backpressure = delta_p_pa < 0.0;
+        flow.resistance_pa_s_m3 = resistance_pa_s_m3;
+        return flow;
+    }
+
+    flow.resistance_pa_s_m3 = resistance_pa_s_m3;
+    flow.unclamped_flow_m3_s = delta_p_pa / resistance_pa_s_m3;
+    flow.flow_m3_s = flow.unclamped_flow_m3_s;
+    if (maximum_flow_m3_s > 0.0 && flow.flow_m3_s > maximum_flow_m3_s) {
+        flow.flow_m3_s = maximum_flow_m3_s;
+        flow.clamped_by_max_flow = true;
+    }
+    return flow;
+}
+
 }  // namespace espressolab

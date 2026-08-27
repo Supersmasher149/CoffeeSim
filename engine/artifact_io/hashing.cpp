@@ -59,6 +59,12 @@ std::string result_hash(const Recipe& recipe, const ModelCoefficients& coeff,
         bytes << fixed(region.area_fraction) << ',' << fixed(region.permeability_multiplier) << ','
               << fixed(region.beverage_mass_kg) << ',' << fixed(region.flow_fraction) << ','
               << fixed(region.tds_fraction) << ',' << fixed(region.extraction_yield_fraction) << '\n';
+        // Ordered axial cells, so a change anywhere in the column changes the hash.
+        for (const auto& cell : region.cells) {
+            bytes << fixed(cell.saturation) << ',' << fixed(cell.temperature_k) << ','
+                  << fixed(cell.pore_tds_fraction) << ','
+                  << fixed(cell.extraction_yield_fraction) << '\n';
+        }
     }
     return sha256_hex(bytes.str());
 }

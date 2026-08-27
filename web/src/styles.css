@@ -176,3 +176,52 @@ tbody tr { cursor: pointer; }
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   white-space: nowrap;
 }
+
+.reference-panel { overflow: hidden; }
+.reference-heading { display: flex; justify-content: space-between; gap: 14px; align-items: flex-start; }
+.reference-heading h3 { margin-bottom: 3px; }
+.reference-heading .note { margin: 0; }
+.reference-badge {
+  color: var(--warn);
+  border: 1px solid rgba(224, 160, 58, 0.45);
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  white-space: nowrap;
+}
+.reference-warning {
+  background: rgba(224, 160, 58, 0.1);
+  border-left: 3px solid var(--warn);
+  color: var(--text);
+  padding: 8px 10px;
+  margin: 10px 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.reference-table-wrap { overflow-x: auto; margin: 0 -12px; padding: 0 12px; }
+.reference-table { min-width: 820px; }
+.reference-table thead th { min-width: 130px; vertical-align: top; white-space: normal; }
+.reference-table thead th:first-child { min-width: 120px; }
+.reference-table thead strong,
+.reference-column-subtitle { display: block; }
+.reference-column-subtitle { color: var(--muted); font-size: 10px; font-weight: 400; margin-top: 3px; }
+.reference-links { display: flex; gap: 8px; margin-top: 7px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+.reference-links a { color: var(--accent-2); font-size: 11px; font-weight: 500; }
+.reference-table .current-model { background: rgba(217, 139, 74, 0.1); }
+.reference-table thead .current-model { color: var(--accent); }
+.reference-details { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 8px; margin-top: 12px; }
+.reference-card { margin: 0; }
+.reference-card summary { font-size: 11px; }
+.reference-card .kv { padding-top: 3px; font-size: 11px; }
+.reference-load-errors { color: var(--warn); border-top: 1px solid var(--line); margin-top: 12px; padding-top: 9px; font-size: 11px; line-height: 1.5; }
+
+@media (max-width: 760px) {
+  .app { display: block; }
+  .topbar { flex-wrap: wrap; }
+  .rail, .main { max-height: none; }
+  .rail { border-right: none; border-bottom: 1px solid var(--line); }
+  .reference-heading { display: block; }
+  .reference-badge { display: inline-block; margin-top: 8px; }
+}

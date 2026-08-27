@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "espressolab/artifact_io.hpp"
+#include "espressolab/cfd.hpp"
 #include "espressolab/calibration.hpp"
 #include "espressolab/experiment.hpp"
 #include "espressolab/simulator.hpp"
@@ -527,6 +528,78 @@ int command_calibrate(int argc, char** argv) {
 
 }  // namespace
 
+namespace {
+
+int command_cfd(int argc, char** argv) {
+    const auto flags = parse_flags(argc, argv, 2);
+    if (!flags.count("recipe")) {
+        std::cerr << "cfd requires --recipe <file>\n";
+        return 2;
+    }
+    const Recipe recipe = artifact_io::load_recipe_file(flags.at("recipe"));
+    ModelCoefficients coefficients;
+    if (flags.count("coefficients")) {
+        coefficients = artifact_io::load_coefficients_file(flags.at("coefficients"));
+    }
+
+    CfdConfig config;
+    if (flags.count("radial")) config.mesh.radial_cells = std::stoi(flags.at("radial"));
+    if (flags.count("axial")) config.mesh.axial_cells = std::stoi(flags.at("axial"));
+    if (flags.count("dt")) config.dt_s = std::stod(flags.at("dt"));
+
+    const auto started = std::chrono::steady_clock::now();
+    const CfdResult result = CfdSolver().run(recipe, coefficients, config);
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+
+    std::cout << "recipe: " << recipe.name << " (" << flags.at("recipe") << ")\n"
+              << "solver: " << result.solver_version << " CFD mesh "
+              << config.mesh.radial_cells << " x " << config.mesh.axial_cells << " (r x z), dt="
+              << config.dt_s << "s\n"
+              << "wall time: "
+              << std::chrono::duration<double, std::milli>(elapsed).count() << " ms\n\n";
+
+    std::cout << std::fixed;
+    std::cout << "  termination     " << to_string(result.termination) << '\n'
+              << std::setprecision(2)
+              << "  shot time       " << result.elapsed_time_s << " s\n"
+              << "  beverage mass   " << units::kg_to_grams(result.beverage_mass_kg) << " g\n"
+              << "  TDS             " << result.tds_fraction * 100.0 << " %\n"
+              << "  extraction      " << result.extraction_yield_fraction * 100.0 << " %\n";
+
+    const CfdDiagnostics& d = result.diagnostics;
+    std::cout << std::scientific << std::setprecision(3)
+              << "\n  -- verification --\n"
+              << "  max |div u_t|   " << d.max_total_velocity_divergence_1_s << " 1/s\n"
+              << "  pressure resid  " << d.pressure_residual << '\n'
+              << "  water residual  " << d.water_mass_residual_kg << " kg\n"
+              << "  solids residual " << d.solids_mass_residual_kg << " kg\n"
+              << std::defaultfloat
+              << "  pressure iters  " << d.pressure_iterations_total << " over "
+              << d.step_count << " steps\n"
+              << "  max Courant     " << d.max_courant_number << '\n'
+              << "  saturation clamps " << d.saturation_clamp_count << '\n';
+
+    if (flags.count("field")) {
+        const std::string which = flags.at("field");
+        const CfdField& field = which == "pressure"    ? result.pressure_pa
+                                : which == "temperature" ? result.temperature_k
+                                : which == "tds"         ? result.pore_tds_fraction
+                                                         : result.saturation;
+        std::cout << "\n  " << which << " field (rows = depth, columns = radius)\n";
+        std::cout << std::fixed << std::setprecision(4);
+        for (int j = 0; j < field.axial_cells(); ++j) {
+            std::cout << "   ";
+            for (int i = 0; i < field.radial_cells(); ++i) {
+                std::cout << std::setw(10) << field.at(i, j);
+            }
+            std::cout << '\n';
+        }
+    }
+    return 0;
+}
+
+}  // namespace
+
 int main(int argc, char** argv) {
     if (argc < 2) {
         print_usage();
@@ -538,6 +611,7 @@ int main(int argc, char** argv) {
         if (command == "simulate") return command_simulate(argc, argv);
         if (command == "sweep") return command_sweep(argc, argv);
         if (command == "bench") return command_bench(argc, argv);
+        if (command == "cfd") return command_cfd(argc, argv);
         if (command == "calibrate") return command_calibrate(argc, argv);
         if (command == "synthesize") return command_synthesize(argc, argv);
         if (command == "fit-params") {

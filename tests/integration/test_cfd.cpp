@@ -1,5 +1,8 @@
 #include <catch_amalgamated.hpp>
+#include <array>
 #include <cmath>
+#include <limits>
+#include <memory>
 
 #include "../fixtures/test_fixtures.hpp"
 #include "espressolab/cfd.hpp"
@@ -35,6 +38,23 @@ CfdConfig mesh(int radial, int axial) {
     config.mesh.axial_cells = axial;
     return config;
 }
+
+class TestWaterProperties final : public WaterProperties {
+public:
+    TestWaterProperties(double density, double viscosity, double heat_capacity)
+        : density_(density), viscosity_(viscosity), heat_capacity_(heat_capacity) {}
+
+    [[nodiscard]] double density_kg_m3(double) const override { return density_; }
+    [[nodiscard]] double viscosity_pa_s(double) const override { return viscosity_; }
+    [[nodiscard]] double heat_capacity_j_kg_k(double) const override { return heat_capacity_; }
+    [[nodiscard]] double min_temperature_k() const override { return 273.15; }
+    [[nodiscard]] double max_temperature_k() const override { return 373.15; }
+
+private:
+    double density_;
+    double viscosity_;
+    double heat_capacity_;
+};
 
 }  // namespace
 
@@ -242,6 +262,38 @@ TEST_CASE("CFD mesh sizes outside the supported range are rejected", "[cfd][arti
     CfdConfig bad_pressure = mesh(4, 8);
     bad_pressure.pressure_max_iterations = 0;
     REQUIRE_THROWS_AS(CfdSolver().run(recipe, coeff, bad_pressure), InvalidInputError);
+}
+
+TEST_CASE("CFD rejects null and nonphysical water-properties providers", "[cfd][artifacts]") {
+    const std::shared_ptr<const WaterProperties> null_provider;
+    REQUIRE_THROWS_AS(CfdSolver(null_provider), InvalidInputError);
+
+    const std::array<double, 4> invalid_values{
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::infinity(),
+        0.0,
+        -1.0,
+    };
+    const Recipe recipe = testing::baseline_recipe();
+    const ModelCoefficients coeff = testing::baseline_coefficients();
+
+    for (const double invalid : invalid_values) {
+        INFO("invalid density " << invalid);
+        REQUIRE_THROWS_AS(
+            CfdSolver(std::make_shared<TestWaterProperties>(invalid, 1.0e-3, 4184.0))
+                .run(recipe, coeff, mesh(2, 2)),
+            InvalidInputError);
+        INFO("invalid viscosity " << invalid);
+        REQUIRE_THROWS_AS(
+            CfdSolver(std::make_shared<TestWaterProperties>(998.0, invalid, 4184.0))
+                .run(recipe, coeff, mesh(2, 2)),
+            InvalidInputError);
+        INFO("invalid heat capacity " << invalid);
+        REQUIRE_THROWS_AS(
+            CfdSolver(std::make_shared<TestWaterProperties>(998.0, 1.0e-3, invalid))
+                .run(recipe, coeff, mesh(2, 2)),
+            InvalidInputError);
+    }
 }
 
 TEST_CASE("CFD reports pressure non-convergence", "[cfd][verification]") {

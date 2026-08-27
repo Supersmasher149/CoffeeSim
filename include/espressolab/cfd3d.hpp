@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "espressolab/execution.hpp"
 #include "espressolab/result.hpp"
 #include "espressolab/types.hpp"
 #include "espressolab/water_properties.hpp"
@@ -185,7 +186,8 @@ public:
     explicit Cfd3dSolver(std::shared_ptr<const WaterProperties> water);
 
     [[nodiscard]] Cfd3dResult run(const Recipe& recipe, const ModelCoefficients& coeff,
-                                  const Cfd3dConfig& config = {}) const;
+                                  const Cfd3dConfig& config = {},
+                                  const CancellationCallback& is_cancelled = {}) const;
 
 private:
     std::shared_ptr<const WaterProperties> water_;

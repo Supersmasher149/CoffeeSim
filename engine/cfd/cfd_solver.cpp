@@ -83,13 +83,117 @@ double harmonic_mean(double a, double b) {
     return 2.0 * a * b / (a + b);
 }
 
+struct WaterValues {
+    double density_kg_m3;
+    double viscosity_pa_s;
+    double heat_capacity_j_kg_k;
+};
+
+struct WaterTemperatureRange {
+    double min_temperature_k;
+    double max_temperature_k;
+};
+
+WaterValues water_values_at(const WaterProperties& water, double temperature_k) {
+    ValidationResult validation;
+    if (!std::isfinite(temperature_k)) {
+        validation.add("NONFINITE_INPUT", "water-property temperature must be finite",
+                       "cfd.water.temperature_k");
+    }
+
+    const double density = water.density_kg_m3(temperature_k);
+    const double viscosity = water.viscosity_pa_s(temperature_k);
+    const double heat_capacity = water.heat_capacity_j_kg_k(temperature_k);
+    if (!std::isfinite(density) || density <= 0.0) {
+        validation.add("NONPHYSICAL_INPUT", "cfd water density must be finite and positive",
+                       "cfd.water.density_kg_m3");
+    }
+    if (!std::isfinite(viscosity) || viscosity <= 0.0) {
+        validation.add("NONPHYSICAL_INPUT", "cfd water viscosity must be finite and positive",
+                       "cfd.water.viscosity_pa_s");
+    }
+    if (!std::isfinite(heat_capacity) || heat_capacity <= 0.0) {
+        validation.add("NONPHYSICAL_INPUT",
+                       "cfd water heat capacity must be finite and positive",
+                       "cfd.water.heat_capacity_j_kg_k");
+    }
+    if (!validation.ok()) throw InvalidInputError(validation);
+    return {density, viscosity, heat_capacity};
+}
+
+WaterTemperatureRange validate_water_provider(const WaterProperties& water,
+                                              const Recipe& recipe,
+                                              const ModelCoefficients& coeff) {
+    const double min_temperature_k = water.min_temperature_k();
+    const double max_temperature_k = water.max_temperature_k();
+    ValidationResult validation;
+    if (!std::isfinite(min_temperature_k) || !std::isfinite(max_temperature_k) ||
+        min_temperature_k <= 0.0 || max_temperature_k <= 0.0 ||
+        min_temperature_k > max_temperature_k) {
+        validation.add("NONPHYSICAL_INPUT",
+                       "cfd water temperature bounds must be finite, positive, and ordered",
+                       "cfd.water.temperature_range");
+    }
+    if (!validation.ok()) throw InvalidInputError(validation);
+
+    // Probe the provider at its advertised bounds and every temperature the
+    // recipe supplies before entering the numerical loop.
+    water_values_at(water, min_temperature_k);
+    water_values_at(water, max_temperature_k);
+    water_values_at(water, coeff.initial_puck_temperature_k);
+    for (const ProfilePoint& point : recipe.inlet_temperature_k.points()) {
+        water_values_at(water, point.value);
+    }
+    return {min_temperature_k, max_temperature_k};
+}
+
+bool all_finite(const CfdField& field) {
+    return std::all_of(field.values().begin(), field.values().end(),
+                       [](double value) { return std::isfinite(value); });
+}
+
+bool all_finite(const ShotSample& sample) {
+    return std::isfinite(sample.time_s) && std::isfinite(sample.pressure_pa) &&
+           std::isfinite(sample.inlet_temperature_k) && std::isfinite(sample.puck_temperature_k) &&
+           std::isfinite(sample.flow_m3_s) && std::isfinite(sample.beverage_mass_kg) &&
+           std::isfinite(sample.tds_fraction) &&
+           std::isfinite(sample.extraction_yield_fraction) && std::isfinite(sample.saturation) &&
+           std::isfinite(sample.permeability_m2);
+}
+
+bool all_finite(const CfdResult& result) {
+    const CfdDiagnostics& diagnostics = result.diagnostics;
+    const bool diagnostics_finite =
+        std::isfinite(diagnostics.max_total_velocity_divergence_1_s) &&
+        std::isfinite(diagnostics.pressure_residual) &&
+        std::isfinite(diagnostics.water_mass_residual_kg) &&
+        std::isfinite(diagnostics.solids_mass_residual_kg) &&
+        std::isfinite(diagnostics.max_courant_number);
+    return diagnostics_finite && std::isfinite(result.elapsed_time_s) &&
+           std::isfinite(result.beverage_mass_kg) && std::isfinite(result.tds_fraction) &&
+           std::isfinite(result.extraction_yield_fraction) && all_finite(result.pressure_pa) &&
+           all_finite(result.saturation) && all_finite(result.temperature_k) &&
+           all_finite(result.pore_tds_fraction) && all_finite(result.axial_velocity_m_s) &&
+           all_finite(result.radial_velocity_m_s) &&
+           std::all_of(result.samples.begin(), result.samples.end(),
+                       [](const ShotSample& sample) { return all_finite(sample); });
+}
+
 }  // namespace
 
 CfdSolver::CfdSolver() : water_(std::make_shared<TabulatedWaterProperties>()) {}
-CfdSolver::CfdSolver(std::shared_ptr<const WaterProperties> water) : water_(std::move(water)) {}
+CfdSolver::CfdSolver(std::shared_ptr<const WaterProperties> water) : water_(std::move(water)) {
+    if (!water_) {
+        ValidationResult validation;
+        validation.add("NONPHYSICAL_INPUT", "cfd requires a water-properties provider",
+                       "cfd.water");
+        throw InvalidInputError(validation);
+    }
+}
 
 CfdResult CfdSolver::run(const Recipe& recipe, const ModelCoefficients& coeff,
-                         const CfdConfig& config) const {
+                         const CfdConfig& config,
+                         const CancellationCallback& is_cancelled) const {
     ValidationResult validation = recipe.validate();
     validation.merge(coeff.validate());
     if (config.mesh.radial_cells < 1 || config.mesh.radial_cells > 128) {
@@ -118,6 +222,7 @@ CfdResult CfdSolver::run(const Recipe& recipe, const ModelCoefficients& coeff,
                        "cfd.relaxation");
     }
     if (!validation.ok()) throw InvalidInputError(validation);
+    const WaterTemperatureRange water_range = validate_water_provider(*water_, recipe, coeff);
 
     CfdResult result;
     result.mesh = config.mesh;
@@ -204,6 +309,7 @@ CfdResult CfdSolver::run(const Recipe& recipe, const ModelCoefficients& coeff,
     };
 
     for (long long step = 0;; ++step) {
+        throw_if_cancelled(is_cancelled);
         const double inlet_pressure_pa = recipe.pressure_pa.sample(time_s);
         const double inlet_temperature_k = recipe.inlet_temperature_k.sample(time_s);
 
@@ -211,7 +317,7 @@ CfdResult CfdSolver::run(const Recipe& recipe, const ModelCoefficients& coeff,
         for (int j = 0; j < nz; ++j) {
             for (int i = 0; i < nr; ++i) {
                 const double k_abs = absolute_permeability_m2 * multiplier.at(i, j);
-                const double mu_w = water_->viscosity_pa_s(temperature.at(i, j));
+                const double mu_w = water_values_at(*water_, temperature.at(i, j)).viscosity_pa_s;
                 const double lambda_w =
                     k_abs * water_relative_permeability(saturation.at(i, j),
                                                         coeff.dry_permeability_multiplier) /
@@ -232,6 +338,7 @@ CfdResult CfdSolver::run(const Recipe& recipe, const ModelCoefficients& coeff,
         long long iterations = 0;
         bool pressure_converged = false;
         for (; iterations < config.pressure_max_iterations; ++iterations) {
+            if ((iterations & 31) == 0) throw_if_cancelled(is_cancelled);
             double max_residual = 0.0;
             double max_scale = 0.0;
             for (int colour = 0; colour < 2; ++colour) {
@@ -396,11 +503,12 @@ CfdResult CfdSolver::run(const Recipe& recipe, const ModelCoefficients& coeff,
                     donor_t = temperature.at(i, j);
                     donor_c = donor_concentration(i, j);
                 }
-                const double mass = q * f_w * water_->density_kg_m3(donor_t) * dt;
+                const WaterValues donor_values = water_values_at(*water_, donor_t);
+                const double mass = q * f_w * donor_values.density_kg_m3 * dt;
                 face_water_z[zface(i, j)] = mass;
                 face_solids_z[zface(i, j)] = mass * donor_c;
                 face_enthalpy_z[zface(i, j)] =
-                    mass * water_->heat_capacity_j_kg_k(donor_t) * donor_t;
+                    mass * donor_values.heat_capacity_j_kg_k * donor_t;
             }
         }
         for (int j = 0; j < nz; ++j) {
@@ -410,11 +518,12 @@ CfdResult CfdSolver::run(const Recipe& recipe, const ModelCoefficients& coeff,
                 const int donor = q > 0.0 ? i - 1 : i;
                 const double f_w = water_fraction[cell(donor, j)];
                 const double donor_t = temperature.at(donor, j);
-                const double mass = q * f_w * water_->density_kg_m3(donor_t) * dt;
+                const WaterValues donor_values = water_values_at(*water_, donor_t);
+                const double mass = q * f_w * donor_values.density_kg_m3 * dt;
                 face_water_r[rface(i, j)] = mass;
                 face_solids_r[rface(i, j)] = mass * donor_concentration(donor, j);
                 face_enthalpy_r[rface(i, j)] =
-                    mass * water_->heat_capacity_j_kg_k(donor_t) * donor_t;
+                    mass * donor_values.heat_capacity_j_kg_k * donor_t;
             }
         }
 
@@ -501,7 +610,8 @@ CfdResult CfdSolver::run(const Recipe& recipe, const ModelCoefficients& coeff,
             inflow_kg += face_water_z[zface(i, 0)];
             outflow_kg += face_water_z[zface(i, nz)];
             outflow_solids_kg += face_solids_z[zface(i, nz)];
-            const double outlet_density = water_->density_kg_m3(temperature.at(i, nz - 1));
+            const double outlet_density =
+                water_values_at(*water_, temperature.at(i, nz - 1)).density_kg_m3;
             outflow_volume_m3 +=
                 face_water_z[zface(i, nz)] / std::max(outlet_density, kMassEpsilon);
         }
@@ -525,7 +635,8 @@ CfdResult CfdSolver::run(const Recipe& recipe, const ModelCoefficients& coeff,
                 // Enthalpy against the solid matrix, using the advected energy
                 // that actually crossed the faces.
                 const double cell_dose_kg = recipe.dose_kg * (g.volume(i) / bed_volume_m3);
-                const double cp_water = water_->heat_capacity_j_kg_k(temperature.at(i, j));
+                const WaterValues cell_values = water_values_at(*water_, temperature.at(i, j));
+                const double cp_water = cell_values.heat_capacity_j_kg_k;
                 const double thermal_capacity =
                     cell_dose_kg * coeff.coffee_heat_capacity_j_kg_k +
                     std::max(retained_kg.at(i, j), kMassEpsilon) * cp_water;
@@ -536,8 +647,8 @@ CfdResult CfdSolver::run(const Recipe& recipe, const ModelCoefficients& coeff,
                                       (temperature.at(i, j) - coeff.ambient_temperature_k);
                 double updated_t =
                     temperature.at(i, j) + (advected_w - loss_w) / thermal_capacity * dt;
-                updated_t = std::clamp(updated_t, water_->min_temperature_k(),
-                                       water_->max_temperature_k());
+                updated_t = std::clamp(updated_t, water_range.min_temperature_k,
+                                       water_range.max_temperature_k);
 
                 ShotState view;
                 view.puck_temperature_k = updated_t;
@@ -558,8 +669,7 @@ CfdResult CfdSolver::run(const Recipe& recipe, const ModelCoefficients& coeff,
                 new_extractable.at(i, j) -= extracted;
                 dissolved += extracted;
 
-                const double pore_capacity_kg =
-                    g.volume(i) * porosity * water_->density_kg_m3(temperature.at(i, j));
+                const double pore_capacity_kg = g.volume(i) * porosity * cell_values.density_kg_m3;
                 const double capacity = std::max(pore_capacity_kg, kMassEpsilon);
                 // A well-posed IMPES step cannot overfill a cell: as saturation
                 // rises the fractional flow rises with it and the cell passes
@@ -604,7 +714,8 @@ CfdResult CfdSolver::run(const Recipe& recipe, const ModelCoefficients& coeff,
         for (int j = 0; j < nz; ++j) {
             for (int i = 0; i < nr; ++i) {
                 const double capacity =
-                    g.volume(i) * porosity * water_->density_kg_m3(temperature.at(i, j));
+                    g.volume(i) * porosity *
+                    water_values_at(*water_, temperature.at(i, j)).density_kg_m3;
                 saturation.at(i, j) =
                     capacity > kMassEpsilon ? retained_kg.at(i, j) / capacity : 0.0;
             }
@@ -626,7 +737,8 @@ CfdResult CfdSolver::run(const Recipe& recipe, const ModelCoefficients& coeff,
                 for (int i = 0; i < nr; ++i) {
                     retained_total += retained_kg.at(i, j);
                     const double capacity =
-                        g.volume(i) * porosity * water_->density_kg_m3(temperature.at(i, j));
+                        g.volume(i) * porosity *
+                        water_values_at(*water_, temperature.at(i, j)).density_kg_m3;
                     capacity_total += capacity;
                     weighted_t += temperature.at(i, j) * capacity;
                 }
@@ -716,6 +828,12 @@ CfdResult CfdSolver::run(const Recipe& recipe, const ModelCoefficients& coeff,
             const double v_out = area_out > 0.0 ? last_flux_r[r_out] / area_out : 0.0;
             result.radial_velocity_m_s.at(i, j) = 0.5 * (v_in + v_out);
         }
+    }
+    if (!all_finite(result)) {
+        ValidationResult result_validation;
+        result_validation.add("NUMERICAL_FAILURE", "cfd result contained a non-finite value",
+                              "cfd.result");
+        throw InvalidInputError(result_validation);
     }
     return result;
 }

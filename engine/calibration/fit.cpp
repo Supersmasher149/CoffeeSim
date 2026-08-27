@@ -60,7 +60,8 @@ double median(std::vector<double> values) {
 
 }  // namespace
 
-CalibrationReport fit(const CalibrationSpec& spec) {
+CalibrationReport fit(const CalibrationSpec& spec,
+                      const espressolab::CancellationCallback& is_cancelled) {
     ValidationResult validation;
     validation.merge(spec.starting_point.validate());
     if (spec.parameters.empty()) {
@@ -128,10 +129,12 @@ CalibrationReport fit(const CalibrationSpec& spec) {
     int simulations = 0;
 
     const auto objective = [&](const std::vector<double>& normalised) {
+        throw_if_cancelled(is_cancelled);
         const ModelCoefficients candidate = apply(spec.starting_point, spec.parameters, normalised);
         double total = 0.0;
         for (const auto& shot : spec.fitting_shots) {
-            total += evaluate_shot_loss(shot, candidate, spec.config, spec.weights).total;
+            total += evaluate_shot_loss(shot, candidate, spec.config, spec.weights,
+                                        is_cancelled).total;
             ++simulations;
         }
         // Minimise the mean across shots rather than matching one exactly (11.3).
@@ -260,13 +263,16 @@ CalibrationReport fit(const CalibrationSpec& spec) {
     }
 
     for (const auto& shot : spec.fitting_shots) {
+        throw_if_cancelled(is_cancelled);
         report.fitting_losses.push_back(
-            {shot.id, evaluate_shot_loss(shot, report.fitted, spec.config, spec.weights)});
+            {shot.id, evaluate_shot_loss(shot, report.fitted, spec.config, spec.weights,
+                                         is_cancelled)});
     }
     // Held-out shots are scored once, at the end, and never steer the fit.
     for (const auto& shot : spec.validation_shots) {
+        throw_if_cancelled(is_cancelled);
         const LossBreakdown loss =
-            evaluate_shot_loss(shot, report.fitted, spec.config, spec.weights);
+            evaluate_shot_loss(shot, report.fitted, spec.config, spec.weights, is_cancelled);
         report.validation_losses.push_back({shot.id, loss});
         report.validation_loss += loss.total;
     }
@@ -277,7 +283,8 @@ CalibrationReport fit(const CalibrationSpec& spec) {
 }
 
 LeaveOneOutReport leave_one_out(const CalibrationSpec& spec,
-                                const LeaveOneOutThresholds& thresholds) {
+                                const LeaveOneOutThresholds& thresholds,
+                                const espressolab::CancellationCallback& is_cancelled) {
     ValidationResult validation = validate_leave_one_out_dataset(spec.fitting_shots);
     if (!spec.validation_shots.empty()) {
         validation.add("UNEXPECTED_HOLDOUT_SHOTS",
@@ -302,6 +309,7 @@ LeaveOneOutReport leave_one_out(const CalibrationSpec& spec,
     report.folds.reserve(spec.fitting_shots.size());
 
     for (std::size_t held_out = 0; held_out < spec.fitting_shots.size(); ++held_out) {
+        throw_if_cancelled(is_cancelled);
         CalibrationSpec fold = spec;
         fold.fitting_shots.clear();
         for (std::size_t i = 0; i < spec.fitting_shots.size(); ++i) {
@@ -309,10 +317,11 @@ LeaveOneOutReport leave_one_out(const CalibrationSpec& spec,
         }
         fold.validation_shots.clear();
 
-        const CalibrationReport fitted = fit(fold);
+        const CalibrationReport fitted = fit(fold, is_cancelled);
         const MeasuredShot& shot = spec.fitting_shots[held_out];
         report.folds.push_back(
-            {shot.id, evaluate_shot_loss(shot, fitted.fitted, spec.config, spec.weights)});
+            {shot.id, evaluate_shot_loss(shot, fitted.fitted, spec.config, spec.weights,
+                                         is_cancelled)});
     }
 
     std::vector<double> mass_errors;

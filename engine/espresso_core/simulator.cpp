@@ -261,19 +261,8 @@ double total_integrated_flow(const std::vector<RegionState>& regions) {
     return flow;
 }
 
-}  // namespace
-
-InvalidInputError::InvalidInputError(const ValidationResult& result)
-    : std::runtime_error("invalid simulation input: " + result.summary()), validation_(result) {}
-
-Simulator::Simulator() : water_(std::make_shared<TabulatedWaterProperties>()) {}
-
-Simulator::Simulator(std::shared_ptr<const WaterProperties> water) : water_(std::move(water)) {
-    if (!water_) water_ = std::make_shared<TabulatedWaterProperties>();
-}
-
-ShotResult Simulator::run(const Recipe& recipe, const ModelCoefficients& coeff,
-                           const SimulationConfig& config) const {
+void validate_inputs(const Recipe& recipe, const ModelCoefficients& coeff,
+                     const SimulationConfig& config) {
     ValidationResult validation = recipe.validate();
     validation.merge(coeff.validate());
     if (config.dt_s <= 0.0 || config.sample_interval_s <= 0.0) {
@@ -281,9 +270,10 @@ ShotResult Simulator::run(const Recipe& recipe, const ModelCoefficients& coeff,
                        "config.dt_s");
     }
     if (!validation.ok()) throw InvalidInputError(validation);
+}
 
-    ShotResult result;
-    WarningLog warn;
+std::vector<RegionState> initialize_regions(const Recipe& recipe,
+                                            const ModelCoefficients& coeff) {
     std::vector<RegionState> regions(recipe.parallel_regions.size());
     const std::size_t cell_count = static_cast<std::size_t>(recipe.axial_cells);
     for (std::size_t i = 0; i < regions.size(); ++i) {
@@ -301,259 +291,209 @@ ShotResult Simulator::run(const Recipe& recipe, const ModelCoefficients& coeff,
                 region_extractable_kg / static_cast<double>(cell_count);
         }
     }
-    const double initial_extractable_kg = recipe.dose_kg * coeff.extractable_solids_fraction;
+    return regions;
+}
 
-    ShotDiagnostics& diag = result.diagnostics;
-    diag.min_permeability_m2 = std::numeric_limits<double>::max();
-    diag.min_puck_temperature_k = coeff.initial_puck_temperature_k;
-    diag.max_puck_temperature_k = coeff.initial_puck_temperature_k;
+std::pair<Boundaries, std::vector<Derived>> evaluate_regions(
+    const std::vector<RegionState>& states, const Recipe& recipe,
+    const ModelCoefficients& coeff, const WaterProperties& water, double area_m2) {
+    Boundaries boundaries;
+    boundaries.pressure_pa = recipe.pressure_pa.sample(states.front().shot.time_s);
+    boundaries.inlet_temperature_k =
+        recipe.inlet_temperature_k.sample(states.front().shot.time_s);
+    boundaries.delta_p_pa = boundaries.pressure_pa - coeff.outlet_pressure_pa;
 
-    const double area_m2 = recipe.basket_area_m2();
-    const double dt = config.dt_s;
-    TerminationReason termination = TerminationReason::not_terminated;
-    double next_sample_time_s = 0.0;
+    std::vector<Derived> derived;
+    derived.reserve(states.size());
+    for (std::size_t i = 0; i < states.size(); ++i) {
+        const ShotState& state = states[i].shot;
+        const ParallelRegion& region = recipe.parallel_regions[i];
+        const std::vector<CellState>& cells = states[i].cells;
+        const double cell_count = static_cast<double>(cells.size());
 
-    const auto evaluate = [&](const std::vector<RegionState>& states) {
-        Boundaries boundaries;
-        boundaries.pressure_pa = recipe.pressure_pa.sample(states.front().shot.time_s);
-        boundaries.inlet_temperature_k = recipe.inlet_temperature_k.sample(states.front().shot.time_s);
-        boundaries.delta_p_pa = boundaries.pressure_pa - coeff.outlet_pressure_pa;
+        Derived d;
+        d.viscosity_pa_s = water.viscosity_pa_s(state.puck_temperature_k);
+        d.inlet_density_kg_m3 = water.density_kg_m3(boundaries.inlet_temperature_k);
+        d.water_heat_capacity_j_kg_k = water.heat_capacity_j_kg_k(state.puck_temperature_k);
+        d.geometry = compress_puck(recipe, coeff, boundaries.delta_p_pa);
 
-        std::vector<Derived> derived;
-        derived.reserve(states.size());
-        for (std::size_t i = 0; i < states.size(); ++i) {
-            const ShotState& state = states[i].shot;
-            const ParallelRegion& region = recipe.parallel_regions[i];
-            const std::vector<CellState>& cells = states[i].cells;
-            const double cell_count = static_cast<double>(cells.size());
+        const double region_area_m2 = area_m2 * region.area_fraction;
+        const double k0 = kozeny_carman_permeability(recipe.particle_diameter_m,
+                                                      d.geometry.porosity,
+                                                      coeff.kozeny_constant);
+        const double shape =
+            k0 * distribution_factor(recipe.particle_spread_factor, coeff.distribution_factor_floor) *
+            region.permeability_multiplier;
+        // The compressed depth is split evenly; every cell shares the
+        // region's porosity and cross-section and differs only by state.
+        d.cell_depth_m = d.geometry.depth_m / cell_count;
 
-            Derived d;
-            d.viscosity_pa_s = water_->viscosity_pa_s(state.puck_temperature_k);
-            d.inlet_density_kg_m3 = water_->density_kg_m3(boundaries.inlet_temperature_k);
-            d.water_heat_capacity_j_kg_k = water_->heat_capacity_j_kg_k(state.puck_temperature_k);
-            d.geometry = compress_puck(recipe, coeff, boundaries.delta_p_pa);
+        std::vector<AxialCell> column;
+        column.reserve(cells.size());
+        d.cell_permeability_m2.reserve(cells.size());
+        d.cell_pore_capacity_kg.reserve(cells.size());
+        d.cell_water_heat_capacity_j_kg_k.reserve(cells.size());
+        for (const CellState& cell : cells) {
+            const double permeability =
+                shape * wetting_factor(cell.liquid_saturation, coeff.dry_permeability_multiplier);
+            d.cell_permeability_m2.push_back(permeability);
+            d.cell_pore_capacity_kg.push_back(region_area_m2 * d.cell_depth_m *
+                                               d.geometry.porosity *
+                                               water.density_kg_m3(cell.temperature_k));
+            d.cell_water_heat_capacity_j_kg_k.push_back(
+                water.heat_capacity_j_kg_k(cell.temperature_k));
+            column.push_back({permeability, water.viscosity_pa_s(cell.temperature_k),
+                              d.cell_depth_m});
+        }
 
-            const double region_area_m2 = area_m2 * region.area_fraction;
-            const double k0 = kozeny_carman_permeability(recipe.particle_diameter_m,
-                                                          d.geometry.porosity, coeff.kozeny_constant);
-            const double shape =
-                k0 * distribution_factor(recipe.particle_spread_factor, coeff.distribution_factor_floor) *
-                region.permeability_multiplier;
-            // The compressed depth is split evenly; every cell shares the
-            // region's porosity and cross-section and differs only by state.
-            d.cell_depth_m = d.geometry.depth_m / cell_count;
+        d.flow = darcy_flow_series(column, region_area_m2, boundaries.delta_p_pa,
+                                   coeff.maximum_flow_m3_s);
+        d.pore_capacity_kg = 0.0;
+        for (double capacity : d.cell_pore_capacity_kg) d.pore_capacity_kg += capacity;
 
-            std::vector<AxialCell> column;
-            column.reserve(cells.size());
-            d.cell_permeability_m2.reserve(cells.size());
-            d.cell_pore_capacity_kg.reserve(cells.size());
-            d.cell_water_heat_capacity_j_kg_k.reserve(cells.size());
-            for (const CellState& cell : cells) {
-                const double permeability =
-                    shape * wetting_factor(cell.liquid_saturation, coeff.dry_permeability_multiplier);
-                d.cell_permeability_m2.push_back(permeability);
-                d.cell_pore_capacity_kg.push_back(region_area_m2 * d.cell_depth_m *
-                                                  d.geometry.porosity *
-                                                  water_->density_kg_m3(cell.temperature_k));
-                d.cell_water_heat_capacity_j_kg_k.push_back(
-                    water_->heat_capacity_j_kg_k(cell.temperature_k));
-                column.push_back({permeability, water_->viscosity_pa_s(cell.temperature_k),
-                                  d.cell_depth_m});
+        // A single cell reports its own permeability; a column reports the
+        // series-equivalent at the region's rolled-up viscosity, so the
+        // chart field stays comparable across cell counts.
+        d.permeability_m2 =
+            cells.size() == 1
+                ? d.cell_permeability_m2.front()
+                : (d.flow.resistance_pa_s_m3 > 0.0
+                       ? (d.viscosity_pa_s * d.geometry.depth_m) /
+                             (d.flow.resistance_pa_s_m3 * region_area_m2)
+                       : 0.0);
+        derived.push_back(d);
+    }
+    return {boundaries, derived};
+}
+
+bool advance_regions(std::vector<RegionState>& regions, const std::vector<Derived>& derived,
+                     const Boundaries& boundaries, const Recipe& recipe,
+                     const ModelCoefficients& coeff, const SimulationConfig& config,
+                     const WaterProperties& water, double dt, long long step,
+                     ShotResult& result, WarningLog& warn, ShotDiagnostics& diag,
+                     TerminationReason& termination) {
+    bool saturation_invalid = false;
+    for (std::size_t i = 0; i < regions.size(); ++i) {
+        RegionState& region = regions[i];
+        ShotState& state = region.shot;
+        const Derived& d = derived[i];
+        const double cells_in_region = static_cast<double>(region.cells.size());
+        const double region_dose_kg = recipe.dose_kg * recipe.parallel_regions[i].area_fraction;
+        const double cell_dose_kg = region_dose_kg / cells_in_region;
+        // Ambient loss is a property of the region, not of the grid, so it
+        // is divided across cells rather than applied once per cell.
+        const double cell_heat_loss_w_k = coeff.ambient_heat_loss_w_k / cells_in_region;
+
+        const double water_in_kg = d.flow.flow_m3_s * d.inlet_density_kg_m3 * dt;
+        region.integrated_flow_m3 += d.flow.flow_m3_s * dt;
+        state.cumulative_water_in_kg += water_in_kg;
+
+        // The axial sweep: cell 0 takes the inlet, every cell below takes
+        // what the cell above it released, at that cell's temperature and
+        // pore concentration. What leaves the last cell is beverage.
+        double inflow_mass_kg = water_in_kg;
+        double inflow_solids_kg = 0.0;
+        double inflow_temperature_k = boundaries.inlet_temperature_k;
+
+        for (std::size_t c = 0; c < region.cells.size(); ++c) {
+            CellState& cell = region.cells[c];
+            cell.retained_water_kg += inflow_mass_kg;
+            cell.dissolved_solids_kg += inflow_solids_kg;
+
+            const double thermal_capacity_j_k =
+                cell_dose_kg * coeff.coffee_heat_capacity_j_kg_k +
+                std::max(cell.retained_water_kg, kMassEpsilon) *
+                    d.cell_water_heat_capacity_j_kg_k[c];
+            const double mass_flow_kg_s = inflow_mass_kg / dt;
+            const double heat_in_w = mass_flow_kg_s * d.cell_water_heat_capacity_j_kg_k[c] *
+                                     (inflow_temperature_k - cell.temperature_k);
+            const double heat_loss_w =
+                cell_heat_loss_w_k * (cell.temperature_k - coeff.ambient_temperature_k);
+            const double dT_dt = (heat_in_w - heat_loss_w) / thermal_capacity_j_k;
+            cell.temperature_k += dT_dt * dt;
+            if (std::abs(dT_dt * dt) > 5.0) {
+                warn.once(result.warnings, "TEMPERATURE_STEP_LARGE",
+                          "puck temperature moved more than 5 K in one step; reduce dt_s",
+                          state.time_s, WarningSeverity::soft);
+            }
+            cell.temperature_k = std::clamp(cell.temperature_k, water.min_temperature_k(),
+                                            water.max_temperature_k());
+            diag.min_puck_temperature_k =
+                std::min(diag.min_puck_temperature_k, cell.temperature_k);
+            diag.max_puck_temperature_k =
+                std::max(diag.max_puck_temperature_k, cell.temperature_k);
+
+            // Extraction reads this cell's own temperature and saturation.
+            ShotState cell_view;
+            cell_view.puck_temperature_k = cell.temperature_k;
+            cell_view.liquid_saturation = cell.liquid_saturation;
+            const double k_ext =
+                extraction_rate_coefficient(cell_view, recipe, coeff, d.flow.flow_m3_s);
+            double extracted_kg = k_ext * cell.remaining_extractable_solids_kg * dt;
+            extracted_kg = std::clamp(extracted_kg, 0.0, cell.remaining_extractable_solids_kg);
+            cell.remaining_extractable_solids_kg -= extracted_kg;
+            cell.dissolved_solids_kg += extracted_kg;
+            cell.retained_water_kg += extracted_kg;
+
+            const double capacity_kg = std::max(d.cell_pore_capacity_kg[c], kMassEpsilon);
+            double out_kg = std::max(cell.retained_water_kg - capacity_kg, 0.0);
+            out_kg = std::min(out_kg, cell.retained_water_kg);
+            double solids_out_kg = 0.0;
+            if (out_kg > 0.0) {
+                const double c_pore =
+                    cell.dissolved_solids_kg /
+                    std::max(cell.retained_water_kg, kMassEpsilon);
+                solids_out_kg = std::min(out_kg * c_pore, cell.dissolved_solids_kg);
+                cell.dissolved_solids_kg -= solids_out_kg;
+                cell.retained_water_kg -= out_kg;
             }
 
-            d.flow = darcy_flow_series(column, region_area_m2, boundaries.delta_p_pa,
-                                       coeff.maximum_flow_m3_s);
-            d.pore_capacity_kg = 0.0;
-            for (double capacity : d.cell_pore_capacity_kg) d.pore_capacity_kg += capacity;
-
-            // A single cell reports its own permeability; a column reports the
-            // series-equivalent at the region's rolled-up viscosity, so the
-            // chart field stays comparable across cell counts.
-            d.permeability_m2 =
-                cells.size() == 1
-                    ? d.cell_permeability_m2.front()
-                    : (d.flow.resistance_pa_s_m3 > 0.0
-                           ? (d.viscosity_pa_s * d.geometry.depth_m) /
-                                 (d.flow.resistance_pa_s_m3 * region_area_m2)
-                           : 0.0);
-            derived.push_back(d);
-        }
-        return std::pair{boundaries, derived};
-    };
-
-    for (long long step = 0;; ++step) {
-        const auto [boundaries, derived] = evaluate(regions);
-        for (std::size_t i = 0; i < regions.size(); ++i) {
-            regions[i].shot.permeability_m2 = derived[i].permeability_m2;
-            diag.min_permeability_m2 = std::min(diag.min_permeability_m2, derived[i].permeability_m2);
-            if (derived[i].flow.clamped_by_max_flow) {
+            cell.liquid_saturation = cell.retained_water_kg / capacity_kg;
+            if (cell.liquid_saturation > 1.0 + kSaturationTolerance ||
+                cell.liquid_saturation < -kSaturationTolerance) {
+                if (config.strict_invariants) {
+                    termination = TerminationReason::invalid_state;
+                    result.warnings.push_back({"SATURATION_INVARIANT",
+                                               "liquid saturation left [0, 1] beyond tolerance",
+                                               state.time_s, WarningSeverity::hard});
+                    saturation_invalid = true;
+                    break;
+                }
                 ++diag.clamp_count;
-                warn.once(result.warnings, "FLOW_CLAMPED",
-                          "flow hit the numerical maximum; result is a guard value, not a prediction",
-                          regions[i].shot.time_s, WarningSeverity::hard);
             }
-        }
-        const double flow_m3_s = total_flow(derived);
-        diag.max_flow_m3_s = std::max(diag.max_flow_m3_s, flow_m3_s);
+            cell.liquid_saturation = std::clamp(cell.liquid_saturation, 0.0, 1.0);
 
-        if (boundaries.inlet_temperature_k > water_->max_temperature_k() ||
-            boundaries.inlet_temperature_k < water_->min_temperature_k()) {
-            ++diag.clamp_count;
-            warn.once(result.warnings, "TEMPERATURE_OUT_OF_TABLE",
-                      "inlet temperature is outside the water property table range",
-                      regions.front().shot.time_s, WarningSeverity::hard);
-        }
-
-        const ShotState aggregate = aggregate_state(regions, derived, recipe, coeff);
-        if (aggregate.time_s + 1.0e-9 >= next_sample_time_s) {
-            result.samples.push_back(make_sample(aggregate, boundaries, flow_m3_s, recipe));
-            next_sample_time_s += config.sample_interval_s;
-        }
-
-        if (!all_finite(regions)) {
-            termination = TerminationReason::numerical_failure;
-            result.warnings.push_back({"NUMERICAL_FAILURE", "state contained a non-finite value",
-                                       aggregate.time_s, WarningSeverity::hard});
-            break;
-        }
-        if (recipe.target_beverage_mass_kg.has_value() &&
-            aggregate.beverage_mass_kg >= *recipe.target_beverage_mass_kg) {
-            termination = TerminationReason::target_mass_reached;
-            break;
-        }
-        if (aggregate.time_s >= recipe.maximum_time_s) {
-            termination = TerminationReason::time_limit_reached;
-            break;
-        }
-
-        const std::vector<RegionState> states_before_step = regions;
-        bool saturation_invalid = false;
-        for (std::size_t i = 0; i < regions.size(); ++i) {
-            RegionState& region = regions[i];
-            ShotState& state = region.shot;
-            const Derived& d = derived[i];
-            const double cells_in_region = static_cast<double>(region.cells.size());
-            const double region_dose_kg = recipe.dose_kg * recipe.parallel_regions[i].area_fraction;
-            const double cell_dose_kg = region_dose_kg / cells_in_region;
-            // Ambient loss is a property of the region, not of the grid, so it
-            // is divided across cells rather than applied once per cell.
-            const double cell_heat_loss_w_k = coeff.ambient_heat_loss_w_k / cells_in_region;
-
-            const double water_in_kg = d.flow.flow_m3_s * d.inlet_density_kg_m3 * dt;
-            region.integrated_flow_m3 += d.flow.flow_m3_s * dt;
-            state.cumulative_water_in_kg += water_in_kg;
-
-            // The axial sweep: cell 0 takes the inlet, every cell below takes
-            // what the cell above it released, at that cell's temperature and
-            // pore concentration. What leaves the last cell is beverage.
-            double inflow_mass_kg = water_in_kg;
-            double inflow_solids_kg = 0.0;
-            double inflow_temperature_k = boundaries.inlet_temperature_k;
-
-            for (std::size_t c = 0; c < region.cells.size(); ++c) {
-                CellState& cell = region.cells[c];
-                cell.retained_water_kg += inflow_mass_kg;
-                cell.dissolved_solids_kg += inflow_solids_kg;
-
-                const double thermal_capacity_j_k =
-                    cell_dose_kg * coeff.coffee_heat_capacity_j_kg_k +
-                    std::max(cell.retained_water_kg, kMassEpsilon) *
-                        d.cell_water_heat_capacity_j_kg_k[c];
-                const double mass_flow_kg_s = inflow_mass_kg / dt;
-                const double heat_in_w = mass_flow_kg_s * d.cell_water_heat_capacity_j_kg_k[c] *
-                                         (inflow_temperature_k - cell.temperature_k);
-                const double heat_loss_w =
-                    cell_heat_loss_w_k * (cell.temperature_k - coeff.ambient_temperature_k);
-                const double dT_dt = (heat_in_w - heat_loss_w) / thermal_capacity_j_k;
-                cell.temperature_k += dT_dt * dt;
-                if (std::abs(dT_dt * dt) > 5.0) {
-                    warn.once(result.warnings, "TEMPERATURE_STEP_LARGE",
-                              "puck temperature moved more than 5 K in one step; reduce dt_s",
-                              state.time_s, WarningSeverity::soft);
-                }
-                cell.temperature_k = std::clamp(cell.temperature_k, water_->min_temperature_k(),
-                                                water_->max_temperature_k());
-                diag.min_puck_temperature_k =
-                    std::min(diag.min_puck_temperature_k, cell.temperature_k);
-                diag.max_puck_temperature_k =
-                    std::max(diag.max_puck_temperature_k, cell.temperature_k);
-
-                // Extraction reads this cell's own temperature and saturation.
-                ShotState cell_view;
-                cell_view.puck_temperature_k = cell.temperature_k;
-                cell_view.liquid_saturation = cell.liquid_saturation;
-                const double k_ext =
-                    extraction_rate_coefficient(cell_view, recipe, coeff, d.flow.flow_m3_s);
-                double extracted_kg = k_ext * cell.remaining_extractable_solids_kg * dt;
-                extracted_kg = std::clamp(extracted_kg, 0.0, cell.remaining_extractable_solids_kg);
-                cell.remaining_extractable_solids_kg -= extracted_kg;
-                cell.dissolved_solids_kg += extracted_kg;
-                cell.retained_water_kg += extracted_kg;
-
-                const double capacity_kg = std::max(d.cell_pore_capacity_kg[c], kMassEpsilon);
-                double out_kg = std::max(cell.retained_water_kg - capacity_kg, 0.0);
-                out_kg = std::min(out_kg, cell.retained_water_kg);
-                double solids_out_kg = 0.0;
-                if (out_kg > 0.0) {
-                    const double c_pore =
-                        cell.dissolved_solids_kg / std::max(cell.retained_water_kg, kMassEpsilon);
-                    solids_out_kg = std::min(out_kg * c_pore, cell.dissolved_solids_kg);
-                    cell.dissolved_solids_kg -= solids_out_kg;
-                    cell.retained_water_kg -= out_kg;
-                }
-
-                cell.liquid_saturation = cell.retained_water_kg / capacity_kg;
-                if (cell.liquid_saturation > 1.0 + kSaturationTolerance ||
-                    cell.liquid_saturation < -kSaturationTolerance) {
-                    if (config.strict_invariants) {
-                        termination = TerminationReason::invalid_state;
-                        result.warnings.push_back({"SATURATION_INVARIANT",
-                                                   "liquid saturation left [0, 1] beyond tolerance",
-                                                   state.time_s, WarningSeverity::hard});
-                        saturation_invalid = true;
-                        break;
-                    }
-                    ++diag.clamp_count;
-                }
-                cell.liquid_saturation = std::clamp(cell.liquid_saturation, 0.0, 1.0);
-
-                inflow_mass_kg = out_kg;
-                inflow_solids_kg = solids_out_kg;
-                inflow_temperature_k = cell.temperature_k;
-            }
-            if (saturation_invalid) break;
-
-            // Whatever the last cell released has left the puck.
-            state.beverage_mass_kg += inflow_mass_kg;
-            state.dissolved_solids_in_cup_kg += inflow_solids_kg;
-            roll_up(region, d, region_dose_kg, coeff);
+            inflow_mass_kg = out_kg;
+            inflow_solids_kg = solids_out_kg;
+            inflow_temperature_k = cell.temperature_k;
         }
         if (saturation_invalid) break;
 
-        for (RegionState& region : regions) {
-            region.shot.time_s = static_cast<double>(step + 1) * dt;
-        }
-        diag.step_count = step + 1;
-
-        while (next_sample_time_s <= regions.front().shot.time_s + 1.0e-9) {
-            std::vector<RegionState> sampled_regions;
-            sampled_regions.reserve(regions.size());
-            for (std::size_t i = 0; i < regions.size(); ++i) {
-                sampled_regions.push_back(
-                    interpolate_region(states_before_step[i], regions[i], next_sample_time_s));
-            }
-            const auto [sampled_boundaries, sampled_derived] = evaluate(sampled_regions);
-            for (std::size_t i = 0; i < sampled_regions.size(); ++i) {
-                sampled_regions[i].shot.permeability_m2 = sampled_derived[i].permeability_m2;
-            }
-            const ShotState sampled = aggregate_state(sampled_regions, sampled_derived, recipe, coeff);
-            result.samples.push_back(
-                make_sample(sampled, sampled_boundaries, total_flow(sampled_derived), recipe));
-            next_sample_time_s += config.sample_interval_s;
-        }
+        // Whatever the last cell released has left the puck.
+        state.beverage_mass_kg += inflow_mass_kg;
+        state.dissolved_solids_in_cup_kg += inflow_solids_kg;
+        roll_up(region, d, region_dose_kg, coeff);
     }
+    if (saturation_invalid) return false;
 
-    const auto [final_boundaries, final_derived] = evaluate(regions);
+    for (RegionState& region : regions) {
+        region.shot.time_s = static_cast<double>(step + 1) * dt;
+    }
+    diag.step_count = step + 1;
+    return true;
+}
+
+void append_sample(ShotResult& result, const ShotState& state, const Boundaries& boundaries,
+                   double flow_m3_s, const Recipe& recipe) {
+    result.samples.push_back(make_sample(state, boundaries, flow_m3_s, recipe));
+}
+
+void finalize_result(ShotResult& result, std::vector<RegionState>& regions,
+                    const Boundaries& final_boundaries,
+                    const std::vector<Derived>& final_derived, const Recipe& recipe,
+                    const ModelCoefficients& coeff, const SimulationConfig& config,
+                    TerminationReason termination, double initial_extractable_kg,
+                    ShotDiagnostics& diag) {
     for (std::size_t i = 0; i < regions.size(); ++i) {
         regions[i].shot.permeability_m2 = final_derived[i].permeability_m2;
     }
@@ -570,8 +510,7 @@ ShotResult Simulator::run(const Recipe& recipe, const ModelCoefficients& coeff,
     }
 
     if (result.samples.empty() || result.samples.back().time_s < final_state.time_s - 1.0e-9) {
-        result.samples.push_back(
-            make_sample(final_state, final_boundaries, total_flow(final_derived), recipe));
+        append_sample(result, final_state, final_boundaries, total_flow(final_derived), recipe);
     }
 
     const double integrated_flow_m3 = total_integrated_flow(regions);
@@ -580,7 +519,8 @@ ShotResult Simulator::run(const Recipe& recipe, const ModelCoefficients& coeff,
         const ShotState& state = regions[i].shot;
         const ParallelRegion& config_region = recipe.parallel_regions[i];
         const double region_dose_kg = recipe.dose_kg * config_region.area_fraction;
-        const double cell_dose_kg = region_dose_kg / static_cast<double>(regions[i].cells.size());
+        const double cell_dose_kg =
+            region_dose_kg / static_cast<double>(regions[i].cells.size());
         std::vector<AxialCellSummary> cells;
         cells.reserve(regions[i].cells.size());
         for (const CellState& cell : regions[i].cells) {
@@ -632,6 +572,115 @@ ShotResult Simulator::run(const Recipe& recipe, const ModelCoefficients& coeff,
     result.manifest.coefficient_version = coeff.version;
     result.manifest.dt_s = config.dt_s;
     result.manifest.sample_interval_s = config.sample_interval_s;
+}
+
+}  // namespace
+
+InvalidInputError::InvalidInputError(const ValidationResult& result)
+    : std::runtime_error("invalid simulation input: " + result.summary()), validation_(result) {}
+
+Simulator::Simulator() : water_(std::make_shared<TabulatedWaterProperties>()) {}
+
+Simulator::Simulator(std::shared_ptr<const WaterProperties> water) : water_(std::move(water)) {
+    if (!water_) water_ = std::make_shared<TabulatedWaterProperties>();
+}
+
+ShotResult Simulator::run(const Recipe& recipe, const ModelCoefficients& coeff,
+                           const SimulationConfig& config,
+                           const CancellationCallback& is_cancelled) const {
+    validate_inputs(recipe, coeff, config);
+
+    ShotResult result;
+    WarningLog warn;
+    std::vector<RegionState> regions = initialize_regions(recipe, coeff);
+    const double initial_extractable_kg = recipe.dose_kg * coeff.extractable_solids_fraction;
+
+    ShotDiagnostics& diag = result.diagnostics;
+    diag.min_permeability_m2 = std::numeric_limits<double>::max();
+    diag.min_puck_temperature_k = coeff.initial_puck_temperature_k;
+    diag.max_puck_temperature_k = coeff.initial_puck_temperature_k;
+
+    const double area_m2 = recipe.basket_area_m2();
+    const double dt = config.dt_s;
+    TerminationReason termination = TerminationReason::not_terminated;
+    double next_sample_time_s = 0.0;
+
+    for (long long step = 0;; ++step) {
+        throw_if_cancelled(is_cancelled);
+        const auto [boundaries, derived] =
+            evaluate_regions(regions, recipe, coeff, *water_, area_m2);
+        for (std::size_t i = 0; i < regions.size(); ++i) {
+            regions[i].shot.permeability_m2 = derived[i].permeability_m2;
+            diag.min_permeability_m2 = std::min(diag.min_permeability_m2, derived[i].permeability_m2);
+            if (derived[i].flow.clamped_by_max_flow) {
+                ++diag.clamp_count;
+                warn.once(result.warnings, "FLOW_CLAMPED",
+                          "flow hit the numerical maximum; result is a guard value, not a prediction",
+                          regions[i].shot.time_s, WarningSeverity::hard);
+            }
+        }
+        const double flow_m3_s = total_flow(derived);
+        diag.max_flow_m3_s = std::max(diag.max_flow_m3_s, flow_m3_s);
+
+        if (boundaries.inlet_temperature_k > water_->max_temperature_k() ||
+            boundaries.inlet_temperature_k < water_->min_temperature_k()) {
+            ++diag.clamp_count;
+            warn.once(result.warnings, "TEMPERATURE_OUT_OF_TABLE",
+                      "inlet temperature is outside the water property table range",
+                      regions.front().shot.time_s, WarningSeverity::hard);
+        }
+
+        const ShotState aggregate = aggregate_state(regions, derived, recipe, coeff);
+        if (aggregate.time_s + 1.0e-9 >= next_sample_time_s) {
+            append_sample(result, aggregate, boundaries, flow_m3_s, recipe);
+            next_sample_time_s += config.sample_interval_s;
+        }
+
+        if (!all_finite(regions)) {
+            termination = TerminationReason::numerical_failure;
+            result.warnings.push_back({"NUMERICAL_FAILURE", "state contained a non-finite value",
+                                       aggregate.time_s, WarningSeverity::hard});
+            break;
+        }
+        if (recipe.target_beverage_mass_kg.has_value() &&
+            aggregate.beverage_mass_kg >= *recipe.target_beverage_mass_kg) {
+            termination = TerminationReason::target_mass_reached;
+            break;
+        }
+        if (aggregate.time_s >= recipe.maximum_time_s) {
+            termination = TerminationReason::time_limit_reached;
+            break;
+        }
+
+        const std::vector<RegionState> states_before_step = regions;
+        if (!advance_regions(regions, derived, boundaries, recipe, coeff, config, *water_, dt,
+                             step, result, warn, diag, termination)) {
+            break;
+        }
+
+        while (next_sample_time_s <= regions.front().shot.time_s + 1.0e-9) {
+            std::vector<RegionState> sampled_regions;
+            sampled_regions.reserve(regions.size());
+            for (std::size_t i = 0; i < regions.size(); ++i) {
+                sampled_regions.push_back(
+                    interpolate_region(states_before_step[i], regions[i], next_sample_time_s));
+            }
+            const auto [sampled_boundaries, sampled_derived] =
+                evaluate_regions(sampled_regions, recipe, coeff, *water_, area_m2);
+            for (std::size_t i = 0; i < sampled_regions.size(); ++i) {
+                sampled_regions[i].shot.permeability_m2 = sampled_derived[i].permeability_m2;
+            }
+            const ShotState sampled = aggregate_state(sampled_regions, sampled_derived, recipe, coeff);
+            append_sample(result, sampled, sampled_boundaries, total_flow(sampled_derived), recipe);
+            next_sample_time_s += config.sample_interval_s;
+        }
+    }
+
+    const auto [final_boundaries, final_derived] =
+        evaluate_regions(regions, recipe, coeff, *water_, area_m2);
+    throw_if_cancelled(is_cancelled);
+    finalize_result(result, regions, final_boundaries, final_derived, recipe, coeff, config,
+                    termination, initial_extractable_kg, diag);
     return result;
 }
 

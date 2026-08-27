@@ -92,12 +92,13 @@ ValidationResult MeasuredShot::validate() const {
 }
 
 LossBreakdown evaluate_shot_loss(const MeasuredShot& shot, const ModelCoefficients& coefficients,
-                                 const SimulationConfig& config, const LossWeights& weights) {
+                                 const SimulationConfig& config, const LossWeights& weights,
+                                 const espressolab::CancellationCallback& is_cancelled) {
     LossBreakdown breakdown;
 
     ShotResult result;
     try {
-        result = Simulator().run(shot.recipe, coefficients, config);
+        result = Simulator().run(shot.recipe, coefficients, config, is_cancelled);
     } catch (const InvalidInputError&) {
         // A candidate outside the coefficient validation ranges is not a crash,
         // it is simply a very bad candidate. Give the optimiser a finite, large

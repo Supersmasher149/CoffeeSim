@@ -421,11 +421,24 @@ class Cfd3dJobStore {
 public:
     ~Cfd3dJobStore() { join_all(); }
 
+    // Audit P2, issue #13: start() used to spawn a thread unconditionally --
+    // kMaxRetained only bounds how many *finished* jobs stay in memory, not
+    // how many are concurrently running. Each is a real 3D finite-volume
+    // solve that can retain up to kMaximumSnapshotBytes (1 GiB,
+    // cfd3d_io.cpp) of snapshots, so unbounded concurrent requests were an
+    // unbounded memory/CPU path. Returns nullptr, registering nothing, when
+    // already at capacity, so a rejected request costs no thread or memory
+    // and the caller can return a stable, synchronous overload response
+    // instead of a job that queues forever. Worst-case retained memory is
+    // now bounded by (kMaxConcurrent in-flight + kMaxRetained finished) x
+    // 1 GiB = 6 GiB; peak allocation for representative meshes has not been
+    // measured, so kMaxConcurrent is a structural cap, not a profiled one.
     std::shared_ptr<Cfd3dJob> start(const std::string& id,
                                     cfd3d_artifact_io::Cfd3dCase cfd3d_case) {
         reap_finished();
-        auto job = std::make_shared<Cfd3dJob>(id, std::move(cfd3d_case));
         const std::lock_guard<std::mutex> lock(mutex_);
+        if (workers_.size() >= kMaxConcurrent) return nullptr;
+        auto job = std::make_shared<Cfd3dJob>(id, std::move(cfd3d_case));
         jobs_[id] = job;
         order_.push_back(id);
         while (order_.size() > kMaxRetained) {
@@ -479,6 +492,7 @@ private:
     }
 
     static constexpr std::size_t kMaxRetained = 4;
+    static constexpr std::size_t kMaxConcurrent = 2;
     mutable std::mutex mutex_;
     std::unordered_map<std::string, std::shared_ptr<Cfd3dJob>> jobs_;
     std::deque<std::string> order_;
@@ -763,7 +777,15 @@ int main(int argc, char** argv) {
                             cfd3d_artifact_io::load_case_json(root.dump());
                         const std::string id =
                             "cfd3d-" + std::to_string(next_cfd3d_serial.fetch_add(1));
-                        cfd3d_runs.start(id, cfd3d_case);
+                        if (cfd3d_runs.start(id, cfd3d_case) == nullptr) {
+                            // Audit P2, issue #13: a stable, synchronous
+                            // overload response instead of accepting an
+                            // unbounded number of concurrent solves.
+                            send_error(response, 429, "TOO_MANY_ACTIVE_RUNS",
+                                       "too many CFD3D runs are already in progress; retry shortly",
+                                       "cfd3d");
+                            return;
+                        }
                         response.status = 202;
                         response.set_content(
                             json{{"run_id", id}, {"status", "queued"},

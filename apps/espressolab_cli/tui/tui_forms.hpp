@@ -18,8 +18,8 @@ namespace espressolab::tui {
 // Mirrors the legacy CLI's (code, path, message) error shape: field label
 // stands in for the flag name.
 struct InputError final : std::runtime_error {
-    InputError(std::string field, std::string message)
-        : std::runtime_error(std::move(message)), field(std::move(field)) {}
+    InputError(std::string field_name, std::string message)
+        : std::runtime_error(std::move(message)), field(std::move(field_name)) {}
 
     std::string field;
 };

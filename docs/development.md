@@ -14,13 +14,15 @@ boundaries, reproducibility guarantees, or cross-language data contracts.
 | `engine/experiment_runner/` | Sweep axes, Cartesian execution, progress, and aggregate export |
 | `engine/calibration/` | Measured-shot loading, loss functions, fitting, and validation reports |
 | `engine/reference_io/` | Read-only reference-shot catalogue loading |
-| `include/espressolab/` | Public C++ headers shared across targets |
-| `apps/espressolab_cli/` | Command-line parsing and file-oriented workflows |
+| `include/espressolab/` | Public C++ headers shared across targets, including the cancellation/status contract (`execution.hpp`) |
+| `apps/espressolab_cli/` | Argv parsing and `workflows.{hpp,cpp}`: shared CLI workflow services (load, validate, run, write artifacts) used by both the legacy commands and the TUI |
+| `apps/espressolab_cli/tui/` | The interactive terminal UI: `tui_forms.{hpp,cpp}` (navigation/forms, no terminal dependency) and `tui.cpp` (FTXUI rendering and the worker thread) |
 | `apps/espressolab_server/` | Local REST translation, in-memory runs, and background sweep jobs |
 | `web/src/` | React controls and visualizations for server-provided results |
 | `assets/` | Versioned example inputs and synthetic measurement fixtures |
 | `schemas/` | Intended JSON exchange formats |
 | `tests/` | Unit, integration, property, convergence, and verification tests |
+| `tests/pty/` | POSIX PTY smoke matrix for the TUI, run separately from `ctest` |
 
 ## Dependency Rule
 
@@ -30,11 +32,25 @@ the experiment runner receives progress through a callback and remains usable by
 the CLI and native tests, where it owns no threads. The dashboard renders native
 results rather than calculating model metrics.
 
+The TUI follows the same rule from the other direction: it is an
+application-layer frontend that calls native loaders, solvers, calibration
+APIs, and artifact writers directly through `workflows.{hpp,cpp}` -- it does
+not shell out to the CLI and does not depend on the REST server. FTXUI is
+linked only by the `espressolab_cli` executable; `espressolab_cli_support`
+(the shared workflow services and the TUI's pure navigation/form logic) has no
+terminal UI dependency at all, which is what makes it usable from
+`espressolab_tests` without a TTY. Native execution stays thread-agnostic:
+cooperative cancellation and coarse status are a callback pair
+(`espressolab::CancellationCallback` in `execution.hpp`), checked at solver,
+pressure-iteration, calibration, and sweep boundaries, not a thread the solver
+owns. Only the TUI's own worker thread (in `tui.cpp`) and the server's job
+threads exist; both call the same synchronous, thread-agnostic native APIs.
+
 Keep a new concern in the lowest layer that can own it. A physics decision
 belongs in the model library or solver, serialization in `artifact_io`, request
-translation in the server, and rendering-only behavior in `web/`. The separate
-CFD target may depend on the core and model library but must not become a hidden
-dependency of the default simulation pipeline.
+translation in the server, and rendering-only behavior in `web/` or `tui.cpp`.
+The separate CFD target may depend on the core and model library but must not
+become a hidden dependency of the default simulation pipeline.
 
 For the component diagram and runtime flow, see [architecture.md](architecture.md).
 
@@ -64,9 +80,9 @@ cmake -S . -B build-warnings -DESPRESSOLAB_WARNINGS_AS_ERRORS=ON
 cmake --build build-warnings -j4
 ```
 
-This configuration is currently expected to fail on a shadowing diagnostic in
-`engine/espresso_core/simulator.cpp`. Treat that as an open quality gap, not as
-a passing gate, until the warning is fixed.
+This configuration passes as of the TUI work (#23): the shadowing diagnostic
+this note used to describe was resolved by the `simulator.cpp` puck-region
+refactor.
 
 The web project has independent static and production-build checks:
 
@@ -86,10 +102,24 @@ tag or list available tests with:
 ```
 
 Native tests cover unit behavior, whole shots, invariants, axial cells,
-calibration, sweeps, and CFD verification. The web project currently has
-typechecking and build checks but no browser interaction test harness. Test a
-dashboard interaction manually through `./scripts/dev.sh` whenever changing
-dragging, selection, chart synchronization, downloads, or accessibility.
+calibration, sweeps, CFD verification, cancellation checkpoints (`[cancellation]`),
+and the TUI's pure navigation/form/workflow logic (`[tui]`, `[cli_workflows]`)
+without a terminal. The web project currently has typechecking and build
+checks but no browser interaction test harness. Test a dashboard interaction
+manually through `./scripts/dev.sh` whenever changing dragging, selection,
+chart synchronization, downloads, or accessibility.
+
+The TUI's terminal rendering, input handling, and resize/Ctrl-C behavior are
+not exercised by `ctest` -- they need a real pseudo-terminal, not just the
+Catch2 binary. Run the separate PTY smoke matrix on a POSIX machine after any
+change to `apps/espressolab_cli/tui/`:
+
+```bash
+python3 tests/pty/tui_smoke.py
+```
+
+It fails with a diagnostic (not a crash) when its prerequisites -- a built
+binary, a PTY-capable environment -- are missing.
 
 Read [testing.md](testing.md) for the intent and limitations of every test
 layer. Passing numerical verification tests does not establish that the model

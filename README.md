@@ -195,7 +195,18 @@ espressolab_cli bench    [--seconds <s>] [--repeats <n>]
 espressolab_cli params     # sweepable recipe parameters
 espressolab_cli fit-params # fittable coefficients, with bounds
 espressolab_cli version
+espressolab_cli tui        # interactive terminal UI (POSIX TTY only)
 ```
+
+`espressolab_cli tui` is a guided, form-based frontend to every command above,
+for interactive macOS/Linux terminals. It calls the same native loaders,
+solvers, calibration APIs, and artifact writers directly -- not the CLI, not
+the REST server -- so it produces the same units, artifacts, and result
+hashes as the commands above for the same inputs. Long-running work runs off
+the render loop with cooperative cancellation (`c` or Ctrl-C); a cancelled
+single run never writes a partial artifact, and a cancelled sweep keeps the
+runs it already completed. See [getting-started.md](docs/getting-started.md)
+for a walkthrough.
 
 Artifacts land in the layout of section 10.4:
 
@@ -210,12 +221,16 @@ outputs/sweeps/<sweep-id>/{sweep.json,runs.jsonl,aggregate.csv,manifest.json}
 ./scripts/test.sh
 ```
 
-115 test cases, 17,385 assertions: unit tests for every correlation, whole-shot
+146 test cases, 18,110 assertions: unit tests for every correlation, whole-shot
 integration tests, generated-input property tests, mass-balance invariants, a
 step-size convergence test, sweep progress and cancellation tests, parallel-region
 balance and serialization tests, axial grid-refinement and wetting-front tests, CFD verification tests
 (divergence, exact solutions, mesh convergence, conservation),
-calibration recovery tests, and deterministic leave-one-out validation tests. See
+calibration recovery tests, deterministic leave-one-out validation tests,
+native cancellation-checkpoint tests, and pure (terminal-free) tests of the
+TUI's navigation, forms, and shared workflow services. A separate POSIX PTY
+smoke matrix (`python3 tests/pty/tui_smoke.py`) covers the TUI's actual
+terminal rendering, resize, and Ctrl-C handling. See
 [docs/testing.md](docs/testing.md).
 
 ## Documentation
@@ -237,5 +252,6 @@ calibration recovery tests, and deterministic leave-one-out validation tests. Se
 ## Requirements
 
 CMake 3.20+, a C++20 compiler, and Node 20+ for the dashboard. nlohmann/json,
-Catch2 and cpp-httplib are vendored in `third_party/`, so a clean clone builds
-offline.
+Catch2, cpp-httplib, and FTXUI (the CLI's terminal UI, linked only by
+`espressolab_cli`) are vendored in `third_party/`, so a clean clone builds
+offline. The TUI itself needs an interactive POSIX terminal (macOS or Linux).

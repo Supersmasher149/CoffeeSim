@@ -6,10 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 EspressoLab is a local engineering workbench that simulates an espresso shot
 from controllable brew inputs. Deterministic C++20 simulation core, React/TypeScript
-dashboard, no AI, plus a separate experimental CFD solver. The browser never
-calculates a displayed quantity — it posts a recipe and renders what the native
-solver returns, so the CLI, tests, and dashboard produce byte-identical numbers
-for the same inputs.
+dashboard, an interactive terminal UI (`espressolab_cli tui`), no AI, plus a
+separate experimental CFD solver. Neither the browser nor the TUI calculates a
+displayed quantity — both post/call into the same native workflows and render
+what the native solver returns, so the file-oriented CLI, the TUI, tests, and
+the dashboard produce byte-identical numbers for the same inputs.
 
 ## Commands
 
@@ -30,7 +31,14 @@ Run a single test tag or list tests (build first):
 Tags: `[units]` `[profile]` `[water]` `[permeability]` `[flow]` `[heat]`
 `[extraction]` `[artifacts]` `[integration]` `[invariants]` `[convergence]`
 `[sweep]` `[calibration]` `[recovery]` `[property]` `[performance]` `[regions]`
-`[axial]` `[cfd]` `[verification]`.
+`[axial]` `[cfd]` `[verification]` `[cancellation]` `[tui]` `[cli_workflows]`.
+
+A POSIX PTY smoke matrix for the TUI runs separately from `espressolab_tests`
+(it needs a real pseudo-terminal, not just the Catch2 binary):
+
+```bash
+python3 tests/pty/tui_smoke.py [path/to/espressolab_cli]
+```
 
 Debug build, isolated from `build/`:
 
@@ -40,9 +48,9 @@ cmake --build build-debug -j4
 ctest --test-dir build-debug --output-on-failure
 ```
 
-Warnings-as-errors build (currently expected to fail on a known shadowing
-diagnostic in `engine/espresso_core/simulator.cpp` — treat as an open gap, not
-a passing gate):
+Warnings-as-errors build (passes as of the TUI work in #23; the shadowing
+diagnostic this note used to describe was resolved by the `simulator.cpp`
+puck-region refactor):
 
 ```bash
 cmake -S . -B build-warnings -DESPRESSOLAB_WARNINGS_AS_ERRORS=ON
@@ -65,8 +73,10 @@ espressolab_cli sweep    --spec <file> [--out <dir>]
 espressolab_cli calibrate --shots <dir> --fit <name,...> [--holdout <id,...>] [--leave-one-out]
 espressolab_cli synthesize --recipe <file> [--noise <g>] --out <file>
 espressolab_cli cfd      --recipe <file> [--radial <n>] [--axial <n>] [--field pressure|saturation|temperature|tds]
+espressolab_cli cfd3d    --recipe <file> [--nx <n>] [--ny <n>] [--nz <n>] [--out <dir>]
 espressolab_cli bench    [--seconds <s>] [--repeats <n>]
 espressolab_cli params | fit-params | version
+espressolab_cli tui      # interactive terminal UI (POSIX TTY only)
 ```
 
 ## Architecture
@@ -85,6 +95,10 @@ web (React/TS)  ->  tool_server (REST)  ->  experiment_runner
                                          model_library (water, permeability, heat, extraction)
 
 CLI and CFD tests  ->  cfd (separate Level 4 solver)  ->  espresso_core + model_library
+
+espressolab_cli tui  ->  espressolab_cli_support (workflows.cpp, tui/tui_forms.cpp)
+                                                     |
+                            same call as every legacy command_* handler above
 ```
 
 | Target | Owns | Must not own |
@@ -98,6 +112,8 @@ CLI and CFD tests  ->  cfd (separate Level 4 solver)  ->  espresso_core + model_
 | `espressolab_cfd` | Separate Level 4 axisymmetric pressure/transport solver | REST, dashboard, standard artifacts, default result hashes |
 | `espressolab_references` | Published reference-shot metadata, partial-load reporting | Simulation, fitting, validation decisions |
 | `espressolab_server` | REST endpoints, jobs and threads, error translation, file boundaries | Equation implementations |
+| `espressolab_cli_support` | Shared CLI workflow services (load, validate, run, write artifacts) and pure TUI navigation/form logic, called by both the legacy commands and the TUI | FTXUI, terminal I/O, argv parsing |
+| `apps/espressolab_cli/tui` | FTXUI rendering, input handling, the one-job-at-a-time worker thread | Physics, artifact formats, validation rules (all in `espressolab_cli_support`) |
 | `web` | Controls, charts, comparisons, warnings, exports | Authoritative calculations |
 | `tests/fixtures` | Golden recipes, expected invariants | Production defaults |
 
@@ -108,11 +124,18 @@ outside the default Level 1-3 request path (invoked directly by the CLI); it
 must never become a hidden dependency of the default pipeline or change its
 artifacts/hashes.
 
-Threads live in the server, not the engine: `ExperimentRunner::run` takes a
-`(completed, total) -> bool` progress callback and stops when it returns false.
-That's the engine's whole involvement in background sweeps — the server owns
-the worker thread, cancellation flag, and job registry, so the same runner
-works unchanged in the CLI and in tests (no thread at all there).
+Threads live in the server and the TUI, not the engine: `ExperimentRunner::run`
+takes a `(completed, total) -> bool` progress callback and stops when it
+returns false. That's the engine's whole involvement in background sweeps —
+the server (for REST) and `apps/espressolab_cli/tui` (for the interactive
+shell) each own their own worker thread, cancellation flag, and job registry,
+so the same runner and the same native solver/calibration APIs work unchanged
+in the CLI, the TUI, and in tests (no thread at all there). Native execution
+stays thread-agnostic: cancellation and coarse progress are a
+`CancellationCallback`/status-callback pair (`include/espressolab/execution.hpp`)
+checked at safe solver, pressure-iteration, calibration, and sweep boundaries,
+never a thread the solver owns itself. These controls are deliberately outside
+recipe, coefficient, configuration, and result hashes.
 
 ### Repository map
 
@@ -125,13 +148,15 @@ works unchanged in the CLI and in tests (no thread at all there).
 | `engine/experiment_runner/` | Sweep axes, Cartesian execution, progress, aggregate export |
 | `engine/calibration/` | Measured-shot loading, loss functions, fitting, validation reports |
 | `engine/reference_io/` | Read-only reference-shot catalogue loading |
-| `include/espressolab/` | Public C++ headers shared across targets |
-| `apps/espressolab_cli/` | Command-line parsing and file-oriented workflows |
+| `include/espressolab/` | Public C++ headers shared across targets, including `execution.hpp` (the cancellation/status contract) |
+| `apps/espressolab_cli/` | Argv parsing, `workflows.{hpp,cpp}` (shared CLI workflow services), file-oriented command output |
+| `apps/espressolab_cli/tui/` | Interactive terminal UI: `tui_forms.{hpp,cpp}` (terminal-independent navigation/forms) and `tui.cpp` (FTXUI rendering) |
 | `apps/espressolab_server/` | Local REST translation, in-memory runs, background sweep jobs (cpp-httplib) |
 | `web/src/features/` | shot, sweeps, comparison, calibration UI |
 | `assets/` | Versioned example inputs and synthetic measurement fixtures |
 | `schemas/` | Intended JSON exchange formats |
 | `tests/` | Unit, integration, property, convergence, verification tests |
+| `tests/pty/` | POSIX PTY smoke matrix for the TUI (outside `ctest`; needs a real pseudo-terminal) |
 
 ### Runtime data flow
 
@@ -248,5 +273,7 @@ reproducibility, not correctness.
 ## Requirements
 
 CMake 3.20+, a C++20 compiler, Node 20+ for the dashboard. nlohmann/json,
-Catch2, and cpp-httplib are vendored in `third_party/`, so a clean clone builds
-offline.
+Catch2, cpp-httplib, and FTXUI (the CLI's TUI, linked only by `espressolab_cli`)
+are vendored in `third_party/`, so a clean clone builds offline. The TUI itself
+targets interactive POSIX terminals (macOS and Linux) and rejects non-TTY
+stdin/stdout with a stable exit code rather than entering the render loop.

@@ -9,6 +9,7 @@
 #include <memory>
 #include <iostream>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -550,9 +551,29 @@ std::string reference_root(int argc, char** argv) {
     return "espresso_real_world_refs";
 }
 
-int port_from_args(int argc, char** argv) {
+// Audit F9: std::stoi() on a non-numeric --port raised an uncaught
+// std::invalid_argument (or std::out_of_range for a huge value) before the
+// server entered its own exception handling, aborting the process. Parse and
+// range-check the port here so a typo is a controlled startup error instead
+// of a crash.
+std::optional<int> port_from_args(int argc, char** argv, std::string& error) {
     for (int i = 1; i + 1 < argc; ++i) {
-        if (std::string(argv[i]) == "--port") return std::stoi(argv[i + 1]);
+        if (std::string(argv[i]) == "--port") {
+            const std::string value = argv[i + 1];
+            std::size_t consumed = 0;
+            long parsed = 0;
+            try {
+                parsed = std::stol(value, &consumed);
+            } catch (const std::exception&) {
+                error = "--port must be an integer in [1, 65535], got '" + value + "'";
+                return std::nullopt;
+            }
+            if (consumed != value.size() || parsed < 1 || parsed > 65535) {
+                error = "--port must be an integer in [1, 65535], got '" + value + "'";
+                return std::nullopt;
+            }
+            return static_cast<int>(parsed);
+        }
     }
     return 8734;
 }
@@ -562,7 +583,13 @@ int port_from_args(int argc, char** argv) {
 int main(int argc, char** argv) {
     const std::filesystem::path assets = asset_root(argc, argv);
     const std::filesystem::path references = reference_root(argc, argv);
-    const int port = port_from_args(argc, argv);
+    std::string port_error;
+    const std::optional<int> parsed_port = port_from_args(argc, argv, port_error);
+    if (!parsed_port.has_value()) {
+        std::cerr << "error INVALID_ARGUMENT: " << port_error << '\n';
+        return 2;
+    }
+    const int port = *parsed_port;
 
     RunStore store;
     SweepJobStore sweeps;

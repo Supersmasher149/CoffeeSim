@@ -315,10 +315,26 @@ public:
             const std::lock_guard<std::mutex> lock(mutex_);
             result_ = std::move(result);
             status_ = Status::complete;
+        } catch (const InvalidInputError& error) {
+            // Audit F8, issue #8: Cfd3dSolver::run() validates mesh and
+            // recipe/coefficient physics after the case is already queued
+            // (202 Accepted), so a bad mesh or recipe fails here, not in the
+            // POST handler. Preserve the structured code/path/message
+            // instead of falling through to the generic std::exception
+            // branch below, which collapsed every failure -- validation or
+            // not -- into a hardcoded CFD3D_FAILED with no path (matches
+            // the SweepJob::execute() pattern just above in this file).
+            const std::lock_guard<std::mutex> lock(mutex_);
+            status_ = Status::failed;
+            const auto& issues = error.validation().issues();
+            error_ = issues.empty() ? std::string(error.what()) : issues.front().message;
+            error_code_ = issues.empty() ? "INVALID_INPUT" : issues.front().code;
+            error_path_ = issues.empty() ? std::string() : issues.front().path;
         } catch (const std::exception& error) {
             const std::lock_guard<std::mutex> lock(mutex_);
             status_ = Status::failed;
             error_ = error.what();
+            error_code_ = "CFD3D_FAILED";
         }
         {
             const std::lock_guard<std::mutex> lock(mutex_);
@@ -338,6 +354,8 @@ public:
         std::size_t snapshot_count = 0;
         double elapsed_s = 0.0;
         std::string error;
+        std::string error_code;
+        std::string error_path;
         Cfd3dResult result;
     };
 
@@ -347,6 +365,8 @@ public:
         out.status = status_;
         out.snapshot_count = snapshots_.size();
         out.error = error_;
+        out.error_code = error_code_;
+        out.error_path = error_path_;
         out.result = result_;
         if (status_ != Status::queued) {
             out.elapsed_s = std::chrono::duration<double>(
@@ -379,6 +399,8 @@ private:
     Status status_ = Status::queued;
     bool finished_ = false;
     std::string error_;
+    std::string error_code_ = "CFD3D_FAILED";
+    std::string error_path_;
     Cfd3dResult result_;
     std::vector<Cfd3dSnapshot> snapshots_;
     std::chrono::steady_clock::time_point started_at_{};
@@ -650,7 +672,8 @@ int main(int argc, char** argv) {
                      {"snapshot_count", snapshot.snapshot_count},
                      {"elapsed_s", snapshot.elapsed_s}};
         if (snapshot.status == Cfd3dJob::Status::failed) {
-            body["error"] = {{"code", "CFD3D_FAILED"}, {"message", snapshot.error}};
+            body["error"] = {{"code", snapshot.error_code}, {"message", snapshot.error}};
+            if (!snapshot.error_path.empty()) body["error"]["path"] = snapshot.error_path;
             return body;
         }
         if (snapshot.status == Cfd3dJob::Status::complete) {

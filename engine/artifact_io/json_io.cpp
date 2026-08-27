@@ -293,6 +293,40 @@ ModelCoefficients load_coefficients_json(const std::string& json_text) {
         required_number(v, "distribution_factor_floor", "coefficients.values");
     c.maximum_flow_m3_s = required_number(v, "maximum_flow_m3_s", "coefficients.values");
     c.outlet_pressure_pa = required_number(v, "outlet_pressure_pa", "coefficients.values");
+
+    // Issue #9, Audit F6: provenance was accepted by the schema but silently
+    // dropped here, so calibration dataset/limitations metadata disappeared
+    // the moment a coefficient document was reloaded. All fields are
+    // individually optional, matching schemas/coefficients.schema.json
+    // (only id/version/values are required at the document level).
+    if (root.contains("provenance")) {
+        ESPRESSOLAB_SUPPRESS_DANGLING_REF_BEGIN
+        const json& p = require_object(root, "provenance", "coefficients");
+        ESPRESSOLAB_SUPPRESS_DANGLING_REF_END
+        CoefficientProvenance provenance;
+        provenance.source = optional_string(p, "source", "coefficients.provenance", "");
+        if (p.contains("dataset") && !p.at("dataset").is_null()) {
+            if (!p.at("dataset").is_string()) {
+                fail("MALFORMED_JSON", "coefficients.provenance.dataset", "dataset must be a string or null");
+            }
+            provenance.dataset = p.at("dataset").get<std::string>();
+        }
+        provenance.date = optional_string(p, "date", "coefficients.provenance", "");
+        if (p.contains("limitations")) {
+            if (!p.at("limitations").is_array()) {
+                fail("MALFORMED_JSON", "coefficients.provenance.limitations",
+                     "limitations must be an array of strings");
+            }
+            for (const json& item : p.at("limitations")) {
+                if (!item.is_string()) {
+                    fail("MALFORMED_JSON", "coefficients.provenance.limitations",
+                         "limitations must contain strings");
+                }
+                provenance.limitations.push_back(item.get<std::string>());
+            }
+        }
+        c.provenance = std::move(provenance);
+    }
     return c;
 }
 
@@ -327,6 +361,16 @@ std::string dump_coefficients_json(const ModelCoefficients& c, int indent) {
         {"distribution_factor_floor", c.distribution_factor_floor},
         {"maximum_flow_m3_s", c.maximum_flow_m3_s},
         {"outlet_pressure_pa", c.outlet_pressure_pa}};
+    // Issue #9, Audit F6: this used to write only id/version/values, so
+    // provenance never survived being normalized into a run's
+    // coefficients.json artifact even when the source document had it.
+    if (c.provenance.has_value()) {
+        const CoefficientProvenance& p = *c.provenance;
+        root["provenance"] = {{"source", p.source},
+                              {"dataset", p.dataset.has_value() ? json(*p.dataset) : json(nullptr)},
+                              {"date", p.date},
+                              {"limitations", p.limitations}};
+    }
     return root.dump(indent);
 }
 

@@ -263,10 +263,20 @@ std::string dump_fitted_coefficients_json(const CalibrationReport& report, const
             "model itself and must not be presented as calibrated against real espresso.");
     }
 
+    // Issue #9, Audit F6: "dataset" here used to hold the array of fitting
+    // shot IDs, but schemas/coefficients.schema.json documents provenance
+    // .dataset as a single string or null, and load_coefficients_json() now
+    // enforces that shape -- reloading a calibration output file (e.g. as
+    // the starting point for a further fit) would otherwise throw
+    // MALFORMED_JSON. There is no single named dataset here, so this is
+    // null; the shot IDs themselves are preserved under fitting_shots
+    // instead, alongside the fields below that are calibration-run
+    // telemetry rather than part of the base coefficient contract.
     root["provenance"] = {{"source", report.used_synthetic_data
                                          ? "fitted against SYNTHETIC shots (machinery check only)"
                                          : "fitted against measured shots"},
-                          {"dataset", fitting_shot_ids},
+                          {"dataset", nullptr},
+                          {"fitting_shots", fitting_shot_ids},
                           {"validation_shots", validation_shot_ids},
                           {"fitted_parameters", fitted_names},
                           {"final_loss", report.final_loss},

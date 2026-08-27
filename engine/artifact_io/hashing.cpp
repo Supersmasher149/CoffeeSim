@@ -32,7 +32,18 @@ std::string recipe_hash(const Recipe& recipe) {
 }
 
 std::string coefficient_hash(const ModelCoefficients& coeff) {
-    return sha256_hex(canonicalise(dump_coefficients_json(coeff, -1)));
+    // Issue #9, Audit F6: provenance is descriptive metadata about where the
+    // values came from, not a solver input -- hashing it in would mean
+    // attaching or editing a dataset note changes coefficient_hash (and
+    // therefore every downstream result_hash) with the physics unchanged,
+    // and would make the compiled-in defaults (no provenance) hash
+    // differently from the identical shipped default-v1.json (which has
+    // provenance), breaking the reproducibility contract those two are
+    // meant to share. Hash everything dump_coefficients_json() emits except
+    // that one field.
+    nlohmann::json document = nlohmann::json::parse(dump_coefficients_json(coeff, -1));
+    document.erase("provenance");
+    return sha256_hex(document.dump());
 }
 
 std::string result_hash(const Recipe& recipe, const ModelCoefficients& coeff,

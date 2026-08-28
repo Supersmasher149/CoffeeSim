@@ -94,10 +94,21 @@ export function App() {
 
   const run = async () => {
     setError(undefined);
+    // Audit P7, issue #22: snapshot the recipe actually submitted, not
+    // workspace.draftRecipe read again after the request resolves -- the
+    // user can keep editing the draft while the request is in flight, and
+    // the result must stay tied to what produced it, not to draftRecipe's
+    // state whenever the response happens to land.
+    const submittedRecipe = workspace.draftRecipe;
     setWorkspace((current) => ({ ...current, requestState: "running" }));
     try {
-      const result = await api.simulate(workspace.draftRecipe);
-      setWorkspace((current) => ({ ...current, activeRun: result, requestState: "idle" }));
+      const result = await api.simulate(submittedRecipe);
+      setWorkspace((current) => ({
+        ...current,
+        activeRun: result,
+        activeRecipe: submittedRecipe,
+        requestState: "idle",
+      }));
     } catch (failure) {
       // The server's validation is authoritative; the rail's own check only
       // avoids obviously doomed round trips.
@@ -183,13 +194,16 @@ export function App() {
             <MetricStrip result={active} />
             <PuckView
               result={active}
-              targetBeverageG={workspace.draftRecipe.stop.target_beverage_g}
+              // Audit P7, issue #22: use the recipe that produced `active`,
+              // not the possibly-since-edited draft -- see
+              // ShotWorkspace.activeRecipe.
+              targetBeverageG={workspace.activeRecipe?.stop.target_beverage_g ?? null}
               cursorTimeSeconds={workspace.cursorTimeSeconds}
             />
             <ChartStack
               result={active}
               comparisons={comparisons}
-              preInfusionEnd={preInfusionEnd(workspace.draftRecipe)}
+              preInfusionEnd={workspace.activeRecipe ? preInfusionEnd(workspace.activeRecipe) : undefined}
               onCursorChange={(time) =>
                 setWorkspace((current) => ({ ...current, cursorTimeSeconds: time }))
               }

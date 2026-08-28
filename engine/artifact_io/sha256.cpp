@@ -56,16 +56,32 @@ std::string sha256_hex(const std::string& bytes) {
     std::array<std::uint32_t, 8> h{0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
                                    0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
 
-    std::string padded = bytes;
-    const std::uint64_t bit_length = static_cast<std::uint64_t>(bytes.size()) * 8;
-    padded.push_back('\x80');
-    while (padded.size() % 64 != 56) padded.push_back('\0');
-    for (int i = 7; i >= 0; --i) {
-        padded.push_back(static_cast<char>((bit_length >> (i * 8)) & 0xff));
+    // `bytes` can be close to 1 GiB (a CFD3D field/result payload). Transform
+    // full blocks straight out of it rather than copying the whole thing into
+    // a padded buffer first: the message tail (< 64 bytes) plus the 0x80
+    // terminator, zero padding, and the 8-byte bit length always fit in two
+    // 64-byte blocks, built here without ever duplicating the input.
+    const auto* data = reinterpret_cast<const unsigned char*>(bytes.data());
+    const std::size_t size = bytes.size();
+    const std::uint64_t bit_length = static_cast<std::uint64_t>(size) * 8;
+
+    std::size_t offset = 0;
+    for (; offset + 64 <= size; offset += 64) {
+        transform(h, data + offset);
     }
 
-    for (std::size_t offset = 0; offset < padded.size(); offset += 64) {
-        transform(h, reinterpret_cast<const unsigned char*>(padded.data() + offset));
+    std::array<unsigned char, 128> tail{};
+    const std::size_t tail_len = size - offset;
+    std::memcpy(tail.data(), data + offset, tail_len);
+    std::size_t padded_len = tail_len;
+    tail[padded_len++] = 0x80;
+    while (padded_len % 64 != 56) tail[padded_len++] = 0;
+    for (int i = 7; i >= 0; --i) {
+        tail[padded_len++] = static_cast<unsigned char>((bit_length >> (i * 8)) & 0xff);
+    }
+
+    for (std::size_t block_offset = 0; block_offset < padded_len; block_offset += 64) {
+        transform(h, tail.data() + block_offset);
     }
 
     static constexpr char kHex[] = "0123456789abcdef";

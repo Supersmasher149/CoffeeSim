@@ -60,7 +60,8 @@ if(TARGET espressolab_server)
         server_port_smoke
         cfd3d_error_smoke
         cfd3d_concurrency_smoke
-        rest_integration_smoke)
+        rest_integration_smoke
+        measured_shots_smoke)
       add_test(
         NAME server_${smoke_script}
         COMMAND ${Python3_EXECUTABLE}

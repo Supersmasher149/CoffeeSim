@@ -1,6 +1,5 @@
 #include "espressolab/experiment.hpp"
 
-#include <algorithm>
 #include <map>
 #include <set>
 
@@ -67,8 +66,7 @@ Recipe apply_parameter(const Recipe& baseline, const std::string& parameter_path
     return copy;
 }
 
-SweepResult ExperimentRunner::run(const SweepSpec& spec,
-                                  const SweepProgressCallback& on_progress) const {
+void validate_sweep_spec(const SweepSpec& spec) {
     if (spec.axes.empty()) {
         ValidationResult result;
         result.add("EMPTY_SWEEP", "a sweep requires at least one axis", "sweep.axes");
@@ -92,53 +90,72 @@ SweepResult ExperimentRunner::run(const SweepSpec& spec,
         // Fail before running a hundred simulations rather than after.
         (void)apply_parameter(spec.baseline, axis.parameter_path, axis.values.front());
     }
+}
+
+std::size_t sweep_total_runs(const SweepSpec& spec) {
+    // Cartesian product with the last axis varying fastest, so run order is
+    // stable across machines and reruns (14.2).
+    std::size_t total = 1;
+    for (const auto& axis : spec.axes) total *= axis.values.size();
+    return total;
+}
+
+std::vector<double> sweep_coordinates(const SweepSpec& spec, std::size_t linear_index) {
+    std::size_t remainder = linear_index;
+    std::vector<double> coordinates(spec.axes.size(), 0.0);
+    for (std::size_t axis_index = spec.axes.size(); axis_index-- > 0;) {
+        const auto& values = spec.axes[axis_index].values;
+        coordinates[axis_index] = values[remainder % values.size()];
+        remainder /= values.size();
+    }
+    return coordinates;
+}
+
+SweepRun execute_sweep_point(const SweepSpec& spec, const Simulator& simulator,
+                              std::size_t linear_index) {
+    const std::vector<double> coordinates = sweep_coordinates(spec, linear_index);
+
+    Recipe recipe = spec.baseline;
+    for (std::size_t axis_index = 0; axis_index < spec.axes.size(); ++axis_index) {
+        recipe = apply_parameter(recipe, spec.axes[axis_index].parameter_path,
+                                 coordinates[axis_index]);
+    }
+
+    SweepRun run;
+    run.index = static_cast<int>(linear_index);
+    run.coordinates = coordinates;
+
+    // One out-of-range corner must not abandon the other runs (FR-05); it is
+    // recorded as an invalid run and shows up in the aggregate.
+    try {
+        ShotResult shot = simulator.run(recipe, spec.coefficients, spec.config);
+        artifact_io::stamp_manifest(shot, recipe, spec.coefficients, spec.config);
+        run.summary = shot.summary;
+        run.run_id = shot.manifest.run_id;
+        run.result_hash = shot.manifest.result_hash;
+        run.warning_count = shot.summary.warning_count;
+    } catch (const InvalidInputError& e) {
+        run.summary.termination = TerminationReason::invalid_state;
+        run.run_id = "invalid";
+        run.result_hash.clear();
+        run.warning_count = static_cast<int>(e.validation().issues().size());
+    }
+    return run;
+}
+
+SweepResult ExperimentRunner::run(const SweepSpec& spec,
+                                  const SweepProgressCallback& on_progress) const {
+    validate_sweep_spec(spec);
 
     SweepResult result;
     result.name = spec.name;
     result.axes = spec.axes;
 
-    // Cartesian product with the last axis varying fastest, so run order is
-    // stable across machines and reruns (14.2).
-    std::size_t total = 1;
-    for (const auto& axis : spec.axes) total *= axis.values.size();
-
+    const std::size_t total = sweep_total_runs(spec);
     const Simulator simulator;
     result.runs.reserve(total);
     for (std::size_t linear = 0; linear < total; ++linear) {
-        std::size_t remainder = linear;
-        std::vector<double> coordinates(spec.axes.size(), 0.0);
-        for (std::size_t axis_index = spec.axes.size(); axis_index-- > 0;) {
-            const auto& values = spec.axes[axis_index].values;
-            coordinates[axis_index] = values[remainder % values.size()];
-            remainder /= values.size();
-        }
-
-        Recipe recipe = spec.baseline;
-        for (std::size_t axis_index = 0; axis_index < spec.axes.size(); ++axis_index) {
-            recipe = apply_parameter(recipe, spec.axes[axis_index].parameter_path,
-                                     coordinates[axis_index]);
-        }
-
-        SweepRun run;
-        run.index = static_cast<int>(linear);
-        run.coordinates = coordinates;
-
-        // One out-of-range corner must not abandon the other 99 runs (FR-05);
-        // it is recorded as an invalid run and shows up in the aggregate.
-        try {
-            ShotResult shot = simulator.run(recipe, spec.coefficients, spec.config);
-            artifact_io::stamp_manifest(shot, recipe, spec.coefficients, spec.config);
-            run.summary = shot.summary;
-            run.run_id = shot.manifest.run_id;
-            run.result_hash = shot.manifest.result_hash;
-            run.warning_count = shot.summary.warning_count;
-        } catch (const InvalidInputError& e) {
-            run.summary.termination = TerminationReason::invalid_state;
-            run.run_id = "invalid";
-            run.result_hash.clear();
-            run.warning_count = static_cast<int>(e.validation().issues().size());
-        }
-        result.runs.push_back(std::move(run));
+        result.runs.push_back(execute_sweep_point(spec, simulator, linear));
 
         if (on_progress && !on_progress(static_cast<int>(linear + 1), static_cast<int>(total))) {
             // A cancelled sweep keeps the runs it already finished rather than

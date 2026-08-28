@@ -1,4 +1,5 @@
 #pragma once
+#include <cstddef>
 #include <filesystem>
 #include <functional>
 #include <string>
@@ -56,6 +57,24 @@ using SweepProgressCallback = std::function<bool(int, int)>;
 // InvalidInputError for an unknown parameter path.
 Recipe apply_parameter(const Recipe& baseline, const std::string& parameter_path, double value);
 std::vector<std::string> supported_parameter_paths();
+
+// Structural checks (non-empty axes, no duplicate parameter paths, every
+// parameter path resolvable) that must pass before any run starts. Throws
+// InvalidInputError. Called once by both ExperimentRunner::run and
+// apps/espressolab_cli/sweep_batch_runner.cpp's parallel path (issue #38),
+// so a malformed spec fails the same way regardless of which path runs it.
+void validate_sweep_spec(const SweepSpec& spec);
+
+// Pure, stateless building blocks for one sweep point -- thread-safe by
+// construction, since none of them touch shared state. ExperimentRunner::run
+// calls execute_sweep_point in a sequential loop; the CLI's sweep batch
+// runner (issue #38) calls the same function from multiple worker threads
+// and relies on it producing byte-identical results regardless of who calls
+// it or in what order.
+std::size_t sweep_total_runs(const SweepSpec& spec);
+std::vector<double> sweep_coordinates(const SweepSpec& spec, std::size_t linear_index);
+SweepRun execute_sweep_point(const SweepSpec& spec, const Simulator& simulator,
+                              std::size_t linear_index);
 
 class ExperimentRunner {
 public:

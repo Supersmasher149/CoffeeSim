@@ -75,7 +75,7 @@ CLI surface:
 
 ```bash
 espressolab_cli simulate --recipe <file> [--coefficients <file>] [--out <dir>]
-espressolab_cli sweep    --spec <file> [--out <dir>]
+espressolab_cli sweep    --spec <file> [--out <dir>] [--workers <n>] [--ring-capacity <n>]
 espressolab_cli calibrate --shots <dir> --fit <name,...> [--holdout <id,...>] [--leave-one-out]
 espressolab_cli synthesize --recipe <file> [--noise <g>] --out <file>
 espressolab_cli cfd      --recipe <file> [--radial <n>] [--axial <n>] [--field pressure|saturation|temperature|tds]

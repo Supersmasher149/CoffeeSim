@@ -16,6 +16,7 @@ add_executable(espressolab_tests
   unit/test_calibration_io.cpp
   unit/test_cli_workflows.cpp
   unit/test_tui_forms.cpp
+  unit/test_ring_buffer.cpp
   integration/test_shots.cpp
   integration/test_invariants.cpp
   integration/test_convergence.cpp
@@ -23,6 +24,7 @@ add_executable(espressolab_tests
   integration/test_cfd.cpp
   integration/test_cfd3d.cpp
   integration/test_sweeps.cpp
+  integration/test_sweep_batch_runner.cpp
   integration/test_calibration_recovery.cpp
   integration/test_cancellation.cpp
 )

@@ -63,6 +63,12 @@ SimulateOutcome run_simulate(const SimulateRequest& request,
 struct SweepRequest {
     std::string spec_path;
     std::string out_dir;
+    // Issue #38: unset (the default) runs ExperimentRunner's sequential
+    // path, exactly as before. Set to opt into the parallel batch runner;
+    // ring_capacity without workers is a frontend-level usage error (see
+    // command_sweep in main.cpp) so the override is never silently ignored.
+    std::optional<std::size_t> workers;
+    std::optional<std::size_t> ring_capacity;
 };
 
 struct SweepOutcome {

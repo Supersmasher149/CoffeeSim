@@ -138,3 +138,24 @@ TEST_CASE("run_calibrate maps an unknown fit parameter to the legacy error code"
         REQUIRE(error.validation().issues().front().code == "UNKNOWN_PARAMETER_NAME");
     }
 }
+
+// Issue #38: this is the equivalence the CLI's --workers/--ring-capacity
+// flags depend on -- opting into the parallel batch runner changes how a
+// sweep's results are computed, never what they are.
+TEST_CASE("run_sweep with workers set matches the sequential default",
+         "[cli_workflows][sweep]") {
+    SweepRequest sequential_request;
+    sequential_request.spec_path = (testing::asset_dir() / "sweeps" / "grind-size.json").string();
+
+    SweepRequest parallel_request = sequential_request;
+    parallel_request.workers = 4;
+
+    const SweepOutcome sequential = run_sweep(sequential_request);
+    const SweepOutcome parallel = run_sweep(parallel_request);
+
+    REQUIRE_FALSE(sequential.result.runs.empty());
+    REQUIRE(parallel.result.runs.size() == sequential.result.runs.size());
+    for (std::size_t i = 0; i < sequential.result.runs.size(); ++i) {
+        REQUIRE(parallel.result.runs[i].result_hash == sequential.result.runs[i].result_hash);
+    }
+}

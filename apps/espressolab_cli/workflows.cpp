@@ -7,6 +7,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include "sweep_batch_runner.hpp"
+
 namespace espressolab::cli_workflows {
 
 namespace {
@@ -115,7 +117,14 @@ SweepOutcome run_sweep(const SweepRequest& request, const SweepProgressCallback&
     SweepOutcome outcome;
     const SweepSpec spec = artifact_io_sweep::load_sweep_spec_file(request.spec_path);
     const auto started = std::chrono::steady_clock::now();
-    outcome.result = ExperimentRunner().run(spec, on_progress);
+    // Issue #38: unset workers keeps today's sequential ExperimentRunner
+    // path, byte-for-byte -- the parallel batch runner is strictly opt-in.
+    if (request.workers) {
+        outcome.result = run_sweep_parallel(
+            spec, BatchRunnerOptions{request.workers, request.ring_capacity}, on_progress);
+    } else {
+        outcome.result = ExperimentRunner().run(spec, on_progress);
+    }
     outcome.wall_time_ms = elapsed_ms(started);
     if (!request.out_dir.empty()) {
         artifact_io_sweep::write_sweep_artifacts(request.out_dir, outcome.result);

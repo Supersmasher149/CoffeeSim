@@ -4,11 +4,13 @@
 # espressolab_tests for headless coverage (issue #30).
 add_library(espressolab_cli_support STATIC
   workflows.cpp
+  sweep_batch_runner.cpp
   tui/tui_forms.cpp)
 target_include_directories(espressolab_cli_support PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(espressolab_cli_support
   PUBLIC espressolab_core espressolab_artifacts espressolab_experiments espressolab_calibration
-         espressolab_cfd espressolab_cfd3d espressolab_cfd3d_artifacts espressolab_warnings tp_json)
+         espressolab_cfd espressolab_cfd3d espressolab_cfd3d_artifacts espressolab_warnings tp_json
+         Threads::Threads)
 
 # FTXUI is linked only by the CLI executable (issue #28): it never enters the
 # solver/model-library dependency graph, and espressolab_cli_support above

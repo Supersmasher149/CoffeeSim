@@ -1,4 +1,5 @@
 #include <cctype>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <iomanip>
@@ -36,6 +37,7 @@ Usage:
   espressolab_cli simulate --recipe <file> [--coefficients <file>] [--out <dir>]
                            [--dt <s>] [--sample-interval <s>] [--quiet]
   espressolab_cli sweep    --spec <file> [--out <dir>] [--quiet]
+                           [--workers <n>] [--ring-capacity <n>]
 
   espressolab_cli calibrate --shots <dir> [--coefficients <file>]
                              --fit <name,name,...> [--holdout <id,id,...>]
@@ -205,7 +207,8 @@ int command_simulate(int argc, char** argv) {
 }
 
 int command_sweep(int argc, char** argv) {
-    if (!reject_unknown_options(argc, argv, 2, {"spec", "out", "quiet"}, "sweep")) {
+    if (!reject_unknown_options(argc, argv, 2, {"spec", "out", "workers", "ring-capacity", "quiet"},
+                                 "sweep")) {
         return kUsageError;
     }
     const auto flags = parse_flags(argc, argv, 2);
@@ -218,6 +221,29 @@ int command_sweep(int argc, char** argv) {
     cli_workflows::SweepRequest request;
     request.spec_path = flags.at("spec");
     if (flags.count("out")) request.out_dir = flags.at("out");
+
+    // Issue #38: --workers opts into the parallel batch runner;
+    // --ring-capacity overrides its fixed worker_count*4 heuristic. The
+    // matching ESPRESSOLAB_SWEEP_WORKERS/ESPRESSOLAB_SWEEP_RING_CAPACITY env
+    // vars are the same override for benchmarking without editing a command
+    // line. A flag wins over its env var; leaving both unset keeps the
+    // sequential default exactly as before.
+    if (flags.count("workers")) {
+        request.workers = static_cast<std::size_t>(std::stoul(flags.at("workers")));
+    } else if (const char* env = std::getenv("ESPRESSOLAB_SWEEP_WORKERS")) {
+        request.workers = static_cast<std::size_t>(std::stoul(env));
+    }
+    if (flags.count("ring-capacity")) {
+        request.ring_capacity = static_cast<std::size_t>(std::stoul(flags.at("ring-capacity")));
+    } else if (const char* env = std::getenv("ESPRESSOLAB_SWEEP_RING_CAPACITY")) {
+        request.ring_capacity = static_cast<std::size_t>(std::stoul(env));
+    }
+    if (request.ring_capacity && !request.workers) {
+        print_error("MISSING_ARGUMENT",
+                    "--ring-capacity requires --workers (or ESPRESSOLAB_SWEEP_WORKERS) to also be set",
+                    "");
+        return kUsageError;
+    }
 
     const cli_workflows::SweepOutcome outcome = cli_workflows::run_sweep(request);
 

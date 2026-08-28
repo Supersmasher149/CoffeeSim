@@ -130,6 +130,41 @@ def main():
                 print(f"  job: {json.dumps(job)}")
             checks.append(ok)
 
+        # Two independent physical checks fail at once (dose and particle
+        # diameter are unrelated fields validated separately, so both
+        # OUT_OF_RANGE issues accumulate rather than short-circuiting).
+        # Regression for issue #5: polling used to report only the first.
+        doubly_bad_recipe = json.loads(json.dumps(baseline_recipe))
+        doubly_bad_recipe["puck"]["dose_g"] = 5.0
+        doubly_bad_recipe["puck"]["particle_diameter_um"] = 50.0
+        status, body = post(
+            base_url,
+            "/api/v1/cfd3d/runs",
+            {"recipe": doubly_bad_recipe, "mesh": {"nx": 4, "ny": 4, "nz": 8}},
+        )
+        run_id = body.get("run_id")
+        job = {}
+        if status == 202 and run_id is not None:
+            for _ in range(50):
+                _, job = get(base_url, f"/api/v1/cfd3d/runs/{run_id}")
+                if job.get("status") == "failed":
+                    break
+                time.sleep(0.1)
+        issues = job.get("error", {}).get("details", {}).get("issues", [])
+        issue_paths = {issue.get("path") for issue in issues}
+        ok = (
+            status == 202
+            and job.get("status") == "failed"
+            and "recipe.puck.dose_g" in issue_paths
+            and "recipe.puck.particle_diameter_um" in issue_paths
+        )
+        print(
+            f"{'PASS' if ok else 'FAIL'}: polling reports every simultaneous validation issue, not just the first"
+        )
+        if not ok:
+            print(f"  job: {json.dumps(job)}")
+        checks.append(ok)
+
         # A normal case still completes.
         status, body = post(
             base_url,

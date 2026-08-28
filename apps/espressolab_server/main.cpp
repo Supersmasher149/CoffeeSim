@@ -444,6 +444,15 @@ public:
             error_ = issues.empty() ? std::string(error.what()) : issues.front().message;
             error_code_ = issues.empty() ? "INVALID_INPUT" : issues.front().code;
             error_path_ = issues.empty() ? std::string() : issues.front().path;
+            // Issue #5: a bad recipe/mesh combination can fail more than one
+            // check at once. The synchronous POST validation path has the
+            // same "front() only" limitation today, but a client polling an
+            // async job has no other way to see the rest -- it fixes issue
+            // one, resubmits, and only then discovers issue two. Keep the
+            // top-level error.message/.code as the single-issue summary
+            // above (unchanged response shape) and also carry every issue
+            // through for callers that read error.details.issues.
+            error_issues_.assign(issues.begin(), issues.end());
         } catch (const std::exception& error) {
             const std::lock_guard<std::mutex> lock(mutex_);
             status_ = Status::failed;
@@ -470,6 +479,7 @@ public:
         std::string error;
         std::string error_code;
         std::string error_path;
+        std::vector<ValidationIssue> error_issues;
         Cfd3dResult result;
     };
 
@@ -481,6 +491,7 @@ public:
         out.error = error_;
         out.error_code = error_code_;
         out.error_path = error_path_;
+        out.error_issues = error_issues_;
         out.result = result_;
         if (status_ != Status::queued) {
             out.elapsed_s = std::chrono::duration<double>(
@@ -515,6 +526,7 @@ private:
     std::string error_;
     std::string error_code_ = "CFD3D_FAILED";
     std::string error_path_;
+    std::vector<ValidationIssue> error_issues_;
     Cfd3dResult result_;
     std::vector<Cfd3dSnapshot> snapshots_;
     std::chrono::steady_clock::time_point started_at_{};
@@ -802,6 +814,14 @@ int main(int argc, char** argv) {
         if (snapshot.status == Cfd3dJob::Status::failed) {
             body["error"] = {{"code", snapshot.error_code}, {"message", snapshot.error}};
             if (!snapshot.error_path.empty()) body["error"]["path"] = snapshot.error_path;
+            if (snapshot.error_issues.size() > 1) {
+                json issues = json::array();
+                for (const ValidationIssue& issue : snapshot.error_issues) {
+                    issues.push_back(
+                        {{"code", issue.code}, {"message", issue.message}, {"path", issue.path}});
+                }
+                body["error"]["details"] = {{"issues", std::move(issues)}};
+            }
             return body;
         }
         if (snapshot.status == Cfd3dJob::Status::complete) {

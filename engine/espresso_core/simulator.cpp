@@ -363,7 +363,7 @@ std::pair<Boundaries, std::vector<Derived>> evaluate_regions(
                        ? (d.viscosity_pa_s * d.geometry.depth_m) /
                              (d.flow.resistance_pa_s_m3 * region_area_m2)
                        : 0.0);
-        derived.push_back(d);
+        derived.push_back(std::move(d));
     }
     return {boundaries, derived};
 }
@@ -654,13 +654,22 @@ ShotResult Simulator::run(const Recipe& recipe, const ModelCoefficients& coeff,
             break;
         }
 
-        const std::vector<RegionState> states_before_step = regions;
+        // advance_regions sets shot.time_s to exactly (step + 1) * dt, so this
+        // step crosses next_sample_time_s iff the same comparison holds now,
+        // one dt early -- letting the (potentially large, per-cell) region
+        // snapshot be skipped on the steps that don't need it for
+        // interpolation below.
+        const bool crosses_sample_boundary =
+            next_sample_time_s <= regions.front().shot.time_s + dt + 1.0e-9;
+        const std::vector<RegionState> states_before_step =
+            crosses_sample_boundary ? regions : std::vector<RegionState>{};
         if (!advance_regions(regions, derived, boundaries, recipe, coeff, config, *water_, dt,
                              step, result, warn, diag, termination)) {
             break;
         }
 
-        while (next_sample_time_s <= regions.front().shot.time_s + 1.0e-9) {
+        while (crosses_sample_boundary &&
+              next_sample_time_s <= regions.front().shot.time_s + 1.0e-9) {
             std::vector<RegionState> sampled_regions;
             sampled_regions.reserve(regions.size());
             for (std::size_t i = 0; i < regions.size(); ++i) {

@@ -248,6 +248,17 @@ void append_string(std::string& output, const std::string& value) {
     output.append(value);
 }
 
+// Mirrors artifact_io::coefficient_hash's rationale (hashing.cpp): provenance
+// is descriptive metadata about where coefficient values came from, not a
+// solver input. Hash the same case document dump_case_json() would write,
+// minus that one field, so attaching or editing a provenance note doesn't
+// change result_hash/run_id with the physics unchanged.
+std::string case_json_for_hash(const Cfd3dCase& cfd3d_case) {
+    nlohmann::json document = nlohmann::json::parse(dump_case_json(cfd3d_case, -1));
+    if (document.contains("coefficients")) document.at("coefficients").erase("provenance");
+    return document.dump();
+}
+
 void append_field(std::string& output, const Cfd3dField& field) {
     append_u64_le(output, static_cast<std::uint64_t>(field.size()));
     for (const double value : field.values()) append_double_le(output, value);
@@ -554,7 +565,7 @@ std::string result_hash(const Cfd3dCase& cfd3d_case, const Cfd3dResult& result,
     std::string bytes;
     append_string(bytes, std::string(version::kCfd3dResultSchema));
     append_string(bytes, std::string(version::kCfd3dFieldFormat));
-    append_string(bytes, dump_case_json(cfd3d_case, -1));
+    append_string(bytes, case_json_for_hash(cfd3d_case));
     append_string(bytes, result.solver_version);
     append_double_le(bytes, result.elapsed_time_s);
     append_double_le(bytes, result.beverage_mass_kg);

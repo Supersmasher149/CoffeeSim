@@ -68,6 +68,35 @@ TEST_CASE("cfd3d produces bounded deterministic fields", "[cfd3d][verification]"
     }
 }
 
+// Regression: cfd3d_artifact_io::result_hash() used to hash dump_case_json()
+// verbatim, which embeds coefficient provenance -- unlike the Level 1-3
+// pipeline's artifact_io::coefficient_hash(), which explicitly erases
+// provenance for exactly this reason (hashing.cpp). Attaching or editing a
+// provenance note is not a physics change, so it must not change
+// result_hash/run_id.
+TEST_CASE("cfd3d result_hash is unaffected by coefficient provenance", "[cfd3d][artifacts]") {
+    const cfd3d_artifact_io::Cfd3dCase with_provenance{short_recipe(),
+                                                       testing::baseline_coefficients(),
+                                                       small_config()};
+    REQUIRE(with_provenance.coefficients.provenance.has_value());
+
+    cfd3d_artifact_io::Cfd3dCase without_provenance = with_provenance;
+    without_provenance.coefficients.provenance.reset();
+
+    const Cfd3dResult first =
+        Cfd3dSolver().run(with_provenance.recipe, with_provenance.coefficients,
+                          with_provenance.config);
+    const Cfd3dResult second =
+        Cfd3dSolver().run(without_provenance.recipe, without_provenance.coefficients,
+                          without_provenance.config);
+
+    const std::string hash_with =
+        cfd3d_artifact_io::result_hash(with_provenance, first, {});
+    const std::string hash_without =
+        cfd3d_artifact_io::result_hash(without_provenance, second, {});
+    REQUIRE(hash_with == hash_without);
+}
+
 TEST_CASE("cfd3d emits ordered initial and final snapshots", "[cfd3d][artifacts]") {
     Recipe recipe = short_recipe();
     Cfd3dConfig config = small_config();

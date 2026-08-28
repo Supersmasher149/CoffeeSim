@@ -264,6 +264,34 @@ void append_field(std::string& output, const Cfd3dField& field) {
     for (const double value : field.values()) append_double_le(output, value);
 }
 
+// Exact byte count append_field will add for this field, so callers can
+// reserve() the destination up front instead of growing it one push_back at
+// a time -- the field payload alone can run to hundreds of megabytes.
+std::uint64_t field_hash_byte_count(const Cfd3dField& field) {
+    return sizeof(std::uint64_t) + static_cast<std::uint64_t>(field.size()) * sizeof(double);
+}
+
+// Exact byte count result_hash's append_* calls will produce, so `bytes` can
+// be reserved once instead of growing by repeated doubling-and-copy while a
+// ~1 GiB buffer is built.
+std::uint64_t result_hash_byte_count(const Cfd3dResult& result,
+                                     const std::vector<Cfd3dSnapshot>& snapshots,
+                                     const std::string& case_json) {
+    std::uint64_t total = 0;
+    total += sizeof(std::uint64_t) + version::kCfd3dResultSchema.size();
+    total += sizeof(std::uint64_t) + version::kCfd3dFieldFormat.size();
+    total += sizeof(std::uint64_t) + case_json.size();
+    total += sizeof(std::uint64_t) + result.solver_version.size();
+    total += 4 * sizeof(double);  // elapsed_time_s, beverage_mass_kg, tds_fraction, extraction_yield_fraction
+    for (const Cfd3dField* field : result_fields(result)) total += field_hash_byte_count(*field);
+    total += static_cast<std::uint64_t>(result.samples.size()) * 10 * sizeof(double);
+    for (const Cfd3dSnapshot& snapshot : snapshots) {
+        total += sizeof(double);  // snapshot.time_s
+        for (const Cfd3dField* field : snapshot_fields(snapshot)) total += field_hash_byte_count(*field);
+    }
+    return total;
+}
+
 std::vector<std::uint8_t> field_bytes(const Cfd3dField& field) {
     std::vector<std::uint8_t> bytes;
     bytes.reserve(field.size() * sizeof(double));
@@ -562,10 +590,12 @@ std::string dump_case_json(const Cfd3dCase& cfd3d_case, int indent) {
 std::string result_hash(const Cfd3dCase& cfd3d_case, const Cfd3dResult& result,
                         const std::vector<Cfd3dSnapshot>& snapshots) {
     validate_snapshots(result.mesh, snapshots);
+    const std::string case_json = case_json_for_hash(cfd3d_case);
     std::string bytes;
+    bytes.reserve(result_hash_byte_count(result, snapshots, case_json));
     append_string(bytes, std::string(version::kCfd3dResultSchema));
     append_string(bytes, std::string(version::kCfd3dFieldFormat));
-    append_string(bytes, case_json_for_hash(cfd3d_case));
+    append_string(bytes, case_json);
     append_string(bytes, result.solver_version);
     append_double_le(bytes, result.elapsed_time_s);
     append_double_le(bytes, result.beverage_mass_kg);

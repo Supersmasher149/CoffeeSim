@@ -16,7 +16,7 @@ the dashboard produce byte-identical numbers for the same inputs.
 
 ```bash
 ./scripts/build.sh          # cmake + build Release into build/ (deps vendored, offline)
-./scripts/test.sh           # build + run the full Catch2 suite
+./scripts/test.sh           # build + run the full Catch2 suite (not PTY/web/demo)
 ./scripts/demo.sh           # acceptance run: baseline shot, grind sweep, determinism check
 ./scripts/dev.sh            # tool server (port 8734) + dashboard dev server (localhost:5173)
 ```
@@ -28,10 +28,11 @@ Run a single test tag or list tests (build first):
 ./build/tests/espressolab_tests --list-tests
 ```
 
-Tags: `[units]` `[profile]` `[water]` `[permeability]` `[flow]` `[heat]`
+Tags: `[unit]` `[units]` `[profile]` `[water]` `[permeability]` `[flow]` `[heat]`
 `[extraction]` `[artifacts]` `[integration]` `[invariants]` `[convergence]`
 `[sweep]` `[calibration]` `[recovery]` `[property]` `[performance]` `[regions]`
-`[axial]` `[cfd]` `[verification]` `[cancellation]` `[tui]` `[cli_workflows]`.
+`[axial]` `[cfd]` `[cfd3d]` `[verification]` `[references]` `[progress]`
+`[cancellation]` `[tui]` `[cli_workflows]`.
 
 A POSIX PTY smoke matrix for the TUI runs separately from `espressolab_tests`
 (it needs a real pseudo-terminal, not just the Catch2 binary):
@@ -39,6 +40,11 @@ A POSIX PTY smoke matrix for the TUI runs separately from `espressolab_tests`
 ```bash
 python3 tests/pty/tui_smoke.py [path/to/espressolab_cli]
 ```
+
+The current Catch2 suite passes 165 cases/18,213 assertions. The PTY script
+defines 14 checks but was not rerun for the measured-shot documentation refresh.
+Hosted macOS, Linux, and dashboard jobs passed at `736cef3`; later hardening
+through `94fbe7a` does not yet have equivalent hosted evidence.
 
 Debug build, isolated from `build/`:
 
@@ -94,7 +100,8 @@ web (React/TS)  ->  tool_server (REST)  ->  experiment_runner
                                                      |
                                          model_library (water, permeability, heat, extraction)
 
-CLI and CFD tests  ->  cfd (separate Level 4 solver)  ->  espresso_core + model_library
+CLI and CFD tests  ->  cfd / cfd3d (separate Level 4 solvers)
+                                      -> espresso_core + model_library
 
 espressolab_cli tui  ->  espressolab_cli_support (workflows.cpp, tui/tui_forms.cpp)
                                                      |
@@ -110,19 +117,20 @@ espressolab_cli tui  ->  espressolab_cli_support (workflows.cpp, tui/tui_forms.c
 | `espressolab_experiments` | Sweeps, run schedules, aggregation, artifact naming | Chart rendering |
 | `espressolab_calibration` | Measured shots, the loss function, the fit | Anything the solver depends on |
 | `espressolab_cfd` | Separate Level 4 axisymmetric pressure/transport solver | REST, dashboard, standard artifacts, default result hashes |
+| `espressolab_cfd3d` | Separate Cartesian 3D pressure/transport solver and field snapshots | Standard shot artifacts and default result hashes |
 | `espressolab_references` | Published reference-shot metadata, partial-load reporting | Simulation, fitting, validation decisions |
 | `espressolab_server` | REST endpoints, jobs and threads, error translation, file boundaries | Equation implementations |
 | `espressolab_cli_support` | Shared CLI workflow services (load, validate, run, write artifacts) and pure TUI navigation/form logic, called by both the legacy commands and the TUI | FTXUI, terminal I/O, argv parsing |
 | `apps/espressolab_cli/tui` | FTXUI rendering, input handling, the one-job-at-a-time worker thread | Physics, artifact formats, validation rules (all in `espressolab_cli_support`) |
-| `web` | Controls, charts, comparisons, warnings, exports | Authoritative calculations |
+| `web` | Controls, charts, fixed-coefficient measured-shot comparisons, warnings, exports | Authoritative calculations or coefficient fitting |
 | `tests/fixtures` | Golden recipes, expected invariants | Production defaults |
 
 Keep a new concern in the lowest layer that can own it: physics in the model
 library/solver, serialization in `artifact_io`, request translation in the
-server, rendering-only behavior in `web/`. `espressolab_cfd` is deliberately
-outside the default Level 1-3 request path (invoked directly by the CLI); it
-must never become a hidden dependency of the default pipeline or change its
-artifacts/hashes.
+server, rendering-only behavior in `web/`. The CFD solvers are deliberately
+outside the default Level 1-3 request path. CFD3D has explicit REST routes and
+independent artifacts/schemas; neither CFD solver may become a hidden dependency
+of the default pipeline or change its artifacts/hashes.
 
 Threads live in the server and the TUI, not the engine: `ExperimentRunner::run`
 takes a `(completed, total) -> bool` progress callback and stops when it
@@ -144,6 +152,7 @@ recipe, coefficient, configuration, and result hashes.
 | `engine/espresso_core/` | Domain types, validation, profiles, state stepping, termination, invariants for the Level 1-3 solver |
 | `engine/model_library/` | Water properties, puck geometry/permeability, heat, extraction correlations |
 | `engine/cfd/` | Separate Level 4 axisymmetric porous-media solver |
+| `engine/cfd3d/` | Separate Cartesian 3D porous-media solver and field storage |
 | `engine/artifact_io/` | JSON/CSV load and dump, canonical hashes, manifests, artifact files |
 | `engine/experiment_runner/` | Sweep axes, Cartesian execution, progress, aggregate export |
 | `engine/calibration/` | Measured-shot loading, loss functions, fitting, validation reports |
@@ -151,8 +160,8 @@ recipe, coefficient, configuration, and result hashes.
 | `include/espressolab/` | Public C++ headers shared across targets, including `execution.hpp` (the cancellation/status contract) |
 | `apps/espressolab_cli/` | Argv parsing, `workflows.{hpp,cpp}` (shared CLI workflow services), file-oriented command output |
 | `apps/espressolab_cli/tui/` | Interactive terminal UI: `tui_forms.{hpp,cpp}` (terminal-independent navigation/forms) and `tui.cpp` (FTXUI rendering) |
-| `apps/espressolab_server/` | Local REST translation, in-memory runs, background sweep jobs (cpp-httplib) |
-| `web/src/features/` | shot, sweeps, comparison, calibration UI |
+| `apps/espressolab_server/` | Local REST translation, measured-shot comparison, in-memory runs, background sweep/CFD3D jobs (cpp-httplib) |
+| `web/src/features/` | shot, sweeps, run comparison, measured-shot comparison, calibration notice |
 | `assets/` | Versioned example inputs and synthetic measurement fixtures |
 | `schemas/` | Intended JSON exchange formats |
 | `tests/` | Unit, integration, property, convergence, verification tests |
@@ -195,6 +204,9 @@ equation is in `docs/model.md`.
   uncalibrated (plausible baseline, not fitted). `espressolab_cli calibrate`
   exists and is tested but has only run against synthetic data — see
   `docs/calibration.md`.
+- The measured-shot catalogue/compare API evaluates one stored shot with one
+  simulation and fixed coefficients. It is not a fitting path, and the current
+  stored shots are synthetic fixtures.
 - No grinder-dial-to-particle-size mapping; grind is a physical input in µm.
 - No flavour prediction — TDS/extraction are engineering outputs only.
 
@@ -223,7 +235,8 @@ outputs as returned by the native solver (e.g. the cross-section spout
 differences beverage mass between samples for display timing; the sampled flow
 field is the Darcy flow into the bed, a different number until pores are full).
 
-Changing a data contract (recipe, coefficients, result, sweep, reference) must
+Changing a data contract (recipe, coefficients, result, sweep, measured shot,
+comparison, CFD3D, reference) must
 be done atomically across layers — see the "Changing a Data Contract" and
 "Contract Change Procedure" checklists in `docs/development.md` and
 `docs/data-contracts.md`. In short: C++ domain type -> loader/serializer/hash
@@ -260,7 +273,7 @@ reproducibility, not correctness.
 | --- | --- |
 | `docs/getting-started.md` | Build, test, simulate, run the dashboard, locate artifacts |
 | `docs/development.md` | Contributor workflow, module ownership, build variants, quality checks |
-| `docs/data-contracts.md` | Recipe, coefficient, result, sweep, reference data ownership |
+| `docs/data-contracts.md` | Recipe, coefficient, result, sweep, measured-shot, CFD3D, reference data ownership |
 | `docs/model.md` | Every equation, coefficient, and guardrail |
 | `docs/architecture.md` | Component boundaries and the dependency rule |
 | `docs/api.md` | REST endpoints and the error contract |
@@ -268,7 +281,7 @@ reproducibility, not correctness.
 | `docs/testing.md` | What each test layer is for |
 | `docs/roadmap.md` | Status against the four-week plan, and what's not done |
 | `docs/current-state-and-gaps.md` | Evidence-based implementation status and open gaps |
-| `schemas/` | JSON Schema for recipes, coefficients, results |
+| `schemas/` | JSON Schema for recipes, coefficients, shot results, CFD3D cases/results |
 
 ## Requirements
 

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { ApiFailure, api, type HealthResponse } from "./api/client";
 import type { Recipe, ReferenceCatalogue, ShotResult } from "./api/types";
-import { CalibrationNotice } from "./features/calibration/CalibrationNotice";
+import { MeasuredShotComparison } from "./features/calibration/MeasuredShotComparison";
 import { ComparisonTray } from "./features/comparison/ComparisonTray";
 import { ReferenceShotsPanel } from "./features/references/ReferenceShotsPanel";
 import { ChartStack } from "./features/shot/ChartStack";
@@ -186,10 +186,6 @@ export function App() {
               }
             />
             <DiagnosticsDrawer result={active} />
-            <CalibrationNotice
-              coefficientId={active.manifest.coefficient_id}
-              coefficientVersion={active.manifest.coefficient_version}
-            />
           </>
         ) : (
           <p className="note" style={{ maxWidth: 620 }}>
@@ -198,6 +194,8 @@ export function App() {
             no calculations of its own.
           </p>
         )}
+
+        <MeasuredShotComparison />
 
         <ReferenceShotsPanel
           catalogue={referenceCatalogue}

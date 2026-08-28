@@ -16,6 +16,8 @@ versioning of every request and response document, see
 | GET | `/api/v1/health` | Build, schema and solver versions, plus the sweepable parameter list |
 | GET | `/api/v1/recipes` | The recipes in `assets/recipes/`, sorted by id |
 | GET | `/api/v1/reference-shots` | Read-only published shot metadata, separate from calibration |
+| GET | `/api/v1/measured-shots` | Model-ready stored measured-shot catalogue |
+| GET | `/api/v1/measured-shots/{id}/compare` | Run one simulation and compare it with stored telemetry |
 | POST | `/api/v1/shots` | Validate and execute one simulation |
 | GET | `/api/v1/shots/{id}` | Read a completed summary and its samples |
 | POST | `/api/v1/cfd3d/runs` | Start an explicit Cartesian 3D CFD run (202) |
@@ -86,7 +88,13 @@ Valid fields are `pressure_pa`, `saturation`, `temperature_k`,
 Snapshot values are float64 JSON numbers in x-fastest, then y, then z order.
 The server retains the four most recent 3D jobs in memory and does not persist
 them across restart. Snapshot retrieval returns `409 RUN_NOT_FINISHED` until
-the run completes.
+the run completes. At most two 3D jobs run concurrently; a third start request
+returns `429 TOO_MANY_ACTIVE_RUNS` and creates no job.
+
+Validation performed by the worker after a request has received `202` is an
+asynchronous failure, not a later HTTP 4xx. Polling then returns `status:
+"failed"` with `error.code`, `error.message`, and `error.path` when the native
+validation issue has a path. Unexpected worker failures use `CFD3D_FAILED`.
 
 ## Listing Recipes
 
@@ -115,6 +123,53 @@ structured `REFERENCE_CATALOG_NOT_FOUND`, `REFERENCE_MANIFEST_NOT_FOUND`, or
 `REFERENCE_MANIFEST_INVALID` error. An individual malformed record is reported
 in `load_errors` while valid records remain available.
 
+## Comparing a measured shot
+
+`GET /api/v1/measured-shots` reads model-ready JSON files from
+`assets/measured_shots/`. Its top-level fields are `schema_version`,
+`measured_shots`, and `count`. Each sorted summary reports `id`, `source_stem`,
+`machine`, `date`, `notes`, `synthetic`, and a `final` object whose optional
+mass/time/TDS values remain null when unavailable. A malformed file fails the
+whole model-ready catalogue with `500 MEASURED_SHOT_LOAD_FAILED`; it is not
+silently omitted. This catalogue is distinct from `/reference-shots`, whose
+records are contextual published metadata.
+
+Start a comparison with:
+
+```bash
+curl -s 'localhost:8734/api/v1/measured-shots/synthetic-shot-974f007b8430/compare?coefficients=default-v1'
+```
+
+`coefficients` is an approved asset selector and currently defaults to `default-v1`.
+The selector resolves `assets/coefficients/default-v1.json`; that document's
+actual coefficient identity is `id: "default"`, `version: "1.0.0"`. They are
+not interchangeable identifiers.
+
+The response contains:
+
+| Field | Meaning |
+| --- | --- |
+| Shot metadata | `id`, `source_stem`, machine/date/notes, and the stored `synthetic` flag |
+| `coefficients` | Requested selector plus loaded coefficient `id`, `version`, and hash |
+| `simulation` | Termination, solver version, and reproducible result hash |
+| `final` | Nullable measured and numeric simulated terminal mass/time/TDS values |
+| `loss` | Complete native `LossBreakdown`, including `regularization` and `has_*_measurement` flags |
+| `loss_weights` | The fixed weights used for this direct comparison |
+| `paired_series` | Measured sample times with measured/simulated mass and measured-minus-simulated residuals |
+
+The endpoint executes the stored recipe once and computes residuals from that
+result. It does not call the fitter, mutate coefficients, or write calibration
+artifacts. Missing optional measurements are marked by the corresponding
+`has_*_measurement` field and are not interpreted as zero. The checked-in
+measured-shot assets are synthetic, so their comparisons exercise the workflow
+without validating the espresso model.
+
+An unsupported selector or unknown measured-shot id uses the normal 404
+contract. A missing or malformed measured-shot,
+referenced recipe, or coefficient file under the server's configured asset root
+is a server-owned stored-asset failure and returns 500 rather than blaming the
+request that selected it.
+
 ## Running a sweep
 
 ```bash
@@ -135,7 +190,8 @@ the sweep runs on a worker thread. Poll `GET /api/v1/sweeps/{id}` for progress:
 
 `status` is `queued`, `running`, `complete`, `cancelled` or `failed`. The `axes`
 and `runs` arrays appear once the sweep reaches `complete` or `cancelled`; a
-`failed` sweep carries an `error` object instead.
+`failed` sweep carries an asynchronous `error` object with `code` and `message`
+instead. As with CFD3D, the original `202` only means that the job was accepted.
 
 `POST /api/v1/sweeps/{id}/cancel` stops a running sweep and **keeps every run it
 already finished** — the partial result is a normal sweep result, exportable as
@@ -171,7 +227,8 @@ Every failure answers with the shape from section 12.2:
 | 409 | Artifact requested for a sweep that has not finished |
 | 413 | Sweep larger than the 20000-run limit |
 | 422 | Well-formed but nonphysical or out-of-range input |
-| 500 | Unhandled server error (should not happen; report it) |
+| 429 | Two CFD3D jobs are already active; retry after one finishes |
+| 500 | Configured stored asset is missing/malformed, or an unhandled server error occurs |
 
 Codes are stable and safe to switch on: `MALFORMED_JSON`, `MISSING_FIELD`,
 `UNSUPPORTED_SCHEMA_VERSION`, `MALFORMED_PROFILE_POINT`, `EMPTY_PROFILE`,
@@ -180,7 +237,10 @@ Codes are stable and safe to switch on: `MALFORMED_JSON`, `MISSING_FIELD`,
 `SWEEP_NOT_FOUND`, `ARTIFACT_NOT_FOUND`, `SWEEP_NOT_FINISHED`, `RUN_NOT_FINISHED`,
 `SNAPSHOT_NOT_FOUND`, `UNKNOWN_FIELD`, `EMPTY_SWEEP`,
 `EMPTY_SWEEP_AXIS`, `DUPLICATE_SWEEP_AXIS`, `REFERENCE_CATALOG_NOT_FOUND`,
-`REFERENCE_MANIFEST_NOT_FOUND`, and `REFERENCE_MANIFEST_INVALID`.
+`REFERENCE_MANIFEST_NOT_FOUND`, `REFERENCE_MANIFEST_INVALID`,
+`TOO_MANY_ACTIVE_RUNS`, and the measured-shot catalogue/comparison codes.
+Stored-asset 500 responses and asynchronous job `error` objects use the same
+error vocabulary but do not imply malformed client input.
 
 ## Warnings are not errors
 

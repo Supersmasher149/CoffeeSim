@@ -13,6 +13,7 @@ add_executable(espressolab_tests
   unit/test_artifacts.cpp
   unit/test_reference_io.cpp
   unit/test_calibration.cpp
+  unit/test_calibration_io.cpp
   unit/test_cli_workflows.cpp
   unit/test_tui_forms.cpp
   integration/test_shots.cpp

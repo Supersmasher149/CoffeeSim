@@ -15,6 +15,7 @@ The C++ loaders and serializers are the executable contract:
 | Simulation result | `ShotResult` in `result.hpp` | `artifact_io::dump_result_json` | REST response, summary, manifest, and samples CSV |
 | 3D CFD case/result | `Cfd3dCase` and `Cfd3dResult` in `cfd3d_artifact_io.hpp` | `cfd3d_artifact_io` | 3D REST status/snapshots, JSON case, summary, manifest, samples CSV, and `ELF3D-1` fields |
 | Sweep | `SweepSpec` and `SweepResult` in `experiment.hpp` | `artifact_io_sweep` and the server | Sweep JSON, JSONL runs, aggregate CSV, and REST status |
+| Measured shot/comparison | `calibration::MeasuredShot`, `MeasuredSample`, and `LossBreakdown` in `calibration.hpp` | `calibration::io` plus server comparison translation | Stored measured-shot JSON, catalogue summaries, and one-simulation comparison responses |
 | Reference catalogue | `reference_io::Catalogue` | `reference_io::load_directory` | `GET /api/v1/reference-shots` response |
 
 `schemas/` documents the intended JSON exchange formats and is useful to tools
@@ -71,6 +72,11 @@ engineering baseline but are not evidence that the model predicts real shots.
 Calibration output must retain its data provenance and limitations. See
 [calibration.md](calibration.md).
 
+Asset selectors are routing names, not coefficient identity. In particular,
+`default-v1` selects `assets/coefficients/default-v1.json`, whose serialized
+coefficient identity is `id: "default"`, `version: "1.0.0"`. Responses expose
+the loaded identity and hash rather than rewriting them to the selector.
+
 ## Results and Artifacts
 
 `ShotResult` is emitted as a JSON result for the REST API. File-oriented CLI
@@ -124,6 +130,23 @@ File-oriented 3D runs additionally write:
 The 3D case/result schemas and field format are versioned independently from
 the standard shot result. `ELF3D-1` is little-endian, uncompressed, and has no
 implicit browser-side calculations.
+
+## Measured Shots
+
+A measured-shot document owns the recorded recipe, ordered time/mass series,
+optional pressure samples, optional final mass/time/TDS, setup metadata, and the
+`synthetic` evidence flag. `calibration::io` is the executable loader. The
+catalogue is model-ready input and is distinct from the published reference
+catalogue, whose incomplete telemetry cannot satisfy this contract.
+
+A comparison response combines measured-shot metadata and final observations,
+simulation identity, coefficient selector plus loaded id/version/hash, and a
+complete `LossBreakdown`, plus a mass-only `paired_series` evaluated at measured
+sample times. It is
+an evaluation artifact, not calibration output: no coefficient is optimized and
+no fit provenance is created. Missing optional measurements are represented by
+availability flags and nullable final values; they do not become zero-valued
+observations. Paired residuals use `measured - simulated` sign convention.
 
 ## Sweeps and References
 

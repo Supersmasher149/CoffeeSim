@@ -10,21 +10,24 @@ validated against real espresso shots.
 The engineering MVP is substantially complete. The deterministic C++20 core,
 CLI, REST server, React/TypeScript dashboard, artifacts, sweeps, calibration
 machinery, and documentation are implemented. The remaining release work is
-real-world validation and portfolio packaging, plus CI that proves a clean
-cross-platform build.
+real-world validation and portfolio packaging, plus hosted CI evidence for the
+latest hardening commits.
 
 | Week | Focus from the guide | Status | Evidence |
 | --- | --- | --- | --- |
 | 1 | Skeleton, domain types, profiles, units, water properties, flow-only CLI | Complete | Core/model targets, unit tests, and CLI are present. |
 | 2 | Thermal state, wetting, extraction, mass balances, artifacts, determinism | Complete | Integration, invariant, convergence, and artifact tests pass. |
 | 3 | Sweep runner, REST server, React controls, synchronized charts, exports | Complete | Server routes, dashboard source, background sweeps, and production web build are present. |
-| 4 | Calibration, edge cases, CI, README, profiling, demo, portfolio packaging | Partial | Calibration tooling, edge-case tests, documentation, benchmark, CLI demo, and a macOS/Linux CI workflow are complete; real calibration, hosted CI evidence, demo video, and measured portfolio claims remain. |
+| 4 | Calibration, edge cases, CI, README, profiling, demo, portfolio packaging | Partial | Calibration and measured-shot comparison tooling, edge-case tests, documentation, benchmark, CLI demo, and hosted macOS/Linux/dashboard evidence at `736cef3` are complete; real calibration, current-head hosted evidence, demo video, and measured portfolio claims remain. |
 
 ## Verified Locally
 
-- `./scripts/test.sh` passes: 148 test cases and 18,116 assertions.
-- `npm run build` succeeds for the dashboard. Vite reports a non-blocking
-  559 kB JavaScript chunk-size warning.
+- `./scripts/test.sh` passes: 165 Catch2 test cases and 18,213 assertions.
+- `npm --prefix web run build` succeeds. Vite reports a non-blocking 583.67 kB
+  minified JavaScript chunk-size warning.
+- Hosted GitHub Actions macOS, Linux, and dashboard jobs passed at commit
+  `736cef3`. Current branch hardening through `94fbe7a` has no equivalent hosted
+  run recorded here.
 - `./scripts/demo.sh` completes the documented CLI acceptance path:
   baseline simulation, nine-run grind-size sweep, JSON/CSV artifacts, and an
   identical SHA-256 result hash on rerun.
@@ -47,7 +50,7 @@ cross-platform build.
 | Reproduce the same result hash | Verified locally | The demo reports matching SHA-256 hashes. |
 | Pass conservation and convergence tests | Verified locally | Covered by the passing test suite. |
 | Run and compare shots in the browser | Partially verified | The Vite page, API proxy, shot flow, completed sweep, cancellation, and exports pass; literal browser interactions, including profile editing and pinned comparison overlays, remain unverified. |
-| Clean-clone macOS and Linux verification | CI configured; hosted runs outstanding | GitHub Actions runs the native suite, dashboard build, and CLI demo on both platforms; this local review cannot confirm the first hosted run. |
+| Clean-clone macOS and Linux verification | Verified at `736cef3`; current head pending | Hosted macOS, Linux, and dashboard jobs passed at `736cef3`; do not extend that evidence to hardening through `94fbe7a` until another run passes. |
 
 ## Completed Week 4 Tooling
 
@@ -59,6 +62,13 @@ cross-platform build.
 - **Synthetic calibration workflow.** `espressolab_cli synthesize` produces
   explicitly flagged synthetic measurement files so the fitting path can be
   exercised without making a scientific claim.
+- **Measured-shot comparison.** The local API and dashboard catalogue
+  model-ready measured shots and compare a selected shot with one native
+  simulation. The response preserves coefficient identity and reports residuals;
+  it does not fit coefficients. Current fixtures are synthetic.
+- **Explicit CFD3D workflow.** `espressolab_cli cfd3d`, independent case/result
+  schemas, `ELF3D-1` artifacts, and asynchronous REST status/snapshot routes are
+  implemented separately from standard shot artifacts.
 - **Experiment tooling.** The dashboard provides two-dimensional heat maps,
   background sweep jobs with progress and cancellation, and draggable pressure
   and temperature profiles backed by numeric point lists.
@@ -73,26 +83,24 @@ cross-platform build.
   recovery tests validate the fitter, not the espresso model. The CLI now
   supports leave-one-shot-out validation for three or more fixed-setup shots;
   supplying and running those real measurements is the highest-value next step.
-- **Confirm hosted CI runs.** The committed macOS/Linux GitHub Actions workflow builds
-  the native targets, runs `./scripts/test.sh`, builds the dashboard, and runs
-  `./scripts/demo.sh` from a fresh checkout. Confirm the first hosted runs pass
-  after this change is pushed.
+- **Confirm current-head hosted CI.** The committed workflow passed on macOS,
+  Linux, and the dashboard at `736cef3`. Run it again for hardening through
+  `94fbe7a`; the older result is not evidence for those later commits.
 - **Run a browser interaction check.** The served page and API workflow are
   verified. Use a controllable browser to edit a recipe and profile, pin runs for
   comparison, inspect synchronized charts, and confirm downloads from the UI.
 - **Finish portfolio packaging.** Record the demo video and write resume bullets
   from the verified benchmark and, after calibration, measured validation data.
-- **Calibration dashboard view.** The CLI workflow is complete. A dashboard
-  workflow remains deferred because it has no real data to drive it and was
-  explicitly low priority in the guide's scope-cut order.
+- **Calibration dashboard view.** The dashboard now compares measured telemetry
+  against fixed coefficients, but fitting remains a CLI workflow. Do not call
+  comparison calibration.
 
 ## Scope-Cut Order
 
 The guide's scope cuts have mostly been restored: two-dimensional sweeps,
 graphical profile editing, and background sweep jobs are implemented. The only
-deferred feature from that list is the calibration dashboard view. Never cut
-deterministic artifacts, tests, warnings, or the uniform-puck flow/extraction
-core.
+deferred feature from that list is browser-based coefficient fitting. Never cut
+deterministic artifacts, tests, warnings, or the Level 1-3 flow/extraction core.
 
 ## Fidelity Level 2
 
@@ -128,10 +136,11 @@ at sixteen, with the gap between successive doublings roughly halving.
 
 ## Fidelity Level 4: the CFD solver
 
-Implemented as a separate solver, `CfdSolver`, reached through
-`espressolab_cli cfd`. It is deliberately not wired into the default pipeline:
-the Level 1-3 core, the REST server, the dashboard, the artifacts and the result
-hashes are untouched by it.
+Implemented as separate `CfdSolver` and `Cfd3dSolver` paths, reached through
+`espressolab_cli cfd` and `espressolab_cli cfd3d`. Neither is wired into the
+default Level 1-3 shot pipeline or its hashes. CFD3D has separate case/result
+schemas, file artifacts, and asynchronous REST status/snapshot routes; the 2D
+solver remains CLI-only.
 
 It solves `div(lambda_t grad p) = 0` on a 2D axisymmetric (r, z) finite-volume
 mesh by red-black SOR, then advances water saturation by IMPES fractional flow

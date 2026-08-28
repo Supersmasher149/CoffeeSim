@@ -68,6 +68,56 @@ TEST_CASE("a perfect match scores zero loss", "[calibration]") {
     REQUIRE(loss.total < 1.0e-9);
 }
 
+TEST_CASE("an existing result produces authoritative paired residuals without rerunning",
+          "[calibration]") {
+    const Recipe recipe = testing::baseline_recipe();
+    const ModelCoefficients coefficients = testing::baseline_coefficients();
+    const ShotResult result = Simulator().run(recipe, coefficients);
+
+    MeasuredShot shot;
+    shot.id = "paired";
+    shot.recipe = recipe;
+    const ShotSample& first = result.samples.front();
+    const ShotSample& middle = result.samples[result.samples.size() / 2];
+    shot.series = {
+        {first.time_s, units::kg_to_grams(first.beverage_mass_kg) + 0.25, {}},
+        {middle.time_s, units::kg_to_grams(middle.beverage_mass_kg), 9.0},
+    };
+    shot.final_shot_time_s = result.summary.elapsed_time_s;
+    shot.final_tds_percent = result.summary.tds_fraction * 100.0;
+
+    const ShotResultComparison comparison = compare_shot_result(shot, result, LossWeights{});
+    REQUIRE(comparison.paired_series.size() == shot.series.size());
+    REQUIRE(comparison.paired_series.front().residual_g == Catch::Approx(0.25));
+    REQUIRE(comparison.loss.mass_rmse_g == Catch::Approx(std::sqrt(0.25 * 0.25 / 2.0)));
+    REQUIRE(comparison.loss.has_time_measurement);
+    REQUIRE(comparison.loss.has_tds_measurement);
+    REQUIRE(comparison.loss.has_pressure_measurement);
+
+    shot.series.front().beverage_mass_g += 1.0;
+    const ShotResultComparison second = compare_shot_result(shot, result, LossWeights{});
+    REQUIRE(second.paired_series.front().residual_g == Catch::Approx(1.25));
+}
+
+TEST_CASE("result comparison preserves final-only and optional measurement behavior",
+          "[calibration]") {
+    const Recipe recipe = testing::baseline_recipe();
+    const ShotResult result = Simulator().run(recipe, testing::baseline_coefficients());
+
+    MeasuredShot shot;
+    shot.id = "final-only";
+    shot.recipe = recipe;
+    shot.final_beverage_mass_g = units::kg_to_grams(result.summary.beverage_mass_kg) + 2.0;
+
+    const ShotResultComparison comparison = compare_shot_result(shot, result, LossWeights{});
+    REQUIRE(comparison.paired_series.empty());
+    REQUIRE(comparison.loss.mass_rmse_g == Catch::Approx(2.0));
+    REQUIRE_FALSE(comparison.loss.has_time_measurement);
+    REQUIRE_FALSE(comparison.loss.has_tds_measurement);
+    REQUIRE_FALSE(comparison.loss.has_pressure_measurement);
+    REQUIRE(comparison.loss.total == Catch::Approx(2.0));
+}
+
 TEST_CASE("loss grows as coefficients move away from the truth", "[calibration]") {
     const ModelCoefficients truth = testing::baseline_coefficients();
     const MeasuredShot shot = synthesize(testing::baseline_recipe(), truth, "reference");

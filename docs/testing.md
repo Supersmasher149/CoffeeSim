@@ -1,19 +1,25 @@
 # Testing strategy
 
 ```bash
-./scripts/test.sh                  # build Release and run everything
+./scripts/test.sh                  # build Release and run the Catch2 binary
 ./build/tests/espressolab_tests "[flow]"   # one tag
 ./build/tests/espressolab_tests --list-tests
 ```
 
-Tags: `[units]` `[profile]` `[water]` `[permeability]` `[flow]` `[heat]`
+Tags: `[unit]` `[units]` `[profile]` `[water]` `[permeability]` `[flow]` `[heat]`
 `[extraction]` `[artifacts]` `[integration]` `[invariants]` `[convergence]`
 `[sweep]` `[calibration]` `[recovery]` `[property]` `[performance]` `[regions]`
-`[axial]` `[cfd]` `[verification]` `[cancellation]` `[tui]` `[cli_workflows]`.
+`[axial]` `[cfd]` `[cfd3d]` `[verification]` `[references]` `[progress]`
+`[cancellation]` `[tui]` `[cli_workflows]`.
 
 ```bash
 python3 tests/pty/tui_smoke.py    # separate POSIX PTY smoke matrix for the TUI
 ```
+
+`./scripts/test.sh` does not run the PTY script, dashboard checks, demo, or
+warnings-as-errors build. The current Catch2 run passes 165 test cases and
+18,213 assertions. The PTY script currently defines 14 checks, but it was not
+rerun for this documentation refresh.
 
 ## What each layer is for
 
@@ -92,6 +98,13 @@ and synthetic, mixed-machine, or incomplete datasets are refused before they
 can be described as real-world validation. The tests use model-generated inputs
 as fixtures and explicitly avoid treating them as real calibration evidence.
 
+**Measured-shot comparison tests** cover strict stored-asset loading, selector
+resolution, response metadata, optional measurement flags, and residuals. The
+result-based comparison API cannot invoke the simulator, so the server runs once
+and passes that result to the same native scoring operation used by calibration.
+Synthetic fixtures test plumbing only and remain labelled synthetic in every
+response. `tests/server/measured_shots_smoke.py` covers the real HTTP routes.
+
 **Cancellation tests** call `Simulator::run`, `CfdSolver::run`, `Cfd3dSolver::run`,
 `calibration::fit`, and `calibration::evaluate_shot_loss` with a callback that
 always reports "cancelled" and require `ExecutionCancelled` rather than a
@@ -125,7 +138,8 @@ for reproducibility, not for correctness.
 
 `./scripts/demo.sh` is the local acceptance workflow: from a clean clone, run
 the baseline recipe, complete a grind-size sweep, export JSON and CSV, and rerun
-the same inputs to the same result hash. It is the intended native CI gate for
-Linux and macOS, but hosted CI evidence should not be claimed until observed
-runs are recorded. See [current-state-and-gaps.md](current-state-and-gaps.md)
-for the evidence status.
+the same inputs to the same result hash. GitHub Actions macOS, Linux, and
+dashboard jobs passed at commit `736cef3`. Later hardening on the current branch
+through `94fbe7a` has no equivalent hosted run recorded here, so do not extend
+that hosted evidence to the current branch. See
+[current-state-and-gaps.md](current-state-and-gaps.md) for the evidence status.

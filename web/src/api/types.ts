@@ -183,6 +183,81 @@ export interface ReferenceCatalogue {
   load_errors: ReferenceLoadError[];
 }
 
+export interface MeasuredShotFinal {
+  beverage_mass_g: number | null;
+  shot_time_s: number | null;
+  tds_percent: number | null;
+}
+
+export interface MeasuredShotSummary {
+  id: string;
+  source_stem: string;
+  machine: string;
+  date: string;
+  notes: string;
+  synthetic: boolean;
+  final: MeasuredShotFinal;
+}
+
+export interface MeasuredShotCatalogue {
+  schema_version: "1.0";
+  measured_shots: MeasuredShotSummary[];
+  count: number;
+}
+
+export interface PairedMassSample {
+  time_s: number;
+  measured_mass_g: number;
+  simulated_mass_g: number;
+  residual_g: number;
+}
+
+export interface MeasuredShotLoss {
+  mass_rmse_g: number;
+  time_error_s: number;
+  tds_error_percent: number;
+  pressure_rmse_bar: number;
+  regularization: number;
+  total: number;
+  simulated: boolean;
+  has_time_measurement: boolean;
+  has_tds_measurement: boolean;
+  has_pressure_measurement: boolean;
+}
+
+export interface CoefficientProvenance {
+  selector: string;
+  id: string;
+  version: string;
+  hash: string;
+}
+
+export interface MeasuredShotComparison extends Omit<MeasuredShotSummary, "final"> {
+  schema_version: "1.0";
+  coefficients: CoefficientProvenance;
+  simulation: {
+    termination: string;
+    solver_version: string;
+    result_hash: string;
+  };
+  paired_series: PairedMassSample[];
+  final: {
+    measured: MeasuredShotFinal;
+    simulated: {
+      beverage_mass_g: number;
+      shot_time_s: number;
+      tds_percent: number;
+    };
+  };
+  loss: MeasuredShotLoss;
+  loss_weights: {
+    mass: number;
+    time: number;
+    tds: number;
+    regularization: number;
+  };
+}
+
 export interface SweepRunRow {
   index: number;
   coordinates: number[];

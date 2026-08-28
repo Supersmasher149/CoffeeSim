@@ -8,6 +8,20 @@ changes, treat every output as a model result, not a prediction.
 Calibration is deliberately a separate, explicit workflow (section 11.3). It is
 not something the solver does on its own, and it is never driven by taste notes.
 
+## Comparing without fitting
+
+The dashboard and local API can compare a stored measured shot with one native
+simulation. `GET /api/v1/measured-shots` lists model-ready files and
+`GET /api/v1/measured-shots/{id}/compare?coefficients=default-v1` runs the stored recipe with the
+selected coefficient set, returning the simulation and mass/time/TDS/pressure
+residual metrics where measurements exist. This path does not invoke
+`calibration::fit`, alter coefficients, or write a fitted coefficient file.
+
+The request selector `default-v1` names the asset
+`assets/coefficients/default-v1.json`; it is not coefficient provenance. The
+loaded document reports coefficient `id` `default` and version `1.0.0`, and the
+comparison response preserves those values and its coefficient hash.
+
 ## Running a fit
 
 ```bash
@@ -129,6 +143,7 @@ never writes the requested coefficient file.
 ## What a good fit does not license
 
 A calibrated model predicts flow and mass better. It still does not predict
-flavour, and it still assumes a uniform puck — a shot that channels in reality
-will not be explained by fitting coefficients harder. The honest next modelling
-step is parallel flow regions (fidelity level 2), not more tuning.
+flavour or establish that fixed parallel regions or axial cells reproduce a
+real puck. A shot that channels dynamically will not be explained by fitting
+coefficients harder. Use held-out measurements to assess the chosen model
+fidelity rather than treating extra parameters as validation.

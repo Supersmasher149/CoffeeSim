@@ -5,6 +5,8 @@ import type {
   Cfd3dRunAccepted,
   Cfd3dRunRequest,
   Cfd3dRunStatus,
+  MeasuredShotCatalogue,
+  MeasuredShotComparison,
   Recipe,
   ReferenceCatalogue,
   ShotResult,
@@ -65,6 +67,20 @@ export const api = {
   recipes: () => request<{ recipes: { id: string; name: string; recipe: Recipe }[] }>("/recipes"),
 
   referenceShots: () => request<ReferenceCatalogue>("/reference-shots"),
+
+  measuredShots: (signal?: AbortSignal) =>
+    request<MeasuredShotCatalogue>("/measured-shots", { signal }),
+
+  compareMeasuredShot: (
+    identifier: string,
+    coefficientSelector: string,
+    signal?: AbortSignal,
+  ) =>
+    request<MeasuredShotComparison>(
+      `/measured-shots/${encodeURIComponent(identifier)}/compare` +
+        `?coefficients=${encodeURIComponent(coefficientSelector)}`,
+      { signal },
+    ),
 
   simulate: (recipe: Recipe) =>
     request<ShotResult>("/shots", { method: "POST", body: JSON.stringify({ recipe }) }),

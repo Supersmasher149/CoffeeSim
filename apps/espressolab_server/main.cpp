@@ -20,6 +20,7 @@
 #include <nlohmann/json.hpp>
 
 #include "espressolab/artifact_io.hpp"
+#include "espressolab/calibration.hpp"
 #include "espressolab/cfd3d.hpp"
 #include "espressolab/cfd3d_artifact_io.hpp"
 #include "espressolab/experiment.hpp"
@@ -48,6 +49,81 @@ void send_error(httplib::Response& response, int status, const std::string& code
     response.status = status;
     response.set_content(error_body(code, message, path, std::move(details)).dump(2),
                          "application/json");
+}
+
+json optional_number(const std::optional<double>& value) {
+    return value.has_value() ? json(*value) : json(nullptr);
+}
+
+json measured_shot_final(const calibration::MeasuredShot& shot) {
+    return {{"beverage_mass_g", optional_number(shot.final_beverage_mass_g)},
+            {"shot_time_s", optional_number(shot.final_shot_time_s)},
+            {"tds_percent", optional_number(shot.final_tds_percent)}};
+}
+
+json measured_shot_summary(const calibration::MeasuredShot& shot) {
+    return {{"id", shot.id},
+            {"source_stem", shot.source_stem},
+            {"machine", shot.machine},
+            {"date", shot.date},
+            {"notes", shot.notes},
+            {"synthetic", shot.synthetic},
+            {"final", measured_shot_final(shot)}};
+}
+
+json loss_json(const calibration::LossBreakdown& loss) {
+    return {{"mass_rmse_g", loss.mass_rmse_g},
+            {"time_error_s", loss.time_error_s},
+            {"tds_error_percent", loss.tds_error_percent},
+            {"pressure_rmse_bar", loss.pressure_rmse_bar},
+            {"regularization", loss.regularization},
+            {"total", loss.total},
+            {"simulated", loss.simulated},
+            {"has_time_measurement", loss.has_time_measurement},
+            {"has_tds_measurement", loss.has_tds_measurement},
+            {"has_pressure_measurement", loss.has_pressure_measurement}};
+}
+
+struct MeasuredShotCatalogue {
+    std::vector<calibration::MeasuredShot> shots;
+    std::unordered_map<std::string, std::size_t> aliases;
+};
+
+MeasuredShotCatalogue load_measured_shot_catalogue(const std::filesystem::path& directory) {
+    MeasuredShotCatalogue catalogue;
+    catalogue.shots = calibration::io::load_measured_shot_directory(directory);
+    std::sort(catalogue.shots.begin(), catalogue.shots.end(),
+              [](const calibration::MeasuredShot& left,
+                 const calibration::MeasuredShot& right) { return left.id < right.id; });
+
+    for (std::size_t i = 0; i < catalogue.shots.size(); ++i) {
+        const calibration::MeasuredShot& shot = catalogue.shots[i];
+        const ValidationResult validation = shot.validate();
+        if (!validation.ok()) throw InvalidInputError(validation);
+        if (shot.id.empty() || shot.source_stem.empty()) {
+            throw artifact_io::LoadError("MISSING_SHOT_IDENTIFIER", directory.string(),
+                                         "each measured shot needs a nonempty id and filename stem");
+        }
+        for (const std::string* alias : {&shot.id, &shot.source_stem}) {
+            const auto [existing, inserted] = catalogue.aliases.emplace(*alias, i);
+            if (!inserted && existing->second != i) {
+                throw artifact_io::LoadError(
+                    "DUPLICATE_SHOT_IDENTIFIER", directory.string(),
+                    "measured-shot id and filename aliases must be unique; duplicate '" +
+                        *alias + "'");
+            }
+        }
+    }
+    return catalogue;
+}
+
+json validation_details(const InvalidInputError& error) {
+    json issues = json::array();
+    for (const ValidationIssue& issue : error.validation().issues()) {
+        issues.push_back(
+            {{"code", issue.code}, {"message", issue.message}, {"path", issue.path}});
+    }
+    return {{"issues", std::move(issues)}};
 }
 
 // Completed runs are a small, session-local cache rather than a database.
@@ -720,6 +796,139 @@ int main(int argc, char** argv) {
                    } catch (const reference_io::LoadError& e) {
                        send_error(response, 500, e.code, e.what(), e.path);
                    }
+               });
+
+    server.Get("/api/v1/measured-shots",
+               [&](const httplib::Request&, httplib::Response& response) {
+                   try {
+                       const MeasuredShotCatalogue catalogue =
+                           load_measured_shot_catalogue(assets / "measured_shots");
+                       json shots = json::array();
+                       for (const calibration::MeasuredShot& shot : catalogue.shots) {
+                           shots.push_back(measured_shot_summary(shot));
+                       }
+                       response.set_content(
+                           json{{"schema_version", "1.0"},
+                                {"measured_shots", shots},
+                                {"count", shots.size()}}
+                               .dump(2),
+                           "application/json");
+                   } catch (const artifact_io::LoadError& e) {
+                       send_error(response, 500, "MEASURED_SHOT_LOAD_FAILED", e.what(), e.path,
+                                  {{"load_code", e.code}});
+                   } catch (const InvalidInputError& e) {
+                       send_error(response, 500, "MEASURED_SHOT_LOAD_FAILED", e.what(),
+                                  "measured_shots", validation_details(e));
+                   }
+               });
+
+    server.Get(R"(/api/v1/measured-shots/([^/]+)/compare)",
+               [&](const httplib::Request& request, httplib::Response& response) {
+                   MeasuredShotCatalogue catalogue;
+                   try {
+                       catalogue = load_measured_shot_catalogue(assets / "measured_shots");
+                   } catch (const artifact_io::LoadError& e) {
+                       send_error(response, 500, "MEASURED_SHOT_LOAD_FAILED", e.what(), e.path,
+                                  {{"load_code", e.code}});
+                       return;
+                   } catch (const InvalidInputError& e) {
+                       send_error(response, 500, "MEASURED_SHOT_LOAD_FAILED", e.what(),
+                                  "measured_shots", validation_details(e));
+                       return;
+                   }
+
+                   const std::string identifier = request.matches[1];
+                   const auto shot_entry = catalogue.aliases.find(identifier);
+                   if (shot_entry == catalogue.aliases.end()) {
+                       send_error(response, 404, "MEASURED_SHOT_NOT_FOUND",
+                                  "no measured shot with id or source stem '" + identifier + "'",
+                                  "measured_shots.id");
+                       return;
+                   }
+                   const calibration::MeasuredShot& shot = catalogue.shots[shot_entry->second];
+
+                   const std::string coefficient_selector =
+                       request.has_param("coefficients")
+                           ? request.get_param_value("coefficients")
+                           : "default-v1";
+                   if (coefficient_selector != "default-v1") {
+                       send_error(response, 404, "COEFFICIENTS_NOT_FOUND",
+                                  "unknown approved coefficient set '" + coefficient_selector +
+                                      "'",
+                                  "coefficients");
+                       return;
+                   }
+
+                   ModelCoefficients coefficients;
+                   try {
+                       coefficients = artifact_io::load_coefficients_file(
+                           assets / "coefficients" / "default-v1.json");
+                   } catch (const artifact_io::LoadError& e) {
+                       send_error(response, 500, "COEFFICIENTS_LOAD_FAILED", e.what(), e.path,
+                                  {{"load_code", e.code}});
+                       return;
+                   }
+
+                   const SimulationConfig config;
+                   const calibration::LossWeights weights;
+                   ShotResult result;
+                   try {
+                       result = Simulator().run(shot.recipe, coefficients, config);
+                   } catch (const InvalidInputError& e) {
+                       send_error(response, 500, "COMPARISON_INPUT_INVALID", e.what(),
+                                  "measured_shots", validation_details(e));
+                       return;
+                   }
+                   if (result.summary.termination == TerminationReason::numerical_failure ||
+                       result.summary.termination == TerminationReason::invalid_state ||
+                       result.summary.termination == TerminationReason::not_terminated) {
+                       send_error(response, 500, "COMPARISON_SIMULATION_FAILED",
+                                  "measured-shot simulation ended with " +
+                                      std::string(to_string(result.summary.termination)),
+                                  "simulation.termination");
+                       return;
+                   }
+                   artifact_io::stamp_manifest(result, shot.recipe, coefficients, config);
+
+                   calibration::ShotResultComparison comparison;
+                   try {
+                       comparison = calibration::compare_shot_result(shot, result, weights);
+                   } catch (const InvalidInputError& e) {
+                       send_error(response, 500, "COMPARISON_INPUT_INVALID", e.what(),
+                                  "measured_shots", validation_details(e));
+                       return;
+                   }
+
+                   json pairs = json::array();
+                   for (const calibration::PairedMassSample& pair : comparison.paired_series) {
+                       pairs.push_back({{"time_s", pair.time_s},
+                                        {"measured_mass_g", pair.measured_mass_g},
+                                        {"simulated_mass_g", pair.simulated_mass_g},
+                                        {"residual_g", pair.residual_g}});
+                   }
+
+                   json body = measured_shot_summary(shot);
+                   body["schema_version"] = "1.0";
+                   body["coefficients"] = {{"selector", coefficient_selector},
+                                            {"id", coefficients.id},
+                                            {"version", coefficients.version},
+                                            {"hash", result.manifest.coefficient_hash}};
+                   body["paired_series"] = std::move(pairs);
+                   body["final"] = {
+                       {"measured", measured_shot_final(shot)},
+                       {"simulated",
+                        {{"beverage_mass_g", units::kg_to_grams(result.summary.beverage_mass_kg)},
+                         {"shot_time_s", result.summary.elapsed_time_s},
+                         {"tds_percent", result.summary.tds_fraction * 100.0}}}};
+                   body["simulation"] = {{"termination", to_string(result.summary.termination)},
+                                         {"solver_version", result.manifest.solver_version},
+                                         {"result_hash", result.manifest.result_hash}};
+                   body["loss"] = loss_json(comparison.loss);
+                   body["loss_weights"] = {{"mass", weights.mass},
+                                           {"time", weights.time},
+                                           {"tds", weights.tds},
+                                           {"regularization", weights.regularization}};
+                   response.set_content(body.dump(2), "application/json");
                });
 
     server.Get("/api/v1/recipes", [&](const httplib::Request&, httplib::Response& response) {

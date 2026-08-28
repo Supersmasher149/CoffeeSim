@@ -5,7 +5,10 @@ import type {
   Cfd3dRunAccepted,
   Cfd3dRunRequest,
   Cfd3dRunStatus,
+  MeasuredShotCatalogue,
+  MeasuredShotComparison,
   Recipe,
+  RecipeCatalogueEntry,
   ReferenceCatalogue,
   ShotResult,
   SweepAccepted,
@@ -62,9 +65,23 @@ export interface HealthResponse {
 export const api = {
   health: () => request<HealthResponse>("/health"),
 
-  recipes: () => request<{ recipes: { id: string; name: string; recipe: Recipe }[] }>("/recipes"),
+  recipes: () => request<{ recipes: RecipeCatalogueEntry[] }>("/recipes"),
 
   referenceShots: () => request<ReferenceCatalogue>("/reference-shots"),
+
+  measuredShots: (signal?: AbortSignal) =>
+    request<MeasuredShotCatalogue>("/measured-shots", { signal }),
+
+  compareMeasuredShot: (
+    identifier: string,
+    coefficientSelector: string,
+    signal?: AbortSignal,
+  ) =>
+    request<MeasuredShotComparison>(
+      `/measured-shots/${encodeURIComponent(identifier)}/compare` +
+        `?coefficients=${encodeURIComponent(coefficientSelector)}`,
+      { signal },
+    ),
 
   simulate: (recipe: Recipe) =>
     request<ShotResult>("/shots", { method: "POST", body: JSON.stringify({ recipe }) }),

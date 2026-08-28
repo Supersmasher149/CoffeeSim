@@ -1,9 +1,9 @@
-import type { Recipe, ValidationIssue } from "../../api/types";
+import type { Recipe, RecipeCatalogueEntry, ValidationIssue } from "../../api/types";
 import { inputRanges } from "../../state/workspace";
 import { ProfileEditor } from "./ProfileEditor";
 
 interface Props {
-  recipes: { id: string; name: string; recipe: Recipe }[];
+  recipes: RecipeCatalogueEntry[];
   selectedId: string;
   onSelectRecipe: (id: string) => void;
   recipe: Recipe;
@@ -54,11 +54,20 @@ export function ControlRail(props: Props) {
       <div className="section">
         <h2>Recipe</h2>
         <select value={props.selectedId} onChange={(e) => props.onSelectRecipe(e.target.value)}>
-          {props.recipes.map((entry) => (
-            <option key={entry.id} value={entry.id}>
-              {entry.name}
-            </option>
-          ))}
+          {props.recipes.map((entry) =>
+            "recipe" in entry ? (
+              <option key={entry.id} value={entry.id}>
+                {entry.name}
+              </option>
+            ) : (
+              // Audit P4, issue #18: a malformed asset ({id, error}) is shown
+              // so the catalogue explains the gap, but disabled so it can
+              // never be selected and reach onSelectRecipe with no recipe.
+              <option key={entry.id} value={entry.id} disabled>
+                {entry.id} (failed to load: {entry.error.message})
+              </option>
+            ),
+          )}
         </select>
       </div>
 

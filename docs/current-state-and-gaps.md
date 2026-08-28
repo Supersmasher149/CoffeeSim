@@ -1,6 +1,6 @@
 # EspressoLab: Current State and Gaps
 
-**Assessment date:** 2026-08-26
+**Assessment date:** 2026-08-27
 **Scope:** Repository state under `espressolab/`
 **Audience:** Project stakeholders, technical contributors, and portfolio reviewers
 
@@ -9,7 +9,8 @@
 EspressoLab has reached a substantially complete engineering MVP. It is a local
 espresso-simulation workbench with a deterministic C++20 simulation core, CLI,
 local REST server, React/TypeScript dashboard, reproducible JSON and CSV
-artifacts, parameter sweeps, calibration tooling, and a separate 2D CFD solver.
+artifacts, parameter sweeps, measured-shot comparison, calibration tooling, and
+separate 2D axisymmetric and Cartesian 3D CFD solvers.
 
 The project is strong on software structure, reproducible experiments, and
 automated verification of its standard configurations. It is not yet a
@@ -43,14 +44,14 @@ server is local and session-bound.
 | --- | --- | --- |
 | Simulation core | Deterministic C++20 shot solver with pressure and inlet-temperature profiles, wetting, thermal state, extraction, transport, termination, warnings, and mass-balance diagnostics | Implemented and locally tested |
 | Model fidelity | Level 1 lumped puck behavior, Level 2 lateral parallel regions, and Level 3 stacked axial finite-volume cells | Implemented |
-| CFD | Separate 2D axisymmetric finite-volume solver with pressure, saturation, enthalpy, and solute transport | Implemented as a separate CLI entry point; verified, not validated |
+| CFD | Separate 2D axisymmetric and Cartesian 3D finite-volume solvers with pressure, saturation, enthalpy, and solute transport | Implemented as explicit CLI paths; 3D also has asynchronous REST status/snapshot routes; verified, not validated |
 | CLI | `simulate`, `sweep`, `calibrate`, `synthesize`, `cfd`, `cfd3d`, `bench`, `params`, `fit-params`, and `version` commands | Implemented |
-| Terminal UI | `espressolab_cli tui`: guided forms over every CLI command, calling the same shared workflow services (loaders, solvers, calibration, artifact writers) as the file-oriented commands; cooperative cancellation; POSIX-only | Implemented and locally tested (native suite plus a manually-run POSIX PTY smoke matrix); not yet exercised in hosted CI |
-| REST server | Local API for health, recipes, shots, asynchronous sweeps, cancellation, status, and CSV artifacts | Implemented |
-| Dashboard | Recipe controls, draggable pressure and temperature profiles, synchronized charts, comparisons, sweep heat maps, progress/cancellation, exports, diagnostics, and puck cross-section replay | Implemented; some literal browser interactions remain unverified |
-| Artifacts | Versioned recipe, coefficient, summary, manifest, JSON/CSV output, and SHA-256 result hashes | Implemented |
+| Terminal UI | `espressolab_cli tui`: guided forms over every CLI command, calling the same shared workflow services as the file-oriented commands; cooperative cancellation; POSIX-only | Implemented; native logic is locally tested, while the current 14-check PTY script was not rerun for this refresh |
+| REST server | Local API for health, recipes, references, measured-shot catalogue/comparison, shots, asynchronous sweeps and CFD3D jobs, cancellation, status, snapshots, and CSV artifacts | Implemented |
+| Dashboard | Recipe controls, measured-shot comparison, draggable pressure and temperature profiles, synchronized charts, pinned runs, sweep heat maps, progress/cancellation, exports, diagnostics, and puck cross-section replay | Implemented; some literal browser interactions remain unverified |
+| Artifacts | Versioned standard-shot and CFD3D inputs/results, JSON/CSV output, `ELF3D-1` snapshot fields, manifests, and SHA-256 hashes | Implemented |
 | Calibration | Bounded deterministic fitting, held-out validation, leave-one-shot-out workflow, provenance, and synthetic-data workflow | Tooling implemented; real-data evidence absent |
-| Schemas | JSON Schema for recipes, coefficients, and shot results | Present |
+| Schemas | JSON Schema for recipes, coefficients, shot results, and CFD3D cases/results | Present |
 
 ### Architecture
 
@@ -77,9 +78,10 @@ metrics. Level 2 represents fixed lateral permeability differences as parallel
 regions. Level 3 resolves a wetting front and concentration gradient through
 stacked axial cells.
 
-The Level 4 CFD solver adds radial structure and resolves pressure and transport
-on a 2D axisymmetric mesh. It remains intentionally separate from the default
-pipeline, REST API, dashboard, artifacts, and result hashes.
+The Level 4 CFD solvers add spatial structure: 2D axisymmetric `(r,z)` and
+Cartesian 3D `(x,y,z)`. Both remain separate from the default shot pipeline and
+its result hashes. The 2D path is CLI-only; the 3D path has its own CLI,
+artifacts, schemas, asynchronous REST jobs, and snapshot responses.
 
 The model does not claim to resolve pore-scale flow, pump or group-head dynamics,
 crema, degassing, flavor, grinder dial settings, or dynamic channel formation.
@@ -89,9 +91,13 @@ TDS and extraction yield are engineering outputs, not taste predictions.
 
 The repository documents the following local checks:
 
-- `./scripts/test.sh` passes 146 test cases and 18,110 assertions.
-- Native build, dashboard production build, and the CLI demo pass locally,
-  including the `ESPRESSOLAB_WARNINGS_AS_ERRORS` build.
+- `./scripts/test.sh` passes 165 Catch2 test cases and 18,213 assertions. It does
+  not run PTY, dashboard, demo, or warnings-as-errors checks.
+- The dashboard production build succeeds and reports the existing non-blocking
+  583.67 kB minified JavaScript chunk warning.
+- GitHub Actions macOS, Linux, and dashboard jobs passed at commit `736cef3`.
+  Later hardening through current branch commit `94fbe7a` has no equivalent
+  hosted run recorded here.
 - The demo covers a baseline shot, a nine-run grind sweep, JSON/CSV artifacts,
   and repeated-run hash equality.
 - The baseline reaches 36 g in approximately 29.03 seconds with no clamps and
@@ -101,13 +107,12 @@ The repository documents the following local checks:
 - Verification tests cover units, correlations, whole-shot behavior, generated
   inputs, invariants, convergence, sweeps, parallel regions, axial cells, CFD,
   calibration recovery, deterministic leave-one-out mechanics, native
-  cancellation checkpoints, and the TUI's pure (terminal-free) navigation,
-  form, and shared-workflow logic.
-- A separate POSIX PTY smoke matrix (`tests/pty/tui_smoke.py`) was run
-  manually against the built `espressolab_cli` binary and passed 10/10 checks
-  (launch, resize, a representative guided command, Ctrl-C, terminal
-  restoration, and non-TTY rejection). It is not wired into `ctest` or hosted
-  CI.
+  cancellation checkpoints, measured-shot comparison, and the TUI's pure
+  (terminal-free) navigation, form, and shared-workflow logic.
+- A separate POSIX PTY script (`tests/pty/tui_smoke.py`) defines 14 checks for
+  launch, resize, guided execution, long-form scrolling, Ctrl-C, terminal
+  restoration, and non-TTY rejection. It is outside Catch2/`ctest` and was not
+  rerun for this documentation refresh.
 
 These checks establish implementation behavior and numerical consistency. They
 do not establish that the equations or coefficients describe real espresso.
@@ -138,20 +143,19 @@ and output should be presented as a model result rather than a prediction.
 
 | Gap | Impact | Completion signal |
 | --- | --- | --- |
-| Hosted CI evidence has not been confirmed | Clean-clone macOS/Linux claims are not yet backed by observed hosted runs | First hosted workflow runs pass native tests, dashboard build, and demo on both platforms |
-| Warnings-as-errors native build fails | A shadowing diagnostic prevents treating compiler warnings as a release gate | Fix the diagnostic and record a clean `ESPRESSOLAB_WARNINGS_AS_ERRORS=ON` build |
-| CFD input and convergence hardening is incomplete | Non-finite time steps, saturation overshoot, and non-converged pressure solves need explicit rejection before CFD output can be relied upon operationally | Reject invalid controls, fail or adapt unstable steps, and add regression tests |
+| Current-branch hosted CI evidence is absent | Commit `736cef3` passed macOS/Linux/dashboard jobs, but later hardening through `94fbe7a` has only local evidence recorded here | Hosted workflow passes at the current branch head |
 | Full browser interaction pass is outstanding | API and served-page checks pass, but profile editing, pinned comparison overlays, synchronized chart behavior, and UI downloads have not all been exercised literally in a browser | A repeatable browser checklist is run and recorded |
-| Dashboard has a non-blocking 571.82 kB minified JavaScript chunk warning | Does not block the MVP, but indicates a performance/packaging follow-up for a polished release | Chunk is reduced or the warning is explicitly accepted with measured load impact |
+| Dashboard has a non-blocking 583.67 kB minified JavaScript chunk warning | Does not block the MVP, but indicates a performance/packaging follow-up for a polished release | Chunk is reduced or the warning is explicitly accepted with measured load impact |
 | Portfolio packaging is unfinished | The project is not yet represented by a final demo video and evidence-based resume/project claims | Demo recording and portfolio copy use only verified benchmark and validation results |
 
 ### Product and Operational Gaps
 
-- The dashboard has no calibration workflow. The CLI workflow is complete, but a
-  dashboard view was deliberately deferred because no real dataset currently
-  exists to drive it.
-- Runs and sweeps are retained only in process memory. Restarting the server
-  loses them, and older entries are evicted from bounded session-local caches.
+- The dashboard compares measured telemetry with a fixed coefficient set but
+  does not fit coefficients. Calibration remains a CLI workflow; comparison
+  must not be presented as fitting or validation.
+- Shots, sweeps, and CFD3D jobs are retained only in process memory. Restarting
+  the server loses them, and older entries are evicted from bounded
+  session-local caches.
 - The API is local-only and has no authentication, authorization, CORS support,
   cloud deployment, persistence, or multi-user operation. These are out of MVP
   scope, but they are gaps for any hosted or collaborative product.
@@ -187,7 +191,8 @@ project can support:
 2. Run leave-one-out calibration, inspect held-out mass/time/TDS errors, and
    publish a new provenance-bearing coefficient file only if the acceptance gate
    passes.
-3. Confirm the first hosted CI runs and perform the browser interaction check.
+3. Run hosted CI at the current branch head and perform the browser interaction
+   check.
 4. Update the README and portfolio materials with measured claims only; record
    the demo video.
 5. Decide whether the project remains a local engineering workbench or needs

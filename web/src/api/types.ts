@@ -22,6 +22,16 @@ export interface Recipe {
   // field is carried through an edit untouched so a multi-region recipe from
   // the catalogue keeps its regions on the way back to the solver.
   parallel_regions?: ParallelRegion[];
+  // Audit P5, issue #21: dump_recipe_json() always emits axial_cells (never
+  // omitted server-side), but the type omitted it entirely, so typed code
+  // that reconstructs a Recipe object literal instead of spreading one could
+  // silently drop it -- axial_cells absent on load means the loader defaults
+  // to 1, quietly reverting a Level 3 axially-resolved recipe to the lumped
+  // Level 1/2 model with no UI indication (there is no dashboard cell
+  // editor; this field only has to survive edits to other fields, per
+  // CLAUDE.md's "no dashboard region editor" note for Level 3). Optional
+  // here to match the same missing-defaults-to-1 contract as the server.
+  axial_cells?: number;
   pressure_profile_bar: ProfilePoint[];
   temperature_profile_c: ProfilePoint[];
   stop: {
@@ -29,6 +39,17 @@ export interface Recipe {
     maximum_time_s: number;
   };
 }
+
+// GET /api/v1/recipes returns one entry per file under assets/recipes: a
+// loaded recipe, or {id, error} for a file that failed to parse/validate.
+// Audit P4, issue #18: modeling every catalogue entry as {id, name, recipe}
+// let a malformed asset's undefined `recipe` reach setRecipe/localValidation
+// and recipe controls that dereference `recipe.puck`, crashing the
+// dashboard. This discriminated union forces every catalogue consumer to
+// check `"recipe" in entry` before touching entry.recipe.
+export type RecipeCatalogueEntry =
+  | { id: string; name: string; recipe: Recipe }
+  | { id: string; error: { code: string; message: string } };
 
 export interface ShotSample {
   time_s: number;
@@ -181,6 +202,81 @@ export interface ReferenceCatalogue {
   limitation: string;
   references: ReferenceRecord[];
   load_errors: ReferenceLoadError[];
+}
+
+export interface MeasuredShotFinal {
+  beverage_mass_g: number | null;
+  shot_time_s: number | null;
+  tds_percent: number | null;
+}
+
+export interface MeasuredShotSummary {
+  id: string;
+  source_stem: string;
+  machine: string;
+  date: string;
+  notes: string;
+  synthetic: boolean;
+  final: MeasuredShotFinal;
+}
+
+export interface MeasuredShotCatalogue {
+  schema_version: "1.0";
+  measured_shots: MeasuredShotSummary[];
+  count: number;
+}
+
+export interface PairedMassSample {
+  time_s: number;
+  measured_mass_g: number;
+  simulated_mass_g: number;
+  residual_g: number;
+}
+
+export interface MeasuredShotLoss {
+  mass_rmse_g: number;
+  time_error_s: number;
+  tds_error_percent: number;
+  pressure_rmse_bar: number;
+  regularization: number;
+  total: number;
+  simulated: boolean;
+  has_time_measurement: boolean;
+  has_tds_measurement: boolean;
+  has_pressure_measurement: boolean;
+}
+
+export interface CoefficientProvenance {
+  selector: string;
+  id: string;
+  version: string;
+  hash: string;
+}
+
+export interface MeasuredShotComparison extends Omit<MeasuredShotSummary, "final"> {
+  schema_version: "1.0";
+  coefficients: CoefficientProvenance;
+  simulation: {
+    termination: string;
+    solver_version: string;
+    result_hash: string;
+  };
+  paired_series: PairedMassSample[];
+  final: {
+    measured: MeasuredShotFinal;
+    simulated: {
+      beverage_mass_g: number;
+      shot_time_s: number;
+      tds_percent: number;
+    };
+  };
+  loss: MeasuredShotLoss;
+  loss_weights: {
+    mass: number;
+    time: number;
+    tds: number;
+    regularization: number;
+  };
 }
 
 export interface SweepRunRow {

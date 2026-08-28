@@ -9,6 +9,7 @@
 #include <memory>
 #include <iostream>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -19,6 +20,7 @@
 #include <nlohmann/json.hpp>
 
 #include "espressolab/artifact_io.hpp"
+#include "espressolab/calibration.hpp"
 #include "espressolab/cfd3d.hpp"
 #include "espressolab/cfd3d_artifact_io.hpp"
 #include "espressolab/experiment.hpp"
@@ -47,6 +49,81 @@ void send_error(httplib::Response& response, int status, const std::string& code
     response.status = status;
     response.set_content(error_body(code, message, path, std::move(details)).dump(2),
                          "application/json");
+}
+
+json optional_number(const std::optional<double>& value) {
+    return value.has_value() ? json(*value) : json(nullptr);
+}
+
+json measured_shot_final(const calibration::MeasuredShot& shot) {
+    return {{"beverage_mass_g", optional_number(shot.final_beverage_mass_g)},
+            {"shot_time_s", optional_number(shot.final_shot_time_s)},
+            {"tds_percent", optional_number(shot.final_tds_percent)}};
+}
+
+json measured_shot_summary(const calibration::MeasuredShot& shot) {
+    return {{"id", shot.id},
+            {"source_stem", shot.source_stem},
+            {"machine", shot.machine},
+            {"date", shot.date},
+            {"notes", shot.notes},
+            {"synthetic", shot.synthetic},
+            {"final", measured_shot_final(shot)}};
+}
+
+json loss_json(const calibration::LossBreakdown& loss) {
+    return {{"mass_rmse_g", loss.mass_rmse_g},
+            {"time_error_s", loss.time_error_s},
+            {"tds_error_percent", loss.tds_error_percent},
+            {"pressure_rmse_bar", loss.pressure_rmse_bar},
+            {"regularization", loss.regularization},
+            {"total", loss.total},
+            {"simulated", loss.simulated},
+            {"has_time_measurement", loss.has_time_measurement},
+            {"has_tds_measurement", loss.has_tds_measurement},
+            {"has_pressure_measurement", loss.has_pressure_measurement}};
+}
+
+struct MeasuredShotCatalogue {
+    std::vector<calibration::MeasuredShot> shots;
+    std::unordered_map<std::string, std::size_t> aliases;
+};
+
+MeasuredShotCatalogue load_measured_shot_catalogue(const std::filesystem::path& directory) {
+    MeasuredShotCatalogue catalogue;
+    catalogue.shots = calibration::io::load_measured_shot_directory(directory);
+    std::sort(catalogue.shots.begin(), catalogue.shots.end(),
+              [](const calibration::MeasuredShot& left,
+                 const calibration::MeasuredShot& right) { return left.id < right.id; });
+
+    for (std::size_t i = 0; i < catalogue.shots.size(); ++i) {
+        const calibration::MeasuredShot& shot = catalogue.shots[i];
+        const ValidationResult validation = shot.validate();
+        if (!validation.ok()) throw InvalidInputError(validation);
+        if (shot.id.empty() || shot.source_stem.empty()) {
+            throw artifact_io::LoadError("MISSING_SHOT_IDENTIFIER", directory.string(),
+                                         "each measured shot needs a nonempty id and filename stem");
+        }
+        for (const std::string* alias : {&shot.id, &shot.source_stem}) {
+            const auto [existing, inserted] = catalogue.aliases.emplace(*alias, i);
+            if (!inserted && existing->second != i) {
+                throw artifact_io::LoadError(
+                    "DUPLICATE_SHOT_IDENTIFIER", directory.string(),
+                    "measured-shot id and filename aliases must be unique; duplicate '" +
+                        *alias + "'");
+            }
+        }
+    }
+    return catalogue;
+}
+
+json validation_details(const InvalidInputError& error) {
+    json issues = json::array();
+    for (const ValidationIssue& issue : error.validation().issues()) {
+        issues.push_back(
+            {{"code", issue.code}, {"message", issue.message}, {"path", issue.path}});
+    }
+    return {{"issues", std::move(issues)}};
 }
 
 // Completed runs are a small, session-local cache rather than a database.
@@ -314,10 +391,26 @@ public:
             const std::lock_guard<std::mutex> lock(mutex_);
             result_ = std::move(result);
             status_ = Status::complete;
+        } catch (const InvalidInputError& error) {
+            // Audit F8, issue #8: Cfd3dSolver::run() validates mesh and
+            // recipe/coefficient physics after the case is already queued
+            // (202 Accepted), so a bad mesh or recipe fails here, not in the
+            // POST handler. Preserve the structured code/path/message
+            // instead of falling through to the generic std::exception
+            // branch below, which collapsed every failure -- validation or
+            // not -- into a hardcoded CFD3D_FAILED with no path (matches
+            // the SweepJob::execute() pattern just above in this file).
+            const std::lock_guard<std::mutex> lock(mutex_);
+            status_ = Status::failed;
+            const auto& issues = error.validation().issues();
+            error_ = issues.empty() ? std::string(error.what()) : issues.front().message;
+            error_code_ = issues.empty() ? "INVALID_INPUT" : issues.front().code;
+            error_path_ = issues.empty() ? std::string() : issues.front().path;
         } catch (const std::exception& error) {
             const std::lock_guard<std::mutex> lock(mutex_);
             status_ = Status::failed;
             error_ = error.what();
+            error_code_ = "CFD3D_FAILED";
         }
         {
             const std::lock_guard<std::mutex> lock(mutex_);
@@ -337,6 +430,8 @@ public:
         std::size_t snapshot_count = 0;
         double elapsed_s = 0.0;
         std::string error;
+        std::string error_code;
+        std::string error_path;
         Cfd3dResult result;
     };
 
@@ -346,6 +441,8 @@ public:
         out.status = status_;
         out.snapshot_count = snapshots_.size();
         out.error = error_;
+        out.error_code = error_code_;
+        out.error_path = error_path_;
         out.result = result_;
         if (status_ != Status::queued) {
             out.elapsed_s = std::chrono::duration<double>(
@@ -378,6 +475,8 @@ private:
     Status status_ = Status::queued;
     bool finished_ = false;
     std::string error_;
+    std::string error_code_ = "CFD3D_FAILED";
+    std::string error_path_;
     Cfd3dResult result_;
     std::vector<Cfd3dSnapshot> snapshots_;
     std::chrono::steady_clock::time_point started_at_{};
@@ -398,11 +497,24 @@ class Cfd3dJobStore {
 public:
     ~Cfd3dJobStore() { join_all(); }
 
+    // Audit P2, issue #13: start() used to spawn a thread unconditionally --
+    // kMaxRetained only bounds how many *finished* jobs stay in memory, not
+    // how many are concurrently running. Each is a real 3D finite-volume
+    // solve that can retain up to kMaximumSnapshotBytes (1 GiB,
+    // cfd3d_io.cpp) of snapshots, so unbounded concurrent requests were an
+    // unbounded memory/CPU path. Returns nullptr, registering nothing, when
+    // already at capacity, so a rejected request costs no thread or memory
+    // and the caller can return a stable, synchronous overload response
+    // instead of a job that queues forever. Worst-case retained memory is
+    // now bounded by (kMaxConcurrent in-flight + kMaxRetained finished) x
+    // 1 GiB = 6 GiB; peak allocation for representative meshes has not been
+    // measured, so kMaxConcurrent is a structural cap, not a profiled one.
     std::shared_ptr<Cfd3dJob> start(const std::string& id,
                                     cfd3d_artifact_io::Cfd3dCase cfd3d_case) {
         reap_finished();
-        auto job = std::make_shared<Cfd3dJob>(id, std::move(cfd3d_case));
         const std::lock_guard<std::mutex> lock(mutex_);
+        if (workers_.size() >= kMaxConcurrent) return nullptr;
+        auto job = std::make_shared<Cfd3dJob>(id, std::move(cfd3d_case));
         jobs_[id] = job;
         order_.push_back(id);
         while (order_.size() > kMaxRetained) {
@@ -456,6 +568,7 @@ private:
     }
 
     static constexpr std::size_t kMaxRetained = 4;
+    static constexpr std::size_t kMaxConcurrent = 2;
     mutable std::mutex mutex_;
     std::unordered_map<std::string, std::shared_ptr<Cfd3dJob>> jobs_;
     std::deque<std::string> order_;
@@ -550,9 +663,29 @@ std::string reference_root(int argc, char** argv) {
     return "espresso_real_world_refs";
 }
 
-int port_from_args(int argc, char** argv) {
+// Audit F9: std::stoi() on a non-numeric --port raised an uncaught
+// std::invalid_argument (or std::out_of_range for a huge value) before the
+// server entered its own exception handling, aborting the process. Parse and
+// range-check the port here so a typo is a controlled startup error instead
+// of a crash.
+std::optional<int> port_from_args(int argc, char** argv, std::string& error) {
     for (int i = 1; i + 1 < argc; ++i) {
-        if (std::string(argv[i]) == "--port") return std::stoi(argv[i + 1]);
+        if (std::string(argv[i]) == "--port") {
+            const std::string value = argv[i + 1];
+            std::size_t consumed = 0;
+            long parsed = 0;
+            try {
+                parsed = std::stol(value, &consumed);
+            } catch (const std::exception&) {
+                error = "--port must be an integer in [1, 65535], got '" + value + "'";
+                return std::nullopt;
+            }
+            if (consumed != value.size() || parsed < 1 || parsed > 65535) {
+                error = "--port must be an integer in [1, 65535], got '" + value + "'";
+                return std::nullopt;
+            }
+            return static_cast<int>(parsed);
+        }
     }
     return 8734;
 }
@@ -562,7 +695,13 @@ int port_from_args(int argc, char** argv) {
 int main(int argc, char** argv) {
     const std::filesystem::path assets = asset_root(argc, argv);
     const std::filesystem::path references = reference_root(argc, argv);
-    const int port = port_from_args(argc, argv);
+    std::string port_error;
+    const std::optional<int> parsed_port = port_from_args(argc, argv, port_error);
+    if (!parsed_port.has_value()) {
+        std::cerr << "error INVALID_ARGUMENT: " << port_error << '\n';
+        return 2;
+    }
+    const int port = *parsed_port;
 
     RunStore store;
     SweepJobStore sweeps;
@@ -623,7 +762,8 @@ int main(int argc, char** argv) {
                      {"snapshot_count", snapshot.snapshot_count},
                      {"elapsed_s", snapshot.elapsed_s}};
         if (snapshot.status == Cfd3dJob::Status::failed) {
-            body["error"] = {{"code", "CFD3D_FAILED"}, {"message", snapshot.error}};
+            body["error"] = {{"code", snapshot.error_code}, {"message", snapshot.error}};
+            if (!snapshot.error_path.empty()) body["error"]["path"] = snapshot.error_path;
             return body;
         }
         if (snapshot.status == Cfd3dJob::Status::complete) {
@@ -656,6 +796,139 @@ int main(int argc, char** argv) {
                    } catch (const reference_io::LoadError& e) {
                        send_error(response, 500, e.code, e.what(), e.path);
                    }
+               });
+
+    server.Get("/api/v1/measured-shots",
+               [&](const httplib::Request&, httplib::Response& response) {
+                   try {
+                       const MeasuredShotCatalogue catalogue =
+                           load_measured_shot_catalogue(assets / "measured_shots");
+                       json shots = json::array();
+                       for (const calibration::MeasuredShot& shot : catalogue.shots) {
+                           shots.push_back(measured_shot_summary(shot));
+                       }
+                       response.set_content(
+                           json{{"schema_version", "1.0"},
+                                {"measured_shots", shots},
+                                {"count", shots.size()}}
+                               .dump(2),
+                           "application/json");
+                   } catch (const artifact_io::LoadError& e) {
+                       send_error(response, 500, "MEASURED_SHOT_LOAD_FAILED", e.what(), e.path,
+                                  {{"load_code", e.code}});
+                   } catch (const InvalidInputError& e) {
+                       send_error(response, 500, "MEASURED_SHOT_LOAD_FAILED", e.what(),
+                                  "measured_shots", validation_details(e));
+                   }
+               });
+
+    server.Get(R"(/api/v1/measured-shots/([^/]+)/compare)",
+               [&](const httplib::Request& request, httplib::Response& response) {
+                   MeasuredShotCatalogue catalogue;
+                   try {
+                       catalogue = load_measured_shot_catalogue(assets / "measured_shots");
+                   } catch (const artifact_io::LoadError& e) {
+                       send_error(response, 500, "MEASURED_SHOT_LOAD_FAILED", e.what(), e.path,
+                                  {{"load_code", e.code}});
+                       return;
+                   } catch (const InvalidInputError& e) {
+                       send_error(response, 500, "MEASURED_SHOT_LOAD_FAILED", e.what(),
+                                  "measured_shots", validation_details(e));
+                       return;
+                   }
+
+                   const std::string identifier = request.matches[1];
+                   const auto shot_entry = catalogue.aliases.find(identifier);
+                   if (shot_entry == catalogue.aliases.end()) {
+                       send_error(response, 404, "MEASURED_SHOT_NOT_FOUND",
+                                  "no measured shot with id or source stem '" + identifier + "'",
+                                  "measured_shots.id");
+                       return;
+                   }
+                   const calibration::MeasuredShot& shot = catalogue.shots[shot_entry->second];
+
+                   const std::string coefficient_selector =
+                       request.has_param("coefficients")
+                           ? request.get_param_value("coefficients")
+                           : "default-v1";
+                   if (coefficient_selector != "default-v1") {
+                       send_error(response, 404, "COEFFICIENTS_NOT_FOUND",
+                                  "unknown approved coefficient set '" + coefficient_selector +
+                                      "'",
+                                  "coefficients");
+                       return;
+                   }
+
+                   ModelCoefficients coefficients;
+                   try {
+                       coefficients = artifact_io::load_coefficients_file(
+                           assets / "coefficients" / "default-v1.json");
+                   } catch (const artifact_io::LoadError& e) {
+                       send_error(response, 500, "COEFFICIENTS_LOAD_FAILED", e.what(), e.path,
+                                  {{"load_code", e.code}});
+                       return;
+                   }
+
+                   const SimulationConfig config;
+                   const calibration::LossWeights weights;
+                   ShotResult result;
+                   try {
+                       result = Simulator().run(shot.recipe, coefficients, config);
+                   } catch (const InvalidInputError& e) {
+                       send_error(response, 500, "COMPARISON_INPUT_INVALID", e.what(),
+                                  "measured_shots", validation_details(e));
+                       return;
+                   }
+                   if (result.summary.termination == TerminationReason::numerical_failure ||
+                       result.summary.termination == TerminationReason::invalid_state ||
+                       result.summary.termination == TerminationReason::not_terminated) {
+                       send_error(response, 500, "COMPARISON_SIMULATION_FAILED",
+                                  "measured-shot simulation ended with " +
+                                      std::string(to_string(result.summary.termination)),
+                                  "simulation.termination");
+                       return;
+                   }
+                   artifact_io::stamp_manifest(result, shot.recipe, coefficients, config);
+
+                   calibration::ShotResultComparison comparison;
+                   try {
+                       comparison = calibration::compare_shot_result(shot, result, weights);
+                   } catch (const InvalidInputError& e) {
+                       send_error(response, 500, "COMPARISON_INPUT_INVALID", e.what(),
+                                  "measured_shots", validation_details(e));
+                       return;
+                   }
+
+                   json pairs = json::array();
+                   for (const calibration::PairedMassSample& pair : comparison.paired_series) {
+                       pairs.push_back({{"time_s", pair.time_s},
+                                        {"measured_mass_g", pair.measured_mass_g},
+                                        {"simulated_mass_g", pair.simulated_mass_g},
+                                        {"residual_g", pair.residual_g}});
+                   }
+
+                   json body = measured_shot_summary(shot);
+                   body["schema_version"] = "1.0";
+                   body["coefficients"] = {{"selector", coefficient_selector},
+                                            {"id", coefficients.id},
+                                            {"version", coefficients.version},
+                                            {"hash", result.manifest.coefficient_hash}};
+                   body["paired_series"] = std::move(pairs);
+                   body["final"] = {
+                       {"measured", measured_shot_final(shot)},
+                       {"simulated",
+                        {{"beverage_mass_g", units::kg_to_grams(result.summary.beverage_mass_kg)},
+                         {"shot_time_s", result.summary.elapsed_time_s},
+                         {"tds_percent", result.summary.tds_fraction * 100.0}}}};
+                   body["simulation"] = {{"termination", to_string(result.summary.termination)},
+                                         {"solver_version", result.manifest.solver_version},
+                                         {"result_hash", result.manifest.result_hash}};
+                   body["loss"] = loss_json(comparison.loss);
+                   body["loss_weights"] = {{"mass", weights.mass},
+                                           {"time", weights.time},
+                                           {"tds", weights.tds},
+                                           {"regularization", weights.regularization}};
+                   response.set_content(body.dump(2), "application/json");
                });
 
     server.Get("/api/v1/recipes", [&](const httplib::Request&, httplib::Response& response) {
@@ -713,7 +986,15 @@ int main(int argc, char** argv) {
                             cfd3d_artifact_io::load_case_json(root.dump());
                         const std::string id =
                             "cfd3d-" + std::to_string(next_cfd3d_serial.fetch_add(1));
-                        cfd3d_runs.start(id, cfd3d_case);
+                        if (cfd3d_runs.start(id, cfd3d_case) == nullptr) {
+                            // Audit P2, issue #13: a stable, synchronous
+                            // overload response instead of accepting an
+                            // unbounded number of concurrent solves.
+                            send_error(response, 429, "TOO_MANY_ACTIVE_RUNS",
+                                       "too many CFD3D runs are already in progress; retry shortly",
+                                       "cfd3d");
+                            return;
+                        }
                         response.status = 202;
                         response.set_content(
                             json{{"run_id", id}, {"status", "queued"},

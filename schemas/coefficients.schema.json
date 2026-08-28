@@ -3,6 +3,7 @@
   "$id": "https://espressolab.local/schemas/coefficients-1.0.json",
   "title": "EspressoLab model coefficients",
   "description": "Empirical coefficients, versioned separately from recipes and solver code (section 10.2). Every value is a calibration target, not a universal constant.",
+  "$comment": "Audit P6, issue #19: schemas/ documents the intended contract; engine/artifact_io's C++ loaders are the executable one (CLAUDE.md 'Data contracts'). Where the two could differ, this file is kept synchronized to engine/artifact_io/json_io.cpp's load_coefficients_json() and engine/espresso_core/types.cpp's ModelCoefficients::validate() -- a mismatch found later is a schema bug, not a loader bug.",
   "type": "object",
   "required": ["id", "version", "values"],
   "properties": {
@@ -20,6 +21,17 @@
     },
     "values": {
       "type": "object",
+      "$comment": "load_coefficients_json() reads every key below with required_number() -- an absent key is a MISSING_FIELD error, not a default. Every property must therefore be listed as required here too, matching the loader rather than leaving each individually optional the way an untouched 'properties'-only object implies.",
+      "required": [
+        "initial_porosity", "kozeny_constant", "dry_permeability_multiplier",
+        "pressure_compressibility", "maximum_compression", "porosity_compression_factor",
+        "minimum_porosity", "compression_reference_pa", "coffee_heat_capacity_j_kg_k",
+        "ambient_heat_loss_w_k", "ambient_temperature_c", "initial_puck_temperature_c",
+        "extractable_solids_fraction", "extraction_rate_ref_s", "activation_energy_j_mol",
+        "reference_temperature_c", "grind_exponent", "reference_particle_diameter_um",
+        "flow_half_saturation_m3_s", "distribution_factor_floor", "maximum_flow_m3_s",
+        "outlet_pressure_pa"
+      ],
       "properties": {
         "initial_porosity": { "type": "number", "minimum": 0.05, "maximum": 0.95 },
         "kozeny_constant": { "type": "number", "exclusiveMinimum": 0 },
@@ -27,7 +39,10 @@
         "pressure_compressibility": { "type": "number", "minimum": 0, "maximum": 1 },
         "maximum_compression": { "type": "number", "minimum": 0, "maximum": 0.9 },
         "porosity_compression_factor": { "type": "number", "minimum": 0 },
-        "minimum_porosity": { "type": "number", "minimum": 0.01 },
+        "minimum_porosity": {
+          "type": "number", "minimum": 0.01,
+          "description": "Must also not exceed initial_porosity; that cross-field bound is enforced by ModelCoefficients::validate(), not expressible as a plain JSON Schema range here."
+        },
         "compression_reference_pa": { "type": "number", "exclusiveMinimum": 0 },
         "coffee_heat_capacity_j_kg_k": { "type": "number", "exclusiveMinimum": 0 },
         "ambient_heat_loss_w_k": { "type": "number", "minimum": 0 },

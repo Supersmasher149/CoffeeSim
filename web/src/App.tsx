@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { ApiFailure, api, type HealthResponse } from "./api/client";
-import type { Recipe, ReferenceCatalogue, ShotResult } from "./api/types";
-import { CalibrationNotice } from "./features/calibration/CalibrationNotice";
+import type { Recipe, RecipeCatalogueEntry, ReferenceCatalogue, ShotResult } from "./api/types";
+import { MeasuredShotComparison } from "./features/calibration/MeasuredShotComparison";
 import { ComparisonTray } from "./features/comparison/ComparisonTray";
 import { ReferenceShotsPanel } from "./features/references/ReferenceShotsPanel";
 import { ChartStack } from "./features/shot/ChartStack";
@@ -18,9 +18,19 @@ import {
   type ShotWorkspace,
 } from "./state/workspace";
 
+// Audit P4, issue #18: narrows a RecipeCatalogueEntry so callers can filter
+// out {id, error} entries and still have TypeScript know `.recipe` exists on
+// what's left, instead of the plain `"recipe" in entry` check widening back
+// to the union.
+function hasRecipe(
+  entry: RecipeCatalogueEntry,
+): entry is Extract<RecipeCatalogueEntry, { recipe: Recipe }> {
+  return "recipe" in entry;
+}
+
 export function App() {
   const [health, setHealth] = useState<HealthResponse>();
-  const [catalogue, setCatalogue] = useState<{ id: string; name: string; recipe: Recipe }[]>([]);
+  const [catalogue, setCatalogue] = useState<RecipeCatalogueEntry[]>([]);
   const [selectedId, setSelectedId] = useState("baseline");
   const [error, setError] = useState<string>();
   const [referenceError, setReferenceError] = useState<string>();
@@ -45,7 +55,11 @@ export function App() {
       .recipes()
       .then((body) => {
         setCatalogue(body.recipes);
-        const first = body.recipes.find((entry) => entry.id === "baseline") ?? body.recipes[0];
+        // Audit P4, issue #18: a malformed asset's {id, error} entry has no
+        // `recipe`, so the initial selection must skip it rather than seed
+        // the workspace with an undefined draft recipe.
+        const loaded = body.recipes.filter(hasRecipe);
+        const first = loaded.find((entry) => entry.id === "baseline") ?? loaded[0];
         if (first) {
           setSelectedId(first.id);
           setWorkspace((current) => ({ ...current, draftRecipe: first.recipe }));
@@ -70,16 +84,31 @@ export function App() {
 
   const selectRecipe = (id: string) => {
     const entry = catalogue.find((candidate) => candidate.id === id);
+    // Audit P4, issue #18: an {id, error} entry has no `recipe`. ControlRail
+    // already renders it as a disabled, unselectable option; this is the
+    // defensive second check so a selection can never dereference undefined.
+    if (!entry || !hasRecipe(entry)) return;
     setSelectedId(id);
-    if (entry) setRecipe(entry.recipe);
+    setRecipe(entry.recipe);
   };
 
   const run = async () => {
     setError(undefined);
+    // Audit P7, issue #22: snapshot the recipe actually submitted, not
+    // workspace.draftRecipe read again after the request resolves -- the
+    // user can keep editing the draft while the request is in flight, and
+    // the result must stay tied to what produced it, not to draftRecipe's
+    // state whenever the response happens to land.
+    const submittedRecipe = workspace.draftRecipe;
     setWorkspace((current) => ({ ...current, requestState: "running" }));
     try {
-      const result = await api.simulate(workspace.draftRecipe);
-      setWorkspace((current) => ({ ...current, activeRun: result, requestState: "idle" }));
+      const result = await api.simulate(submittedRecipe);
+      setWorkspace((current) => ({
+        ...current,
+        activeRun: result,
+        activeRecipe: submittedRecipe,
+        requestState: "idle",
+      }));
     } catch (failure) {
       // The server's validation is authoritative; the rail's own check only
       // avoids obviously doomed round trips.
@@ -165,13 +194,16 @@ export function App() {
             <MetricStrip result={active} />
             <PuckView
               result={active}
-              targetBeverageG={workspace.draftRecipe.stop.target_beverage_g}
+              // Audit P7, issue #22: use the recipe that produced `active`,
+              // not the possibly-since-edited draft -- see
+              // ShotWorkspace.activeRecipe.
+              targetBeverageG={workspace.activeRecipe?.stop.target_beverage_g ?? null}
               cursorTimeSeconds={workspace.cursorTimeSeconds}
             />
             <ChartStack
               result={active}
               comparisons={comparisons}
-              preInfusionEnd={preInfusionEnd(workspace.draftRecipe)}
+              preInfusionEnd={workspace.activeRecipe ? preInfusionEnd(workspace.activeRecipe) : undefined}
               onCursorChange={(time) =>
                 setWorkspace((current) => ({ ...current, cursorTimeSeconds: time }))
               }
@@ -186,10 +218,6 @@ export function App() {
               }
             />
             <DiagnosticsDrawer result={active} />
-            <CalibrationNotice
-              coefficientId={active.manifest.coefficient_id}
-              coefficientVersion={active.manifest.coefficient_version}
-            />
           </>
         ) : (
           <p className="note" style={{ maxWidth: 620 }}>
@@ -198,6 +226,8 @@ export function App() {
             no calculations of its own.
           </p>
         )}
+
+        <MeasuredShotComparison />
 
         <ReferenceShotsPanel
           catalogue={referenceCatalogue}

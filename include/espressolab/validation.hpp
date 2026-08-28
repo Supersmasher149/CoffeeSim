@@ -33,5 +33,9 @@ private:
 void require_in_range(ValidationResult& result, double value, double low, double high,
                       const char* path, const char* unit);
 void require_positive(ValidationResult& result, double value, const char* path);
+// Finite and >= 0 (unlike require_positive, 0 itself is allowed).
+void require_nonnegative(ValidationResult& result, double value, const char* path);
+// Finite only, no sign or range constraint.
+void require_finite(ValidationResult& result, double value, const char* path);
 
 }  // namespace espressolab

@@ -97,21 +97,37 @@ ValidationResult ModelCoefficients::validate() const {
     require_in_range(result, minimum_porosity, 0.01, initial_porosity,
                      "coefficients.minimum_porosity", "");
     require_positive(result, compression_reference_pa, "coefficients.compression_reference_pa");
+    // Audit F5, issue #3: schemas/coefficients.schema.json documents
+    // porosity_compression_factor >= 0, but nothing checked it here.
+    require_nonnegative(result, porosity_compression_factor, "coefficients.porosity_compression_factor");
     require_positive(result, coffee_heat_capacity_j_kg_k,
                      "coefficients.coffee_heat_capacity_j_kg_k");
-    if (ambient_heat_loss_w_k < 0.0) {
-        result.add("NONPHYSICAL_INPUT", "coefficients.ambient_heat_loss_w_k must not be negative",
-                   "coefficients.ambient_heat_loss_w_k");
-    }
+    // Was `if (ambient_heat_loss_w_k < 0.0)`: NaN compares false against
+    // everything, so a non-finite value passed silently (same class of bug
+    // as #7's dt_s check). require_nonnegative() rejects it first.
+    require_nonnegative(result, ambient_heat_loss_w_k, "coefficients.ambient_heat_loss_w_k");
+    // Kelvin temperatures below absolute zero are nonphysical regardless of
+    // what range a particular calibration run intends.
+    require_positive(result, ambient_temperature_k, "coefficients.ambient_temperature_k");
+    require_positive(result, initial_puck_temperature_k, "coefficients.initial_puck_temperature_k");
     require_in_range(result, extractable_solids_fraction, 0.05, 0.5,
                      "coefficients.extractable_solids_fraction", "");
     require_positive(result, extraction_rate_ref_s, "coefficients.extraction_rate_ref_s");
+    // Schema leaves activation_energy_j_mol's range open; only finiteness is
+    // enforced here so a NaN/infinite value can't reach the Arrhenius term.
+    require_finite(result, activation_energy_j_mol, "coefficients.activation_energy_j_mol");
     require_positive(result, reference_temperature_k, "coefficients.reference_temperature_k");
     require_positive(result, reference_particle_diameter_m,
                      "coefficients.reference_particle_diameter_m");
     require_positive(result, flow_half_saturation_m3_s, "coefficients.flow_half_saturation_m3_s");
     require_in_range(result, grind_exponent, 0.0, 4.0, "coefficients.grind_exponent", "");
+    require_in_range(result, distribution_factor_floor, 0.01, 1.0,
+                     "coefficients.distribution_factor_floor", "");
     require_positive(result, maximum_flow_m3_s, "coefficients.maximum_flow_m3_s");
+    // Audit F5, issue #3: outlet_pressure_pa is the specific field the
+    // finding was filed for -- omitted entirely despite the schema
+    // documenting `minimum: 0`.
+    require_nonnegative(result, outlet_pressure_pa, "coefficients.outlet_pressure_pa");
 
     return result;
 }

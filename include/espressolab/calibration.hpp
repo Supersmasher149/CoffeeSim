@@ -67,6 +67,19 @@ struct LossBreakdown {
     bool has_pressure_measurement = false;
 };
 
+struct PairedMassSample {
+    double time_s = 0.0;
+    double measured_mass_g = 0.0;
+    double simulated_mass_g = 0.0;
+    // Positive means the recorded scale value exceeded the simulation.
+    double residual_g = 0.0;
+};
+
+struct ShotResultComparison {
+    LossBreakdown loss;
+    std::vector<PairedMassSample> paired_series;
+};
+
 // A coefficient the fit is allowed to move, with the bounds that keep it
 // physical. Wide-ranging quantities are searched in log space.
 struct TunableParameter {
@@ -151,6 +164,11 @@ struct LeaveOneOutReport {
 LossBreakdown evaluate_shot_loss(const MeasuredShot& shot, const ModelCoefficients& coefficients,
                                   const SimulationConfig& config, const LossWeights& weights,
                                   const CancellationCallback& is_cancelled = {});
+
+// Compare an already-computed result without invoking the simulator. This is
+// the shared authority for calibration scoring and REST comparison responses.
+ShotResultComparison compare_shot_result(const MeasuredShot& shot, const ShotResult& result,
+                                         const LossWeights& weights);
 
 // Dataset checks specific to real-world leave-one-out validation. Regular fits
 // retain support for synthetic fixtures so the calibration machinery can be

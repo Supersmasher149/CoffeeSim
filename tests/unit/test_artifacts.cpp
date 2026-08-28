@@ -1,5 +1,9 @@
 #include <catch_amalgamated.hpp>
 #include <cmath>
+#include <functional>
+#include <limits>
+#include <string>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 
@@ -75,6 +79,52 @@ TEST_CASE("nonphysical values fail validation rather than simulating", "[artifac
     REQUIRE_FALSE(result.ok());
     REQUIRE(result.issues().front().path == "recipe.puck.particle_diameter_um");
     REQUIRE_THROWS_AS(Simulator().run(recipe, testing::baseline_coefficients()), InvalidInputError);
+}
+
+// Audit F5, issue #3: ModelCoefficients::validate() omitted outlet_pressure_pa
+// (the field the finding was filed for, despite the schema requiring it to
+// be nonnegative) and several other fields entirely. Cover every field this
+// fix added checks for, with both a nonphysical finite value and a
+// non-finite one where relevant.
+TEST_CASE("every previously-omitted coefficient field is validated", "[artifacts]") {
+    struct Case {
+        std::string name;
+        std::string path;
+        std::function<void(ModelCoefficients&)> mutate;
+    };
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const std::vector<Case> cases = {
+        {"negative outlet pressure", "coefficients.outlet_pressure_pa",
+         [](ModelCoefficients& c) { c.outlet_pressure_pa = -100000.0; }},
+        {"NaN outlet pressure", "coefficients.outlet_pressure_pa",
+         [nan](ModelCoefficients& c) { c.outlet_pressure_pa = nan; }},
+        {"negative porosity_compression_factor", "coefficients.porosity_compression_factor",
+         [](ModelCoefficients& c) { c.porosity_compression_factor = -0.1; }},
+        {"NaN ambient_heat_loss_w_k", "coefficients.ambient_heat_loss_w_k",
+         [nan](ModelCoefficients& c) { c.ambient_heat_loss_w_k = nan; }},
+        {"negative ambient_temperature_k", "coefficients.ambient_temperature_k",
+         [](ModelCoefficients& c) { c.ambient_temperature_k = -1.0; }},
+        {"non-finite initial_puck_temperature_k", "coefficients.initial_puck_temperature_k",
+         [](ModelCoefficients& c) {
+             c.initial_puck_temperature_k = std::numeric_limits<double>::infinity();
+         }},
+        {"NaN activation_energy_j_mol", "coefficients.activation_energy_j_mol",
+         [nan](ModelCoefficients& c) { c.activation_energy_j_mol = nan; }},
+        {"distribution_factor_floor out of range", "coefficients.distribution_factor_floor",
+         [](ModelCoefficients& c) { c.distribution_factor_floor = 0.0; }},
+    };
+
+    for (const Case& test_case : cases) {
+        SECTION(test_case.name) {
+            ModelCoefficients coefficients = testing::baseline_coefficients();
+            test_case.mutate(coefficients);
+
+            const ValidationResult result = coefficients.validate();
+            REQUIRE_FALSE(result.ok());
+            REQUIRE(result.issues().front().path == test_case.path);
+            REQUIRE_THROWS_AS(Simulator().run(testing::baseline_recipe(), coefficients), InvalidInputError);
+        }
+    }
 }
 
 TEST_CASE("parallel-region validation rejects nonphysical partitions", "[artifacts][regions]") {
@@ -189,6 +239,97 @@ TEST_CASE("coefficients survive a JSON round trip", "[artifacts]") {
     REQUIRE(reloaded.kozeny_constant == Catch::Approx(original.kozeny_constant));
     REQUIRE(reloaded.reference_temperature_k == Catch::Approx(original.reference_temperature_k));
     REQUIRE(artifact_io::coefficient_hash(reloaded) == artifact_io::coefficient_hash(original));
+
+    // assets/coefficients/default-v1.json carries provenance; issue #9
+    // (Audit F6) is specifically that this used to be silently dropped.
+    REQUIRE(original.provenance.has_value());
+    REQUIRE(reloaded.provenance.has_value());
+    REQUIRE(reloaded.provenance->source == original.provenance->source);
+    REQUIRE(reloaded.provenance->dataset == original.provenance->dataset);
+    REQUIRE(reloaded.provenance->date == original.provenance->date);
+    REQUIRE(reloaded.provenance->limitations == original.provenance->limitations);
+}
+
+// Audit F6, issue #9: a coefficient document's `provenance` was accepted by
+// the schema but had no field in ModelCoefficients to land in, so it never
+// survived loading, and dump_coefficients_json() never emitted it even when
+// the caller had it -- provenance disappeared the moment coefficients were
+// normalized into a run's artifacts. Cover every supported field, both a
+// present dataset string and an absent/null one, and confirm the hash used
+// for reproducibility (and the "compiled defaults == shipped defaults" test
+// above) is unaffected by this purely descriptive metadata.
+TEST_CASE("every supported coefficient provenance field survives a JSON round trip", "[artifacts]") {
+    SECTION("with a dataset string") {
+        ModelCoefficients original = testing::baseline_coefficients();
+        original.provenance = CoefficientProvenance{
+            "measured on a Gaggia Classic Pro", std::string("2026-08-27-shots"), "2026-08-27",
+            {"three shots, one machine", "no held-out validation"}};
+
+        const ModelCoefficients reloaded =
+            artifact_io::load_coefficients_json(artifact_io::dump_coefficients_json(original));
+
+        REQUIRE(reloaded.provenance.has_value());
+        REQUIRE(reloaded.provenance->source == "measured on a Gaggia Classic Pro");
+        REQUIRE(reloaded.provenance->dataset == std::optional<std::string>("2026-08-27-shots"));
+        REQUIRE(reloaded.provenance->date == "2026-08-27");
+        REQUIRE(reloaded.provenance->limitations ==
+                std::vector<std::string>{"three shots, one machine", "no held-out validation"});
+        REQUIRE(artifact_io::coefficient_hash(reloaded) == artifact_io::coefficient_hash(original));
+    }
+
+    SECTION("with no dataset") {
+        ModelCoefficients original = testing::baseline_coefficients();
+        original.provenance = CoefficientProvenance{"software defaults", std::nullopt, "2026-08-27", {}};
+
+        const ModelCoefficients reloaded =
+            artifact_io::load_coefficients_json(artifact_io::dump_coefficients_json(original));
+
+        REQUIRE(reloaded.provenance.has_value());
+        REQUIRE_FALSE(reloaded.provenance->dataset.has_value());
+    }
+
+    SECTION("provenance does not change the hash") {
+        ModelCoefficients with_provenance = testing::baseline_coefficients();
+        ModelCoefficients without_provenance = with_provenance;
+        without_provenance.provenance.reset();
+        REQUIRE(with_provenance.provenance.has_value());
+
+        REQUIRE(artifact_io::coefficient_hash(with_provenance) ==
+                artifact_io::coefficient_hash(without_provenance));
+    }
+
+    SECTION("a document with no provenance loads with none") {
+        std::string document = artifact_io::dump_coefficients_json(testing::baseline_coefficients());
+        nlohmann::json parsed = nlohmann::json::parse(document);
+        parsed.erase("provenance");
+
+        const ModelCoefficients reloaded = artifact_io::load_coefficients_json(parsed.dump());
+        REQUIRE_FALSE(reloaded.provenance.has_value());
+    }
+}
+
+TEST_CASE("malformed coefficient provenance fields are rejected", "[artifacts]") {
+    const std::string base = artifact_io::dump_coefficients_json(testing::baseline_coefficients());
+
+    SECTION("dataset must be a string or null") {
+        nlohmann::json parsed = nlohmann::json::parse(base);
+        parsed["provenance"]["dataset"] = std::vector<std::string>{"a", "b"};
+        REQUIRE_THROWS_MATCHES(
+            artifact_io::load_coefficients_json(parsed.dump()), artifact_io::LoadError,
+            Catch::Matchers::Predicate<artifact_io::LoadError>([](const artifact_io::LoadError& e) {
+                return e.code == "MALFORMED_JSON" && e.path == "coefficients.provenance.dataset";
+            }));
+    }
+
+    SECTION("limitations must be an array of strings") {
+        nlohmann::json parsed = nlohmann::json::parse(base);
+        parsed["provenance"]["limitations"] = std::vector<int>{1, 2};
+        REQUIRE_THROWS_MATCHES(
+            artifact_io::load_coefficients_json(parsed.dump()), artifact_io::LoadError,
+            Catch::Matchers::Predicate<artifact_io::LoadError>([](const artifact_io::LoadError& e) {
+                return e.code == "MALFORMED_JSON" && e.path == "coefficients.provenance.limitations";
+            }));
+    }
 }
 
 // Section 10.2: a run stamped "default v1.0.0" has to mean one thing. The CLI

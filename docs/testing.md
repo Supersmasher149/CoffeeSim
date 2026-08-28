@@ -1,19 +1,27 @@
 # Testing strategy
 
 ```bash
-./scripts/test.sh                  # build Release and run everything
+./scripts/test.sh                  # build Release and run the Catch2 binary
 ./build/tests/espressolab_tests "[flow]"   # one tag
 ./build/tests/espressolab_tests --list-tests
 ```
 
-Tags: `[units]` `[profile]` `[water]` `[permeability]` `[flow]` `[heat]`
+Tags: `[unit]` `[units]` `[profile]` `[water]` `[permeability]` `[flow]` `[heat]`
 `[extraction]` `[artifacts]` `[integration]` `[invariants]` `[convergence]`
 `[sweep]` `[calibration]` `[recovery]` `[property]` `[performance]` `[regions]`
-`[axial]` `[cfd]` `[verification]` `[cancellation]` `[tui]` `[cli_workflows]`.
+`[axial]` `[cfd]` `[cfd3d]` `[verification]` `[references]` `[progress]`
+`[cancellation]` `[tui]` `[cli_workflows]`.
 
 ```bash
 python3 tests/pty/tui_smoke.py    # separate POSIX PTY smoke matrix for the TUI
+ctest --test-dir build -L server  # black-box REST/CLI smoke scripts, registered but not in test.sh
 ```
+
+`./scripts/test.sh` does not run the PTY script, the `server`-labeled ctest
+smoke scripts, dashboard checks, demo, or warnings-as-errors build. The
+current Catch2 run passes 165 test cases and 18,213 assertions. The PTY
+script currently defines 14 checks, but it was not rerun for this
+documentation refresh.
 
 ## What each layer is for
 
@@ -92,6 +100,13 @@ and synthetic, mixed-machine, or incomplete datasets are refused before they
 can be described as real-world validation. The tests use model-generated inputs
 as fixtures and explicitly avoid treating them as real calibration evidence.
 
+**Measured-shot comparison tests** cover strict stored-asset loading, selector
+resolution, response metadata, optional measurement flags, and residuals. The
+result-based comparison API cannot invoke the simulator, so the server runs once
+and passes that result to the same native scoring operation used by calibration.
+Synthetic fixtures test plumbing only and remain labelled synthetic in every
+response. `tests/server/measured_shots_smoke.py` covers the real HTTP routes.
+
 **Cancellation tests** call `Simulator::run`, `CfdSolver::run`, `Cfd3dSolver::run`,
 `calibration::fit`, and `calibration::evaluate_shot_loss` with a callback that
 always reports "cancelled" and require `ExecutionCancelled` rather than a
@@ -101,6 +116,27 @@ cancelled `run_simulate` never reaches the artifact writer: the output
 directory must not exist afterward. Sweep cancellation and partial-run export
 are covered separately, in `test_sweeps.cpp`, since `ExperimentRunner` predates
 this contract.
+
+**REST integration tests** (Audit P1, issue #17) close the gap the other
+layers above cannot: `apps/espressolab_server/main.cpp` is not linked into
+`espressolab_tests`, so nothing above exercises the actual HTTP request
+translation, error-response mapping, background-job polling, or the
+in-memory stores' retention behavior. `tests/server/rest_integration_smoke.py`
+starts the real built server on an isolated local port and drives the
+documented contract end to end: health; a valid shot and three ways to
+reject one (malformed JSON, a missing field, an out-of-range recipe);
+retrieval by id and a 404 for an unknown one; CSV export for a shot, a
+completed sweep, a still-running sweep (409), and an unknown id (404); a
+sweep's full queue-poll-list lifecycle; cancelling a large sweep
+immediately after queuing it, which leaves it "cancelled" with fewer
+completed runs than its total; and `RunStore`'s 128-shot FIFO retention,
+exercised by posting 129 distinct shots (varying dose_g -- run_id is
+deterministic over the recipe, so identical requests would just overwrite
+one entry rather than growing the store) and confirming the first is
+evicted. It joins the other `tests/server/*.py` and `tests/cli/*.py`
+black-box scripts as a registered (`ctest --test-dir build -L server`),
+not-in-`test.sh` layer: each starts a real built binary as a subprocess,
+since neither `main.cpp` is linked into `espressolab_tests`.
 
 **TUI tests** (`[tui]`, `[cli_workflows]`) are pure and terminal-free: they
 call `tui_forms.cpp`'s navigation, field defaults, and validation directly
@@ -125,7 +161,8 @@ for reproducibility, not for correctness.
 
 `./scripts/demo.sh` is the local acceptance workflow: from a clean clone, run
 the baseline recipe, complete a grind-size sweep, export JSON and CSV, and rerun
-the same inputs to the same result hash. It is the intended native CI gate for
-Linux and macOS, but hosted CI evidence should not be claimed until observed
-runs are recorded. See [current-state-and-gaps.md](current-state-and-gaps.md)
-for the evidence status.
+the same inputs to the same result hash. GitHub Actions macOS, Linux, and
+dashboard jobs passed at commit `736cef3`. Later hardening on the current branch
+through `94fbe7a` has no equivalent hosted run recorded here, so do not extend
+that hosted evidence to the current branch. See
+[current-state-and-gaps.md](current-state-and-gaps.md) for the evidence status.

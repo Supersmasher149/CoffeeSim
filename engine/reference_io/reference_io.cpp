@@ -191,6 +191,15 @@ Catalogue load_directory(const std::filesystem::path& directory) {
                         "manifest references must be an array");
     }
 
+    // Audit F4, issue #6: root.value() with a wrong-typed existing key still
+    // throws nlohmann::json::type_error (it only tolerates a missing key),
+    // which crashed the whole catalogue load with an uncaught exception
+    // instead of the manifest-level LoadError the checks just above use for
+    // every other structural problem.
+    if (manifest.contains("schema_version") && !manifest.at("schema_version").is_string()) {
+        throw LoadError("REFERENCE_MANIFEST_INVALID", manifest_file.string(),
+                        "manifest schema_version must be a string");
+    }
     Catalogue catalogue;
     catalogue.schema_version = manifest.value("schema_version", std::string("1.0"));
     for (std::size_t index = 0; index < manifest.at("references").size(); ++index) {

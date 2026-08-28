@@ -4,6 +4,7 @@
 #include <iomanip>
 #include <iostream>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -26,6 +27,7 @@ using namespace espressolab;
 constexpr int kOk = 0;
 constexpr int kUsageError = 2;
 constexpr int kInputError = 3;
+constexpr int kSolverFailure = 4;
 
 void print_usage() {
     std::cout << R"(espressolab_cli - deterministic espresso extraction simulator
@@ -83,6 +85,47 @@ std::map<std::string, std::string> parse_flags(int argc, char** argv, int start)
     return flags;
 }
 
+// Audit F10: parse_flags() alone accepts any --name and silently ignores
+// positional arguments, so a typo like `--coefficient` (missing the trailing
+// `s`) ran with defaults instead of failing. Re-scan the same tokens against
+// a per-command allowlist before the command handler trusts them.
+bool reject_unknown_options(int argc, char** argv, int start, const std::set<std::string>& allowed,
+                             const std::string& command) {
+    std::set<std::string> seen;
+    for (int i = start; i < argc; ++i) {
+        const std::string token = argv[i];
+        if (token.rfind("--", 0) != 0) {
+            std::cerr << "error UNEXPECTED_ARGUMENT: '" << command
+                      << "' does not take positional arguments: '" << token << "'\n";
+            return false;
+        }
+        const std::string key = token.substr(2);
+        if (!allowed.count(key)) {
+            std::cerr << "error UNKNOWN_OPTION: unrecognized option '--" << key << "' for '" << command << "'\n";
+            return false;
+        }
+        if (!seen.insert(key).second) {
+            std::cerr << "error DUPLICATE_OPTION: option '--" << key << "' specified more than once\n";
+            return false;
+        }
+        // Mirror parse_flags(): a token that doesn't start with "--" is this
+        // flag's value, not a separate positional argument.
+        if (i + 1 < argc && std::strncmp(argv[i + 1], "--", 2) != 0) {
+            ++i;
+        }
+    }
+    return true;
+}
+
+// Audit F3, issue #4: simulate/cfd/cfd3d printed the termination reason but
+// always returned kOk, so automation could treat a numerical_failure or
+// invalid_state result as a successful run. target_mass_reached and
+// time_limit_reached are both successful completions; only these two
+// reasons (see TerminationReason in result.hpp) are solver-side failures.
+bool is_failure_termination(TerminationReason reason) {
+    return reason == TerminationReason::numerical_failure || reason == TerminationReason::invalid_state;
+}
+
 // Section 12.2 error shape, printed to stderr so scripts can separate it from
 // the artifact paths on stdout.
 void print_error(const std::string& code, const std::string& message, const std::string& path) {
@@ -119,6 +162,11 @@ void print_shot_report(const ShotResult& result) {
 }
 
 int command_simulate(int argc, char** argv) {
+    if (!reject_unknown_options(argc, argv, 2,
+                                 {"recipe", "coefficients", "out", "dt", "sample-interval", "quiet"},
+                                 "simulate")) {
+        return kUsageError;
+    }
     const auto flags = parse_flags(argc, argv, 2);
     if (!flags.count("recipe")) {
         print_error("MISSING_ARGUMENT", "--recipe <file> is required", "");
@@ -147,10 +195,13 @@ int command_simulate(int argc, char** argv) {
     if (!outcome.artifacts_dir.empty()) {
         std::cout << "\nartifacts: " << outcome.artifacts_dir.string() << '\n';
     }
-    return kOk;
+    return is_failure_termination(outcome.result.summary.termination) ? kSolverFailure : kOk;
 }
 
 int command_sweep(int argc, char** argv) {
+    if (!reject_unknown_options(argc, argv, 2, {"spec", "out", "quiet"}, "sweep")) {
+        return kUsageError;
+    }
     const auto flags = parse_flags(argc, argv, 2);
     if (!flags.count("spec")) {
         print_error("MISSING_ARGUMENT", "--spec <file> is required", "");
@@ -192,6 +243,10 @@ std::vector<std::string> split_list(const std::string& text) {
 }
 
 int command_synthesize(int argc, char** argv) {
+    if (!reject_unknown_options(
+            argc, argv, 2, {"recipe", "coefficients", "noise", "seed", "out", "recipe-path"}, "synthesize")) {
+        return kUsageError;
+    }
     const auto flags = parse_flags(argc, argv, 2);
     if (!flags.count("recipe") || !flags.count("out")) {
         print_error("MISSING_ARGUMENT", "--recipe <file> and --out <file> are required", "");
@@ -221,6 +276,9 @@ int command_synthesize(int argc, char** argv) {
 // release build. Also supplies the simulations-per-second number the resume
 // bullet template asks for (16.4).
 int command_bench(int argc, char** argv) {
+    if (!reject_unknown_options(argc, argv, 2, {"seconds", "repeats", "recipe", "coefficients"}, "bench")) {
+        return kUsageError;
+    }
     const auto flags = parse_flags(argc, argv, 2);
 
     cli_workflows::BenchRequest request;
@@ -249,6 +307,12 @@ int command_bench(int argc, char** argv) {
 }
 
 int command_calibrate(int argc, char** argv) {
+    if (!reject_unknown_options(argc, argv, 2,
+                                 {"shots", "coefficients", "fit", "holdout", "leave-one-out", "report", "out", "id",
+                                  "coefficient-version", "max-iterations"},
+                                 "calibrate")) {
+        return kUsageError;
+    }
     const auto flags = parse_flags(argc, argv, 2);
     if (!flags.count("shots") || !flags.count("fit")) {
         print_error("MISSING_ARGUMENT",
@@ -371,10 +435,22 @@ int command_calibrate(int argc, char** argv) {
 namespace {
 
 int command_cfd(int argc, char** argv) {
+    if (!reject_unknown_options(argc, argv, 2, {"recipe", "coefficients", "radial", "axial", "dt", "field"}, "cfd")) {
+        return kUsageError;
+    }
     const auto flags = parse_flags(argc, argv, 2);
     if (!flags.count("recipe")) {
         std::cerr << "cfd requires --recipe <file>\n";
         return 2;
+    }
+    // Audit F12: validate --field before running the solver so an unknown
+    // name (e.g. a typo) fails loudly instead of silently falling through
+    // to the saturation field.
+    static const std::set<std::string> kFieldNames = {"pressure", "saturation", "temperature", "tds"};
+    if (flags.count("field") && !kFieldNames.count(flags.at("field"))) {
+        print_error("UNKNOWN_OPTION", "unrecognized --field '" + flags.at("field") + "' (expected pressure, "
+                    "saturation, temperature, or tds)", "field");
+        return kUsageError;
     }
 
     cli_workflows::CfdRequest request;
@@ -430,10 +506,16 @@ int command_cfd(int argc, char** argv) {
             std::cout << '\n';
         }
     }
-    return 0;
+    return is_failure_termination(result.termination) ? kSolverFailure : kOk;
 }
 
 int command_cfd3d(int argc, char** argv) {
+    if (!reject_unknown_options(argc, argv, 2,
+                                 {"recipe", "case", "coefficients", "nx", "ny", "nz", "dt", "sample-interval",
+                                  "snapshot-interval", "material", "out", "quiet"},
+                                 "cfd3d")) {
+        return kUsageError;
+    }
     const auto flags = parse_flags(argc, argv, 2);
     if (!flags.count("recipe") && !flags.count("case")) {
         print_error("MISSING_ARGUMENT", "--recipe <file> or --case <file> is required", "");
@@ -481,7 +563,7 @@ int command_cfd3d(int argc, char** argv) {
         std::cout << "\nartifacts: " << outcome.artifacts_dir.string() << '\n'
                   << "result hash: " << outcome.manifest->result_hash << '\n';
     }
-    return kOk;
+    return is_failure_termination(result.termination) ? kSolverFailure : kOk;
 }
 
 }  // namespace

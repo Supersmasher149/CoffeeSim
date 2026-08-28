@@ -13,6 +13,7 @@ add_executable(espressolab_tests
   unit/test_artifacts.cpp
   unit/test_reference_io.cpp
   unit/test_calibration.cpp
+  unit/test_calibration_io.cpp
   unit/test_cli_workflows.cpp
   unit/test_tui_forms.cpp
   integration/test_shots.cpp
@@ -41,3 +42,31 @@ target_compile_definitions(espressolab_tests
 
 include(CTest)
 add_test(NAME espressolab_tests COMMAND espressolab_tests)
+
+# Audit P1, issue #17: apps/espressolab_server/main.cpp is not linked into
+# espressolab_tests (only the engine/library targets it uses are), so the
+# server's request translation, error mapping, background job polling,
+# cancellation, retention, and artifact export had no test target at all --
+# not "untested", literally not registered anywhere ctest could find. These
+# start the real built espressolab_server binary as a subprocess on an
+# isolated local port and exercise the documented REST contract end to end;
+# see each script's own docstring for what it covers. They need a real
+# server binary, so they only register when ESPRESSOLAB_BUILD_SERVER gave us
+# that target, and a Python 3 interpreter to run them with.
+if(TARGET espressolab_server)
+  find_package(Python3 COMPONENTS Interpreter)
+  if(Python3_Interpreter_FOUND)
+    foreach(smoke_script
+        server_port_smoke
+        cfd3d_error_smoke
+        cfd3d_concurrency_smoke
+        rest_integration_smoke)
+      add_test(
+        NAME server_${smoke_script}
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/server/${smoke_script}.py
+                $<TARGET_FILE:espressolab_server>)
+      set_tests_properties(server_${smoke_script} PROPERTIES LABELS "integration;server")
+    endforeach()
+  endif()
+endif()

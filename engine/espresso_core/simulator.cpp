@@ -265,10 +265,12 @@ void validate_inputs(const Recipe& recipe, const ModelCoefficients& coeff,
                      const SimulationConfig& config) {
     ValidationResult validation = recipe.validate();
     validation.merge(coeff.validate());
-    if (config.dt_s <= 0.0 || config.sample_interval_s <= 0.0) {
-        validation.add("NONPHYSICAL_INPUT", "solver dt_s and sample_interval_s must be positive",
-                       "config.dt_s");
-    }
+    // Audit F1: dt_s/sample_interval_s were only checked with `<= 0.0`, which
+    // NaN and infinity pass (NaN compares false against everything), letting
+    // non-finite controls reach the stepping loop. require_positive() rejects
+    // non-finite values first and reports the field that actually failed.
+    require_positive(validation, config.dt_s, "config.dt_s");
+    require_positive(validation, config.sample_interval_s, "config.sample_interval_s");
     if (!validation.ok()) throw InvalidInputError(validation);
 }
 

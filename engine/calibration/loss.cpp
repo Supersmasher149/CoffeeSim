@@ -94,8 +94,6 @@ ValidationResult MeasuredShot::validate() const {
 LossBreakdown evaluate_shot_loss(const MeasuredShot& shot, const ModelCoefficients& coefficients,
                                  const SimulationConfig& config, const LossWeights& weights,
                                  const espressolab::CancellationCallback& is_cancelled) {
-    LossBreakdown breakdown;
-
     ShotResult result;
     try {
         result = Simulator().run(shot.recipe, coefficients, config, is_cancelled);
@@ -103,18 +101,32 @@ LossBreakdown evaluate_shot_loss(const MeasuredShot& shot, const ModelCoefficien
         // A candidate outside the coefficient validation ranges is not a crash,
         // it is simply a very bad candidate. Give the optimiser a finite, large
         // number to walk away from rather than an exception.
-        breakdown.total = 1.0e9;
-        return breakdown;
+        LossBreakdown failed;
+        failed.total = 1.0e9;
+        return failed;
     }
+    return compare_shot_result(shot, result, weights).loss;
+}
+
+ShotResultComparison compare_shot_result(const MeasuredShot& shot, const ShotResult& result,
+                                         const LossWeights& weights) {
+    const ValidationResult validation = shot.validate();
+    if (!validation.ok()) throw InvalidInputError(validation);
+
+    ShotResultComparison comparison;
+    LossBreakdown& breakdown = comparison.loss;
     breakdown.simulated = true;
 
     // Mass curve RMSE over the measured sample times (11.4).
     if (!shot.series.empty()) {
+        comparison.paired_series.reserve(shot.series.size());
         double sum_squared = 0.0;
         for (const auto& sample : shot.series) {
             const double simulated = interpolate_beverage_mass_g(result.samples, sample.time_s);
-            const double error = simulated - sample.beverage_mass_g;
-            sum_squared += error * error;
+            const double residual = sample.beverage_mass_g - simulated;
+            comparison.paired_series.push_back(
+                {sample.time_s, sample.beverage_mass_g, simulated, residual});
+            sum_squared += residual * residual;
         }
         breakdown.mass_rmse_g = std::sqrt(sum_squared / static_cast<double>(shot.series.size()));
     } else if (shot.final_beverage_mass_g.has_value()) {
@@ -148,7 +160,7 @@ LossBreakdown evaluate_shot_loss(const MeasuredShot& shot, const ModelCoefficien
 
     breakdown.total = weights.mass * breakdown.mass_rmse_g + weights.time * breakdown.time_error_s +
                       weights.tds * breakdown.tds_error_percent;
-    return breakdown;
+    return comparison;
 }
 
 ValidationResult validate_leave_one_out_dataset(const std::vector<MeasuredShot>& shots) {

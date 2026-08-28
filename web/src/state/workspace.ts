@@ -5,6 +5,14 @@ export interface ShotWorkspace {
   draftRecipe: Recipe;
   validation: ValidationIssue[];
   activeRun?: ShotResult;
+  // Audit P7, issue #22: the exact recipe submitted to produce activeRun,
+  // captured at request time and left untouched by later draftRecipe edits.
+  // ShotResult carries no recipe of its own (just hashes), so result
+  // presentation that depends on recipe fields -- the puck view's target
+  // mass, the chart's pre-infusion marker -- must read this, not
+  // draftRecipe, or editing the draft after a run silently relabels what
+  // the result actually shows.
+  activeRecipe?: Recipe;
   comparisonRunIds: string[];
   cursorTimeSeconds?: number;
   requestState: "idle" | "running" | "failed";

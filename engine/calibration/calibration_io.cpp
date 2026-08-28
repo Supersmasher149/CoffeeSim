@@ -26,9 +26,12 @@ std::string read_file(const std::filesystem::path& file) {
     return buffer.str();
 }
 
-std::optional<double> optional_double(const json& node, const char* key) {
-    if (!node.contains(key) || node.at(key).is_null() || !node.at(key).is_number()) {
-        return std::nullopt;
+std::optional<double> optional_double(const json& node, const char* key,
+                                      const std::string& path) {
+    if (!node.contains(key) || node.at(key).is_null()) return std::nullopt;
+    if (!node.at(key).is_number()) {
+        throw artifact_io::LoadError("MALFORMED_JSON", path + "." + key,
+                                     std::string(key) + " must be a number or null");
     }
     return node.at(key).get<double>();
 }
@@ -38,6 +41,7 @@ json breakdown_json(const LossBreakdown& loss) {
             {"time_error_s", loss.time_error_s},
             {"tds_error_percent", loss.tds_error_percent},
             {"pressure_rmse_bar", loss.pressure_rmse_bar},
+            {"regularization", loss.regularization},
             {"total", loss.total},
             {"simulated", loss.simulated},
             {"has_time_measurement", loss.has_time_measurement},
@@ -88,68 +92,106 @@ MeasuredShot load_measured_shot_file(const std::filesystem::path& file,
         throw artifact_io::LoadError("MALFORMED_JSON", file.string(), e.what());
     }
 
-    const std::string schema = root.value("schema_version", std::string("1.0"));
-    if (schema != "1.0") {
-        throw artifact_io::LoadError("UNSUPPORTED_SCHEMA_VERSION",
-                                     file.string() + ".schema_version",
-                                     "measured shot schema_version '" + schema +
-                                         "' is not supported (expected 1.0)");
+    if (!root.is_object()) {
+        throw artifact_io::LoadError("MALFORMED_JSON", file.string(),
+                                     "measured shot document must be a JSON object");
     }
 
-    MeasuredShot shot;
-    shot.id = root.value("id", file.stem().string());
-    shot.source_stem = file.stem().string();
-    shot.machine = root.value("machine", std::string());
-    shot.date = root.value("date", std::string());
-    shot.notes = root.value("notes", std::string());
-    shot.synthetic = root.value("synthetic", false);
-
-    if (!root.contains("recipe")) {
-        throw artifact_io::LoadError("MISSING_FIELD", file.string() + ".recipe",
-                                     "a measured shot must name the recipe it was brewed from");
-    }
-    const json& recipe_node = root.at("recipe");
-    if (recipe_node.is_string()) {
-        const std::filesystem::path candidate(recipe_node.get<std::string>());
-        const std::filesystem::path resolved =
-            candidate.is_absolute() ? candidate : recipe_base / candidate;
-        shot.recipe = artifact_io::load_recipe_file(resolved);
-    } else {
-        // An inline recipe keeps a shot self-contained, which matters when the
-        // machine setup is a one-off that no asset file describes.
-        shot.recipe = artifact_io::load_recipe_json(recipe_node.dump());
-    }
-
-    if (root.contains("series") && root.at("series").is_object()) {
-        const json& series = root.at("series");
-        const auto times = series.value("time_s", std::vector<double>{});
-        const auto masses = series.value("beverage_mass_g", std::vector<double>{});
-        const auto pressures = series.value("pressure_bar", std::vector<double>{});
-        if (times.size() != masses.size()) {
-            throw artifact_io::LoadError(
-                "SERIES_LENGTH_MISMATCH", file.string() + ".series",
-                "time_s and beverage_mass_g must have the same number of points");
+    try {
+        const std::string schema = root.value("schema_version", std::string("1.0"));
+        if (schema != "1.0") {
+            throw artifact_io::LoadError("UNSUPPORTED_SCHEMA_VERSION",
+                                         file.string() + ".schema_version",
+                                         "measured shot schema_version '" + schema +
+                                             "' is not supported (expected 1.0)");
         }
-        for (std::size_t i = 0; i < times.size(); ++i) {
-            MeasuredSample sample;
-            sample.time_s = times[i];
-            sample.beverage_mass_g = masses[i];
-            if (i < pressures.size()) sample.pressure_bar = pressures[i];
-            shot.series.push_back(sample);
-        }
-    }
 
-    if (root.contains("final") && root.at("final").is_object()) {
-        const json& final_node = root.at("final");
-        shot.final_beverage_mass_g = optional_double(final_node, "beverage_mass_g");
-        shot.final_shot_time_s = optional_double(final_node, "shot_time_s");
-        shot.final_tds_percent = optional_double(final_node, "tds_percent");
+        MeasuredShot shot;
+        shot.id = root.value("id", file.stem().string());
+        shot.source_stem = file.stem().string();
+        shot.machine = root.value("machine", std::string());
+        shot.date = root.value("date", std::string());
+        shot.notes = root.value("notes", std::string());
+        shot.synthetic = root.value("synthetic", false);
+
+        if (!root.contains("recipe")) {
+            throw artifact_io::LoadError("MISSING_FIELD", file.string() + ".recipe",
+                                         "a measured shot must name the recipe it was brewed from");
+        }
+        const json& recipe_node = root.at("recipe");
+        if (recipe_node.is_string()) {
+            const std::filesystem::path candidate(recipe_node.get<std::string>());
+            const std::filesystem::path resolved =
+                candidate.is_absolute() ? candidate : recipe_base / candidate;
+            shot.recipe = artifact_io::load_recipe_file(resolved);
+        } else if (recipe_node.is_object()) {
+            // An inline recipe keeps a shot self-contained, which matters when the
+            // machine setup is a one-off that no asset file describes.
+            shot.recipe = artifact_io::load_recipe_json(recipe_node.dump());
+        } else {
+            throw artifact_io::LoadError("MALFORMED_JSON", file.string() + ".recipe",
+                                         "recipe must be a path string or recipe object");
+        }
+
+        if (root.contains("series")) {
+            if (!root.at("series").is_object()) {
+                throw artifact_io::LoadError("MALFORMED_JSON", file.string() + ".series",
+                                             "series must be an object");
+            }
+            const json& series = root.at("series");
+            const auto times = series.value("time_s", std::vector<double>{});
+            const auto masses = series.value("beverage_mass_g", std::vector<double>{});
+            const json pressures = series.value("pressure_bar", json::array());
+            if (!pressures.is_array()) {
+                throw artifact_io::LoadError("MALFORMED_JSON",
+                                             file.string() + ".series.pressure_bar",
+                                             "pressure_bar must be an array when supplied");
+            }
+            if (times.size() != masses.size() ||
+                (!pressures.empty() && pressures.size() != times.size())) {
+                throw artifact_io::LoadError(
+                    "SERIES_LENGTH_MISMATCH", file.string() + ".series",
+                    "time_s, beverage_mass_g, and any pressure_bar array must have the same "
+                    "number of points");
+            }
+            for (std::size_t i = 0; i < times.size(); ++i) {
+                MeasuredSample sample;
+                sample.time_s = times[i];
+                sample.beverage_mass_g = masses[i];
+                if (!pressures.empty() && !pressures.at(i).is_null()) {
+                    if (!pressures.at(i).is_number()) {
+                        throw artifact_io::LoadError(
+                            "MALFORMED_JSON",
+                            file.string() + ".series.pressure_bar[" + std::to_string(i) + "]",
+                            "pressure samples must be numbers or null");
+                    }
+                    sample.pressure_bar = pressures.at(i).get<double>();
+                }
+                shot.series.push_back(sample);
+            }
+        }
+
+        if (root.contains("final")) {
+            if (!root.at("final").is_object()) {
+                throw artifact_io::LoadError("MALFORMED_JSON", file.string() + ".final",
+                                             "final must be an object");
+            }
+            const json& final_node = root.at("final");
+            shot.final_beverage_mass_g =
+                optional_double(final_node, "beverage_mass_g", file.string() + ".final");
+            shot.final_shot_time_s =
+                optional_double(final_node, "shot_time_s", file.string() + ".final");
+            shot.final_tds_percent =
+                optional_double(final_node, "tds_percent", file.string() + ".final");
+        }
+        return shot;
+    } catch (const json::exception& e) {
+        throw artifact_io::LoadError("MALFORMED_JSON", file.string(), e.what());
     }
-    return shot;
 }
 
 std::vector<MeasuredShot> load_measured_shot_directory(const std::filesystem::path& directory) {
-    if (!std::filesystem::exists(directory)) {
+    if (!std::filesystem::exists(directory) || !std::filesystem::is_directory(directory)) {
         throw artifact_io::LoadError("DIRECTORY_NOT_FOUND", directory.string(),
                                      "no measured-shot directory at " + directory.string());
     }
@@ -263,10 +305,20 @@ std::string dump_fitted_coefficients_json(const CalibrationReport& report, const
             "model itself and must not be presented as calibrated against real espresso.");
     }
 
+    // Issue #9, Audit F6: "dataset" here used to hold the array of fitting
+    // shot IDs, but schemas/coefficients.schema.json documents provenance
+    // .dataset as a single string or null, and load_coefficients_json() now
+    // enforces that shape -- reloading a calibration output file (e.g. as
+    // the starting point for a further fit) would otherwise throw
+    // MALFORMED_JSON. There is no single named dataset here, so this is
+    // null; the shot IDs themselves are preserved under fitting_shots
+    // instead, alongside the fields below that are calibration-run
+    // telemetry rather than part of the base coefficient contract.
     root["provenance"] = {{"source", report.used_synthetic_data
                                          ? "fitted against SYNTHETIC shots (machinery check only)"
                                          : "fitted against measured shots"},
-                          {"dataset", fitting_shot_ids},
+                          {"dataset", nullptr},
+                          {"fitting_shots", fitting_shot_ids},
                           {"validation_shots", validation_shot_ids},
                           {"fitted_parameters", fitted_names},
                           {"final_loss", report.final_loss},

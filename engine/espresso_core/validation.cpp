@@ -39,4 +39,20 @@ void require_positive(ValidationResult& result, double value, const char* path) 
     }
 }
 
+void require_nonnegative(ValidationResult& result, double value, const char* path) {
+    if (!std::isfinite(value)) {
+        result.add("NONFINITE_INPUT", std::string(path) + " must be a finite number", path);
+        return;
+    }
+    if (value < 0.0) {
+        result.add("NONPHYSICAL_INPUT", std::string(path) + " must not be negative", path);
+    }
+}
+
+void require_finite(ValidationResult& result, double value, const char* path) {
+    if (!std::isfinite(value)) {
+        result.add("NONFINITE_INPUT", std::string(path) + " must be a finite number", path);
+    }
+}
+
 }  // namespace espressolab

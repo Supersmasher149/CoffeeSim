@@ -36,6 +36,20 @@ struct Recipe {
     [[nodiscard]] double basket_area_m2() const;
 };
 
+// Where a coefficient set's values came from, separate from the values
+// themselves (issue #9, Audit F6): docs/data-contracts.md requires
+// calibration output to "retain its data provenance and limitations," and
+// schemas/coefficients.schema.json documents this exact shape. Deliberately
+// not part of ModelCoefficients::validate() or coefficient_hash() -- it's
+// descriptive metadata about the values, not a solver input, so attaching
+// or editing it must not change what a run's coefficient_hash means.
+struct CoefficientProvenance {
+    std::string source;
+    std::optional<std::string> dataset;
+    std::string date;
+    std::vector<std::string> limitations;
+};
+
 // Appendix A.2. Empirical values only: every one of these is a calibration
 // target, versioned separately from the recipe and the solver (10.2).
 struct ModelCoefficients {
@@ -75,6 +89,8 @@ struct ModelCoefficients {
     // Pressure profiles are gauge pressure across the puck, so the outlet sits
     // at 0 by default. Kept configurable for a future backpressure model.
     double outlet_pressure_pa = 0.0;
+
+    std::optional<CoefficientProvenance> provenance;
 
     [[nodiscard]] ValidationResult validate() const;
 };

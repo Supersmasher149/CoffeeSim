@@ -3,9 +3,13 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <stdexcept>
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
 #include "../fixtures/test_fixtures.hpp"
+#include "espressolab/artifact_io.hpp"
 #include "espressolab/cfd3d.hpp"
 #include "espressolab/cfd3d_artifact_io.hpp"
 
@@ -118,6 +122,70 @@ TEST_CASE("cfd3d rejects unsupported mesh and snapshot budgets", "[cfd3d][artifa
     Cfd3dConfig snapshots = small_config();
     snapshots.snapshot_interval_s = 0.01;
     REQUIRE_THROWS_AS(Cfd3dSolver().run(recipe, coefficients, snapshots), InvalidInputError);
+}
+
+// Audit F4, issue #6: root.value("schema_version", ...) only tolerates a
+// *missing* key -- a present key of the wrong type still threw an uncaught
+// nlohmann::json::type_error instead of a structured MALFORMED_JSON.
+TEST_CASE("a wrongly typed cfd3d schema_version is a structured error", "[cfd3d][artifacts]") {
+    REQUIRE_THROWS_MATCHES(
+        cfd3d_artifact_io::load_case_json(R"({"schema_version":123,"recipe":{}})"), artifact_io::LoadError,
+        Catch::Matchers::Predicate<artifact_io::LoadError>([](const artifact_io::LoadError& e) {
+            return e.code == "MALFORMED_JSON" && e.path == "cfd3d.schema_version";
+        }));
+}
+
+// Audit P3, issue #20: Cfd3dField/Cfd3dMaterialField's 4-arg constructors
+// are public and called field_size() directly, which had no checked
+// multiplication and no maximum -- a caller constructing one directly
+// (bypassing both Cfd3dSolver::run()'s mesh check and
+// cfd3d_artifact_io::validate_mesh_bounds, issue #5's loader-side guard for
+// the JSON path) could overflow std::size_t or force an unbounded
+// allocation. Both constructors must now enforce the same 128x128x256 /
+// 262144-cell policy the solver and loader already do.
+TEST_CASE("Cfd3dField/Cfd3dMaterialField constructors reject oversized and overflowing dimensions",
+          "[cfd3d]") {
+    SECTION("negative dimensions are still rejected") {
+        REQUIRE_THROWS_AS(Cfd3dField(-1, 4, 4), std::invalid_argument);
+        REQUIRE_THROWS_AS(Cfd3dMaterialField(4, -1, 4), std::invalid_argument);
+    }
+    SECTION("zero dimensions are rejected") { REQUIRE_THROWS_AS(Cfd3dField(0, 4, 4), std::invalid_argument); }
+    SECTION("one axis over the per-axis cap is rejected") {
+        REQUIRE_THROWS_AS(Cfd3dField(129, 1, 1), std::invalid_argument);
+        REQUIRE_THROWS_AS(Cfd3dMaterialField(1, 1, 257), std::invalid_argument);
+    }
+    SECTION("within each axis cap but over the cell-product cap is rejected") {
+        REQUIRE_THROWS_AS(Cfd3dField(100, 100, 100), std::invalid_argument);
+    }
+    SECTION("dimensions large enough to overflow size_t are rejected, not truncated") {
+        constexpr int huge = 1'000'000'000;
+        REQUIRE_THROWS_AS(Cfd3dField(huge, huge, huge), std::invalid_argument);
+    }
+    SECTION("a mesh within every limit still constructs normally") {
+        const Cfd3dField field(6, 6, 8, 2.5);
+        REQUIRE(field.size() == 6u * 6u * 8u);
+        REQUIRE(field.at(0, 0, 0) == Catch::Approx(2.5));
+    }
+}
+
+// Audit F2, issue #5: parse_material() built a dense Cfd3dMaterialField from
+// mesh.nx/ny/nz before the solver's mesh-limit validation ran, so an
+// oversized scalar/uniform material request forced a large allocation on
+// load. The loader must reject the mesh before allocating anything.
+TEST_CASE("load_case_json rejects an oversized scalar material without allocating a field",
+          "[cfd3d][artifacts]") {
+    using nlohmann::json;
+    json root = json::parse(cfd3d_artifact_io::dump_case_json(
+        cfd3d_artifact_io::Cfd3dCase{testing::baseline_recipe(), testing::baseline_coefficients(), {}}, -1));
+    root["mesh"] = {{"nx", 129}, {"ny", 1}, {"nz", 1}};  // one past the documented 128 cap
+    root["material"] = 1.0;                              // scalar/uniform: the allocating branch
+    REQUIRE_THROWS_AS(cfd3d_artifact_io::load_case_json(root.dump()), artifact_io::LoadError);
+
+    json product_root = json::parse(cfd3d_artifact_io::dump_case_json(
+        cfd3d_artifact_io::Cfd3dCase{testing::baseline_recipe(), testing::baseline_coefficients(), {}}, -1));
+    product_root["mesh"] = {{"nx", 100}, {"ny", 100}, {"nz", 100}};  // within each axis cap, over the 262144 product
+    product_root["material"] = 1.0;
+    REQUIRE_THROWS_AS(cfd3d_artifact_io::load_case_json(product_root.dump()), artifact_io::LoadError);
 }
 
 TEST_CASE("cfd3d case artifacts round trip their executable contract", "[cfd3d][artifacts]") {

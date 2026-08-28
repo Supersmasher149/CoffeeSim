@@ -2,11 +2,11 @@
 
 A local engineering workbench that simulates an espresso shot from controllable
 brew inputs, plots pressure, temperature, flow, beverage mass, strength and
-extraction over time, and lets you compare recipes through reproducible
-parameter sweeps.
+extraction over time, and compares simulations with reproducible sweeps or
+stored measured-shot telemetry.
 
-Deterministic C++20 simulation core, React/TypeScript dashboard, no AI, and a
-separate experimental CFD solver.
+Deterministic C++20 simulation core, React/TypeScript dashboard, interactive
+terminal UI, no AI, and separate experimental 2D and Cartesian 3D CFD solvers.
 
 ## Quick start
 
@@ -76,6 +76,14 @@ measurements, links back to the source experiment, and clearly marks the records
 as metadata only: the supplied files contain no DE1 time series or final shot
 times and are not used for calibration or validation.
 
+A separate measured-shot catalogue reads model-ready files from
+`assets/measured_shots/`. Selecting one runs the native solver once with the
+shot's recorded recipe and overlays simulated and measured mass. It reports
+mass, pressure, stop-time, and TDS residual metrics where measurements exist; it
+does not fit coefficients. The repository's current measured shots are
+synthetic fixtures, so this workflow verifies comparison plumbing rather than
+real-world accuracy.
+
 Every simulation number on screen comes from the native solver. The one piece of browser
 arithmetic is the cross-section's spout, which differences beverage mass between
 neighbouring samples to know how fast the cup is filling — the sampled flow is
@@ -98,7 +106,8 @@ web (React/TS)  ->  tool_server (REST)  ->  experiment_runner
                                                      |
                                          model_library (water, permeability, heat, extraction)
 
-CLI and CFD tests  ->  cfd (separate Level 4 solver)  ->  espresso_core + model_library
+CLI and CFD tests  ->  cfd / cfd3d (separate Level 4 solvers)
+                                      -> espresso_core + model_library
 ```
 
 Dependencies point inward. The simulation library knows nothing about HTTP,
@@ -119,8 +128,8 @@ Every equation is in [docs/model.md](docs/model.md).
 What it does **not** do:
 
 - The default pipeline has no radial structure inside a region and no dynamic
-  channelling. A separate 2D axisymmetric CFD solver (below) adds the radial
-  coordinate; it does not feed the dashboard or the artifacts.
+  channelling. Separate 2D axisymmetric and Cartesian 3D CFD solvers add spatial
+  structure; they do not alter the default shot pipeline or its artifacts.
 - **No pore-resolved simulation.** The CFD solver's momentum closure is Darcy at
   the representative-elementary-volume scale. Pore geometry is not meshed, so
   nothing here is particle-resolved or a pore-scale DNS.
@@ -169,6 +178,13 @@ which is what CFD means for a medium whose pores are represented statistically.
 It is not a pore-resolved simulation, and it is verified but not validated. See
 [docs/model.md](docs/model.md).
 
+`espressolab_cli cfd3d` is the separate Cartesian path. It accepts a recipe or
+a complete 3D case, bounded `nx`/`ny`/`nz` dimensions, optional material field,
+and snapshot controls. File runs write `case.json`, `summary.json`,
+`manifest.json`, `samples.csv`, `mesh.json`, `fields.elf3d`, and `index.json`;
+the case/result JSON schemas and `ELF3D-1` field format are versioned separately
+from standard shot artifacts.
+
 ## Reproducibility
 
 Every run records its recipe hash, coefficient hash, solver version, step size
@@ -190,6 +206,11 @@ espressolab_cli synthesize --recipe <file> [--noise <g>] --out <file>
 espressolab_cli cfd      --recipe <file> [--coefficients <file>]
                          [--radial <n>] [--axial <n>] [--dt <s>]
                          [--field pressure|saturation|temperature|tds]
+espressolab_cli cfd3d    --recipe <file> [--coefficients <file>] [--out <dir>]
+                         [--nx <n>] [--ny <n>] [--nz <n>] [--dt <s>]
+                         [--sample-interval <s>] [--snapshot-interval <s>]
+                         [--material <file>] [--quiet]
+espressolab_cli cfd3d    --case <file> [--out <dir>] [--quiet]
 espressolab_cli bench    [--seconds <s>] [--repeats <n>]
 
 espressolab_cli params     # sweepable recipe parameters
@@ -213,6 +234,7 @@ Artifacts land in the layout of section 10.4:
 ```
 outputs/shots/<run-id>/{recipe,coefficients,summary,manifest}.json + samples.csv
 outputs/sweeps/<sweep-id>/{sweep.json,runs.jsonl,aggregate.csv,manifest.json}
+<cfd3d-out-dir>/{case,summary,manifest,mesh,index}.json + samples.csv + fields.elf3d
 ```
 
 ## Tests
@@ -221,16 +243,22 @@ outputs/sweeps/<sweep-id>/{sweep.json,runs.jsonl,aggregate.csv,manifest.json}
 ./scripts/test.sh
 ```
 
-146 test cases, 18,110 assertions: unit tests for every correlation, whole-shot
+The current native suite passes 165 test cases and 18,213 assertions: unit tests
+for every correlation, whole-shot
 integration tests, generated-input property tests, mass-balance invariants, a
 step-size convergence test, sweep progress and cancellation tests, parallel-region
 balance and serialization tests, axial grid-refinement and wetting-front tests, CFD verification tests
 (divergence, exact solutions, mesh convergence, conservation),
 calibration recovery tests, deterministic leave-one-out validation tests,
-native cancellation-checkpoint tests, and pure (terminal-free) tests of the
+native cancellation-checkpoint tests, measured-shot catalogue/comparison tests,
+and pure (terminal-free) tests of the
 TUI's navigation, forms, and shared workflow services. A separate POSIX PTY
-smoke matrix (`python3 tests/pty/tui_smoke.py`) covers the TUI's actual
-terminal rendering, resize, and Ctrl-C handling. See
+smoke script (`python3 tests/pty/tui_smoke.py`) defines 14 checks for the TUI's
+actual terminal rendering, form execution/scrolling, resize, Ctrl-C, restoration,
+and non-TTY rejection; it is not part of `./scripts/test.sh` and was not rerun
+for this documentation refresh. Hosted GitHub Actions passed the macOS, Linux,
+and dashboard jobs at commit `736cef3`; current branch hardening through
+`94fbe7a` has local evidence but no equivalent hosted run recorded here. See
 [docs/testing.md](docs/testing.md).
 
 ## Documentation
@@ -239,7 +267,7 @@ terminal rendering, resize, and Ctrl-C handling. See
 | --- | --- |
 | [docs/getting-started.md](docs/getting-started.md) | Build, test, simulate, run the dashboard, and locate artifacts |
 | [docs/development.md](docs/development.md) | Contributor workflow, module ownership, build variants, and quality checks |
-| [docs/data-contracts.md](docs/data-contracts.md) | Recipe, coefficient, result, sweep, and reference data ownership |
+| [docs/data-contracts.md](docs/data-contracts.md) | Recipe, coefficient, result, sweep, measured-shot, CFD3D, and reference data ownership |
 | [docs/model.md](docs/model.md) | Every equation, coefficient and guardrail |
 | [docs/architecture.md](docs/architecture.md) | Component boundaries and the dependency rule |
 | [docs/api.md](docs/api.md) | REST endpoints and the error contract |
@@ -247,7 +275,7 @@ terminal rendering, resize, and Ctrl-C handling. See
 | [docs/testing.md](docs/testing.md) | What each test layer is for |
 | [docs/roadmap.md](docs/roadmap.md) | Status against the four-week plan, and what is not done |
 | [docs/current-state-and-gaps.md](docs/current-state-and-gaps.md) | Evidence-based implementation status and open gaps |
-| [schemas/](schemas/) | JSON Schema for recipes, coefficients and results |
+| [schemas/](schemas/) | JSON Schema for recipes, coefficients, shot results, and CFD3D cases/results |
 
 ## Requirements
 

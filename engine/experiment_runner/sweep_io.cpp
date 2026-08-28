@@ -95,57 +95,74 @@ SweepSpec load_sweep_spec_file(const std::filesystem::path& file) {
     } catch (const json::parse_error& e) {
         throw artifact_io::LoadError("MALFORMED_JSON", file.string(), e.what());
     }
-
-    SweepSpec spec;
-    spec.name = root.value("name", std::string("sweep"));
-
-    const std::filesystem::path base = file.parent_path();
-    const auto resolve = [&base](const std::string& p) {
-        const std::filesystem::path candidate(p);
-        return candidate.is_absolute() ? candidate : base / candidate;
-    };
-
-    if (!root.contains("baseline_recipe")) {
-        throw artifact_io::LoadError("MISSING_FIELD", "sweep.baseline_recipe",
-                                     "baseline_recipe path is required");
-    }
-    spec.baseline = artifact_io::load_recipe_file(resolve(root.at("baseline_recipe").get<std::string>()));
-    if (root.contains("coefficients")) {
-        spec.coefficients =
-            artifact_io::load_coefficients_file(resolve(root.at("coefficients").get<std::string>()));
-    }
-    if (root.contains("solver")) {
-        const json& solver = root.at("solver");
-        spec.config.dt_s = solver.value("dt_s", spec.config.dt_s);
-        spec.config.sample_interval_s =
-            solver.value("sample_interval_s", spec.config.sample_interval_s);
+    // Audit F4, issue #6: a root of the wrong type (e.g. `[]`) passed parsing
+    // but then threw an uncaught nlohmann::json::type_error on the first
+    // `.value()` call below instead of a structured error.
+    if (!root.is_object()) {
+        throw artifact_io::LoadError("MALFORMED_JSON", "sweep", "sweep spec must be a JSON object");
     }
 
-    if (!root.contains("axes") || !root.at("axes").is_array()) {
-        throw artifact_io::LoadError("MISSING_FIELD", "sweep.axes", "axes array is required");
-    }
-    for (const auto& axis_json : root.at("axes")) {
-        SweepAxis axis;
-        axis.parameter_path = axis_json.value("parameter_path", std::string());
-        if (axis_json.contains("values")) {
-            axis.values = axis_json.at("values").get<std::vector<double>>();
-        } else if (axis_json.contains("range")) {
-            // {"from": 250, "to": 450, "steps": 9} expands inclusively.
-            const json& range = axis_json.at("range");
-            const double from = range.value("from", 0.0);
-            const double to = range.value("to", 0.0);
-            const int steps = range.value("steps", 2);
-            for (int i = 0; i < std::max(steps, 1); ++i) {
-                const double f = steps > 1 ? static_cast<double>(i) / (steps - 1) : 0.0;
-                axis.values.push_back(from + f * (to - from));
-            }
+    // Everything below reads fields with unchecked `.value()`/`.get<T>()`
+    // calls; a field present with the wrong type (a string "axes", a
+    // non-numeric "dt_s", ...) throws nlohmann::json::type_error. Translate
+    // any such exception into the project's LoadError contract instead of
+    // letting it reach the CLI/server as an uncaught INTERNAL_ERROR.
+    // LoadError itself is not a json::exception, so load_recipe_file()'s and
+    // load_coefficients_file()'s own errors pass through unchanged.
+    try {
+        SweepSpec spec;
+        spec.name = root.value("name", std::string("sweep"));
+
+        const std::filesystem::path base = file.parent_path();
+        const auto resolve = [&base](const std::string& p) {
+            const std::filesystem::path candidate(p);
+            return candidate.is_absolute() ? candidate : base / candidate;
+        };
+
+        if (!root.contains("baseline_recipe")) {
+            throw artifact_io::LoadError("MISSING_FIELD", "sweep.baseline_recipe",
+                                         "baseline_recipe path is required");
         }
-        spec.axes.push_back(std::move(axis));
+        spec.baseline = artifact_io::load_recipe_file(resolve(root.at("baseline_recipe").get<std::string>()));
+        if (root.contains("coefficients")) {
+            spec.coefficients =
+                artifact_io::load_coefficients_file(resolve(root.at("coefficients").get<std::string>()));
+        }
+        if (root.contains("solver")) {
+            const json& solver = root.at("solver");
+            spec.config.dt_s = solver.value("dt_s", spec.config.dt_s);
+            spec.config.sample_interval_s =
+                solver.value("sample_interval_s", spec.config.sample_interval_s);
+        }
+
+        if (!root.contains("axes") || !root.at("axes").is_array()) {
+            throw artifact_io::LoadError("MISSING_FIELD", "sweep.axes", "axes array is required");
+        }
+        for (const auto& axis_json : root.at("axes")) {
+            SweepAxis axis;
+            axis.parameter_path = axis_json.value("parameter_path", std::string());
+            if (axis_json.contains("values")) {
+                axis.values = axis_json.at("values").get<std::vector<double>>();
+            } else if (axis_json.contains("range")) {
+                // {"from": 250, "to": 450, "steps": 9} expands inclusively.
+                const json& range = axis_json.at("range");
+                const double from = range.value("from", 0.0);
+                const double to = range.value("to", 0.0);
+                const int steps = range.value("steps", 2);
+                for (int i = 0; i < std::max(steps, 1); ++i) {
+                    const double f = steps > 1 ? static_cast<double>(i) / (steps - 1) : 0.0;
+                    axis.values.push_back(from + f * (to - from));
+                }
+            }
+            spec.axes.push_back(std::move(axis));
+        }
+        if (root.contains("output_metrics")) {
+            spec.output_metrics = root.at("output_metrics").get<std::vector<std::string>>();
+        }
+        return spec;
+    } catch (const json::exception& e) {
+        throw artifact_io::LoadError("MALFORMED_JSON", "sweep", e.what());
     }
-    if (root.contains("output_metrics")) {
-        spec.output_metrics = root.at("output_metrics").get<std::vector<std::string>>();
-    }
-    return spec;
 }
 
 void write_sweep_artifacts(const std::filesystem::path& directory, const SweepResult& result) {

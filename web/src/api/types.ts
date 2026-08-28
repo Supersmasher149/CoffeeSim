@@ -22,6 +22,16 @@ export interface Recipe {
   // field is carried through an edit untouched so a multi-region recipe from
   // the catalogue keeps its regions on the way back to the solver.
   parallel_regions?: ParallelRegion[];
+  // Audit P5, issue #21: dump_recipe_json() always emits axial_cells (never
+  // omitted server-side), but the type omitted it entirely, so typed code
+  // that reconstructs a Recipe object literal instead of spreading one could
+  // silently drop it -- axial_cells absent on load means the loader defaults
+  // to 1, quietly reverting a Level 3 axially-resolved recipe to the lumped
+  // Level 1/2 model with no UI indication (there is no dashboard cell
+  // editor; this field only has to survive edits to other fields, per
+  // CLAUDE.md's "no dashboard region editor" note for Level 3). Optional
+  // here to match the same missing-defaults-to-1 contract as the server.
+  axial_cells?: number;
   pressure_profile_bar: ProfilePoint[];
   temperature_profile_c: ProfilePoint[];
   stop: {

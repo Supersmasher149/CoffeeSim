@@ -20,7 +20,9 @@ def repo_root():
 
 
 def default_binary():
-    return os.path.join(repo_root(), "build", "apps", "espressolab_server", "espressolab_server")
+    return os.path.join(
+        repo_root(), "build", "apps", "espressolab_server", "espressolab_server"
+    )
 
 
 def get(base_url, path):
@@ -88,20 +90,35 @@ def main():
         shots = catalogue.get("measured_shots", [])
         ids = [shot.get("id") for shot in shots]
         check(checks, status == 200, "catalogue returns 200", catalogue)
-        check(checks, catalogue.get("count") == 3 and len(shots) == 3,
-              "catalogue contains all three measured-shot fixtures", catalogue)
+        check(
+            checks,
+            catalogue.get("count") == 3 and len(shots) == 3,
+            "catalogue contains all three measured-shot fixtures",
+            catalogue,
+        )
         check(checks, ids == sorted(ids), "catalogue is sorted by embedded id", ids)
-        check(checks, all(shot.get("synthetic") is True for shot in shots),
-              "synthetic flags pass through unchanged", shots)
-        check(checks, all("source_stem" in shot and "final" in shot for shot in shots),
-              "catalogue exposes source stems and nullable final objects", shots)
+        check(
+            checks,
+            all(shot.get("synthetic") is True for shot in shots),
+            "synthetic flags pass through unchanged",
+            shots,
+        )
+        check(
+            checks,
+            all("source_stem" in shot and "final" in shot for shot in shots),
+            "catalogue exposes source stems and nullable final objects",
+            shots,
+        )
 
         selected = shots[0]
         identifier = urllib.parse.quote(selected["id"], safe="")
         status, comparison = get(
-            base_url, f"/api/v1/measured-shots/{identifier}/compare?coefficients=default-v1"
+            base_url,
+            f"/api/v1/measured-shots/{identifier}/compare?coefficients=default-v1",
         )
-        check(checks, status == 200, "comparison by embedded id returns 200", comparison)
+        check(
+            checks, status == 200, "comparison by embedded id returns 200", comparison
+        )
         coefficient = comparison.get("coefficients", {})
         check(
             checks,
@@ -126,11 +143,21 @@ def main():
         loss = comparison.get("loss", {})
         check(
             checks,
-            all(key in loss for key in (
-                "mass_rmse_g", "time_error_s", "tds_error_percent", "pressure_rmse_bar",
-                "regularization", "total", "simulated", "has_time_measurement",
-                "has_tds_measurement", "has_pressure_measurement",
-            )),
+            all(
+                key in loss
+                for key in (
+                    "mass_rmse_g",
+                    "time_error_s",
+                    "tds_error_percent",
+                    "pressure_rmse_bar",
+                    "regularization",
+                    "total",
+                    "simulated",
+                    "has_time_measurement",
+                    "has_tds_measurement",
+                    "has_pressure_measurement",
+                )
+            ),
             "comparison returns the complete native loss breakdown",
             loss,
         )
@@ -159,15 +186,27 @@ def main():
         )
 
         status, body = get(base_url, "/api/v1/measured-shots/unknown/compare")
-        check(checks, status == 404 and body.get("error", {}).get("code") == "MEASURED_SHOT_NOT_FOUND",
-              "unknown measured shot returns structured 404", body)
+        check(
+            checks,
+            status == 404
+            and body.get("error", {}).get("code") == "MEASURED_SHOT_NOT_FOUND",
+            "unknown measured shot returns structured 404",
+            body,
+        )
         status, body = get(
             base_url,
             f"/api/v1/measured-shots/{identifier}/compare?coefficients=unknown",
         )
-        check(checks, status == 404 and body.get("error", {}).get("code") == "COEFFICIENTS_NOT_FOUND",
-              "unknown coefficient selector returns structured 404", body)
-        status, _ = get(base_url, "/api/v1/measured-shots/%2e%2e%2frecipes%2fbaseline/compare")
+        check(
+            checks,
+            status == 404
+            and body.get("error", {}).get("code") == "COEFFICIENTS_NOT_FOUND",
+            "unknown coefficient selector returns structured 404",
+            body,
+        )
+        status, _ = get(
+            base_url, "/api/v1/measured-shots/%2e%2e%2frecipes%2fbaseline/compare"
+        )
         check(checks, status != 200, "encoded path traversal cannot select an asset")
     finally:
         stop_server(process)
@@ -183,8 +222,8 @@ def main():
             status, body = get(base_url, "/api/v1/measured-shots")
             check(
                 checks,
-                status == 500 and body.get("error", {}).get("code") == "MEASURED_SHOT_LOAD_FAILED",
-                "malformed stored shot fails the whole catalogue structurally",
+                status == 200 and body.get("count") == 3,
+                "one malformed stored shot is skipped, not fatal to the catalogue",
                 body,
             )
         finally:
@@ -194,19 +233,23 @@ def main():
         copied_assets = os.path.join(temporary, "assets")
         shutil.copytree(os.path.join(repo_root(), "assets"), copied_assets)
         measured = os.path.join(copied_assets, "measured_shots")
-        source = sorted(name for name in os.listdir(measured) if name.endswith(".json"))[0]
+        source = sorted(
+            name for name in os.listdir(measured) if name.endswith(".json")
+        )[0]
         with open(os.path.join(measured, source), encoding="utf-8") as stream:
             duplicate = json.load(stream)
         duplicate["id"] = os.path.splitext(source)[0]
-        with open(os.path.join(measured, "alias-collision.json"), "w", encoding="utf-8") as stream:
+        with open(
+            os.path.join(measured, "alias-collision.json"), "w", encoding="utf-8"
+        ) as stream:
             json.dump(duplicate, stream)
         process, base_url = start_server(binary, copied_assets, 18740)
         try:
             status, body = get(base_url, "/api/v1/measured-shots")
             check(
                 checks,
-                status == 500 and body.get("error", {}).get("code") == "MEASURED_SHOT_LOAD_FAILED",
-                "ambiguous id/source-stem aliases reject the catalogue",
+                status == 200 and body.get("count") == 3,
+                "an ambiguous id/source-stem alias is skipped, not fatal to the catalogue",
                 body,
             )
         finally:

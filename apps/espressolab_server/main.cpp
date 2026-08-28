@@ -89,30 +89,68 @@ struct MeasuredShotCatalogue {
     std::unordered_map<std::string, std::size_t> aliases;
 };
 
+// Section 12.2/reference_io precedent: one malformed or ambiguous file in the
+// directory must not take down the whole catalogue. Load each file
+// independently and skip (with a logged reason) any shot that fails to
+// parse, fails validate(), is missing an identifier, or collides with an
+// alias already claimed by an earlier (sorted-order) shot -- unlike
+// calibration::io::load_measured_shot_directory, which is deliberately
+// strict because it backs `calibrate`'s curated fitting directory.
 MeasuredShotCatalogue load_measured_shot_catalogue(const std::filesystem::path& directory) {
+    if (!std::filesystem::exists(directory) || !std::filesystem::is_directory(directory)) {
+        throw artifact_io::LoadError("DIRECTORY_NOT_FOUND", directory.string(),
+                                     "no measured-shot directory at " + directory.string());
+    }
+    std::vector<std::filesystem::path> files;
+    for (const auto& entry : std::filesystem::directory_iterator(directory)) {
+        if (entry.path().extension() == ".json") files.push_back(entry.path());
+    }
+    std::sort(files.begin(), files.end());
+
     MeasuredShotCatalogue catalogue;
-    catalogue.shots = calibration::io::load_measured_shot_directory(directory);
+    for (const std::filesystem::path& file : files) {
+        calibration::MeasuredShot shot;
+        try {
+            shot = calibration::io::load_measured_shot_file(file, directory);
+        } catch (const artifact_io::LoadError& e) {
+            std::cerr << "measured-shot catalogue: skipping " << file.string() << ": " << e.what()
+                      << '\n';
+            continue;
+        }
+        const ValidationResult validation = shot.validate();
+        if (!validation.ok()) {
+            std::cerr << "measured-shot catalogue: skipping " << file.string()
+                      << ": failed validation\n";
+            continue;
+        }
+        if (shot.id.empty() || shot.source_stem.empty()) {
+            std::cerr << "measured-shot catalogue: skipping " << file.string()
+                      << ": needs a nonempty id and filename stem\n";
+            continue;
+        }
+        const std::size_t index = catalogue.shots.size();
+        bool collides = false;
+        for (const std::string* alias : {&shot.id, &shot.source_stem}) {
+            if (catalogue.aliases.contains(*alias)) {
+                std::cerr << "measured-shot catalogue: skipping " << file.string()
+                          << ": id/filename alias '" << *alias << "' is already in use\n";
+                collides = true;
+                break;
+            }
+        }
+        if (collides) continue;
+        for (const std::string* alias : {&shot.id, &shot.source_stem}) {
+            catalogue.aliases.emplace(*alias, index);
+        }
+        catalogue.shots.push_back(std::move(shot));
+    }
     std::sort(catalogue.shots.begin(), catalogue.shots.end(),
               [](const calibration::MeasuredShot& left,
                  const calibration::MeasuredShot& right) { return left.id < right.id; });
-
+    catalogue.aliases.clear();
     for (std::size_t i = 0; i < catalogue.shots.size(); ++i) {
-        const calibration::MeasuredShot& shot = catalogue.shots[i];
-        const ValidationResult validation = shot.validate();
-        if (!validation.ok()) throw InvalidInputError(validation);
-        if (shot.id.empty() || shot.source_stem.empty()) {
-            throw artifact_io::LoadError("MISSING_SHOT_IDENTIFIER", directory.string(),
-                                         "each measured shot needs a nonempty id and filename stem");
-        }
-        for (const std::string* alias : {&shot.id, &shot.source_stem}) {
-            const auto [existing, inserted] = catalogue.aliases.emplace(*alias, i);
-            if (!inserted && existing->second != i) {
-                throw artifact_io::LoadError(
-                    "DUPLICATE_SHOT_IDENTIFIER", directory.string(),
-                    "measured-shot id and filename aliases must be unique; duplicate '" +
-                        *alias + "'");
-            }
-        }
+        catalogue.aliases.emplace(catalogue.shots[i].id, i);
+        catalogue.aliases.emplace(catalogue.shots[i].source_stem, i);
     }
     return catalogue;
 }

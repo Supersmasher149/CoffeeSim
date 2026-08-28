@@ -116,8 +116,28 @@ TEST_CASE("make_job surfaces a bad field as InputError before touching the workf
     REQUIRE_THROWS_AS(job({}, {}), InputError);
 }
 
+// Regression: default_fields(Command::simulate)'s "recipe" and
+// "coefficients" values are the CWD-relative "assets/recipes/baseline.json"
+// and "assets/coefficients/default-v1.json" -- deliberate defaults for
+// interactive TUI use (the CLI's own usage examples assume the same), not
+// paths this test suite can rely on. Catch2 binaries are meant to run from
+// anywhere (ctest's working directory is the build tree, not the repo
+// root), so both cancellation tests below override those two fields with
+// absolute paths the same way tests/unit/test_cli_workflows.cpp does,
+// instead of depending on the process's current directory.
+void use_absolute_baseline_paths(std::vector<Field>& fields) {
+    for (auto& field : fields) {
+        if (field.label == "recipe") field.value = (testing::asset_dir() / "recipes" / "baseline.json").string();
+        if (field.label == "coefficients") {
+            field.value = (testing::asset_dir() / "coefficients" / "default-v1.json").string();
+        }
+    }
+}
+
 TEST_CASE("make_job honours cooperative cancellation", "[tui][unit][cancellation]") {
-    const JobFunction job = make_job(Command::simulate, default_fields(Command::simulate));
+    std::vector<Field> fields = default_fields(Command::simulate);
+    use_absolute_baseline_paths(fields);
+    const JobFunction job = make_job(Command::simulate, fields);
     REQUIRE_THROWS_AS(job([] { return true; }, {}), ExecutionCancelled);
 }
 
@@ -128,6 +148,7 @@ TEST_CASE("a cancelled simulate job never reaches the artifact writer", "[tui][u
     std::filesystem::remove_all(out_dir, ignored);
 
     std::vector<Field> fields = default_fields(Command::simulate);
+    use_absolute_baseline_paths(fields);
     for (auto& field : fields) {
         if (field.label == "out") field.value = out_dir.string();
     }

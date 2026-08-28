@@ -56,9 +56,19 @@ profiles, termination settings, and optional fidelity controls:
 
 Recipe loading first checks JSON shape and required field types, then the
 simulation path calls `Recipe::validate()` for physical ranges and profile
-ordering. The current loader accepts an omitted `schema_version` as the current
-recipe version even though the schema requires the field. New integrations should
-always send an explicit version and should not rely on that fallback.
+ordering. The loader accepts an omitted `schema_version` as the current recipe
+version; `schemas/recipe.schema.json` matches this and does not require the
+field either (Audit P6, issue #19). New integrations may still send an
+explicit version, but are not required to.
+
+`tests/schemas/schema_contract_check.py` checks representative documents
+against both `schemas/*.json` and the built CLI's loader/`validate()` path,
+and separately confirms the two constraints the schema cannot express
+structurally -- strictly increasing profile times, and `parallel_regions`
+area fractions summing to one -- are documented as schema/loader divergences
+rather than silent gaps. It needs the third-party `jsonschema` package (not
+vendored for the offline build) and is not part of `./scripts/test.sh`; run
+it by hand after `pip install jsonschema` in a venv.
 
 ## Coefficients
 

@@ -3,11 +3,15 @@
   "$id": "https://espressolab.local/schemas/recipe-1.0.json",
   "title": "EspressoLab recipe",
   "description": "Brew inputs in dashboard units. The solver converts to SI at load time (section 4.2).",
+  "$comment": "Audit P6, issue #19: kept synchronized with engine/artifact_io/json_io.cpp's load_recipe_json() (structure and required-ness) and engine/espresso_core/types.cpp's Recipe::validate() (ranges and the profile/parallel_regions cross-field rules noted below, which load_recipe_json() itself does not check and this schema cannot express structurally) -- see CLAUDE.md 'Data contracts'.",
   "type": "object",
-  "required": ["schema_version", "puck", "pressure_profile_bar", "temperature_profile_c", "stop"],
+  "required": ["puck", "pressure_profile_bar", "temperature_profile_c", "stop"],
   "additionalProperties": false,
   "properties": {
-    "schema_version": { "const": "1.0" },
+    "schema_version": {
+      "const": "1.0",
+      "description": "Optional: load_recipe_json() defaults an absent schema_version to the current version, so it is not in the required list above. A present value must still be exactly \"1.0\"."
+    },
     "name": { "type": "string" },
     "puck": {
       "type": "object",
@@ -27,8 +31,14 @@
         }
       }
     },
-    "pressure_profile_bar": { "$ref": "#/$defs/profile", "description": "Gauge pressure across the puck, 0-12 bar." },
-    "temperature_profile_c": { "$ref": "#/$defs/profile", "description": "Inlet water temperature, 85-100 C." },
+    "pressure_profile_bar": {
+      "$ref": "#/$defs/profile_pressure",
+      "description": "Gauge pressure across the puck, 0-12 bar. Point ranges are enforced here; strictly increasing time is enforced by Recipe::validate(), not this schema (see $defs.profile_pressure)."
+    },
+    "temperature_profile_c": {
+      "$ref": "#/$defs/profile_temperature",
+      "description": "Inlet water temperature, 85-100 C. Point ranges are enforced here; strictly increasing time is enforced by Recipe::validate(), not this schema (see $defs.profile_temperature)."
+    },
     "axial_cells": {
       "type": "integer", "minimum": 1, "maximum": 32, "default": 1,
       "description": "Fidelity level 3: stacked finite-volume cells along the flow direction, applied to every region. 1 is the lumped Level 2 puck."
@@ -37,7 +47,7 @@
       "type": "array",
       "minItems": 1,
       "maxItems": 8,
-      "description": "Optional lateral puck partitions that share pressure but evolve independently. Omit for one uniform region.",
+      "description": "Optional lateral puck partitions that share pressure but evolve independently. Omit for one uniform region. area_fraction across all regions must also sum to 1; that cross-item constraint is enforced by Recipe::validate(), not this schema.",
       "items": {
         "type": "object",
         "required": ["area_fraction", "permeability_multiplier"],
@@ -62,15 +72,34 @@
     }
   },
   "$defs": {
-    "profile": {
+    "profile_pressure": {
       "type": "array",
       "minItems": 1,
-      "description": "Ordered [time_s, value] points with strictly increasing times; linearly interpolated, held flat outside the range (section 5.2).",
+      "$comment": "Ordered [time_s, bar] points, linearly interpolated and held flat outside the range (section 5.2). Time is checked here only for non-negativity; PiecewiseLinearProfile::validate() additionally requires each point's time strictly greater than the previous one, which a JSON Schema array constraint cannot express item-to-item.",
       "items": {
         "type": "array",
+        "prefixItems": [
+          { "type": "number", "minimum": 0, "description": "time_s" },
+          { "type": "number", "minimum": 0, "maximum": 12, "description": "pressure_bar" }
+        ],
+        "items": false,
         "minItems": 2,
-        "maxItems": 2,
-        "items": { "type": "number" }
+        "maxItems": 2
+      }
+    },
+    "profile_temperature": {
+      "type": "array",
+      "minItems": 1,
+      "$comment": "Ordered [time_s, celsius] points, linearly interpolated and held flat outside the range (section 5.2). Time is checked here only for non-negativity; PiecewiseLinearProfile::validate() additionally requires each point's time strictly greater than the previous one, which a JSON Schema array constraint cannot express item-to-item.",
+      "items": {
+        "type": "array",
+        "prefixItems": [
+          { "type": "number", "minimum": 0, "description": "time_s" },
+          { "type": "number", "minimum": 85, "maximum": 100, "description": "temperature_c" }
+        ],
+        "items": false,
+        "minItems": 2,
+        "maxItems": 2
       }
     }
   }

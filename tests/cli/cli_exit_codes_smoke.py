@@ -25,6 +25,15 @@ unit tests for those solvers do) -- see the issue #4 commit message. Only
 the `cfd` case is exercised here; the other two commands are covered by
 code review and the shared helper, not by an executed repro.
 
+is_failure_termination() also now treats TerminationReason::not_terminated
+as a failure, matching the REST /compare handler added alongside the
+measured-shot comparison work (COMPARISON_SIMULATION_FAILED). This has no
+executed repro either: all three solvers (espresso_core, cfd, cfd3d)
+coerce a lingering not_terminated into time_limit_reached before returning
+a result, so it is structurally unreachable as a final ShotResult from a
+normal run -- the fix keeps the CLI's stance consistent with the REST
+handler in case a future solver change ever lets it through.
+
 Each check prints PASS/FAIL with a short diagnostic. The process exit code
 is 0 only if every check passed.
 """

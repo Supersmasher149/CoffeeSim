@@ -120,10 +120,16 @@ bool reject_unknown_options(int argc, char** argv, int start, const std::set<std
 // Audit F3, issue #4: simulate/cfd/cfd3d printed the termination reason but
 // always returned kOk, so automation could treat a numerical_failure or
 // invalid_state result as a successful run. target_mass_reached and
-// time_limit_reached are both successful completions; only these two
+// time_limit_reached are both successful completions; the remaining three
 // reasons (see TerminationReason in result.hpp) are solver-side failures.
+// not_terminated (the step budget ran out before any stop condition was met)
+// joins the other two here so the CLI's exit code agrees with the REST
+// compare handler, which already rejects not_terminated as
+// COMPARISON_SIMULATION_FAILED.
 bool is_failure_termination(TerminationReason reason) {
-    return reason == TerminationReason::numerical_failure || reason == TerminationReason::invalid_state;
+    return reason == TerminationReason::numerical_failure ||
+           reason == TerminationReason::invalid_state ||
+           reason == TerminationReason::not_terminated;
 }
 
 // Section 12.2 error shape, printed to stderr so scripts can separate it from

@@ -30,6 +30,17 @@ export interface Recipe {
   };
 }
 
+// GET /api/v1/recipes returns one entry per file under assets/recipes: a
+// loaded recipe, or {id, error} for a file that failed to parse/validate.
+// Audit P4, issue #18: modeling every catalogue entry as {id, name, recipe}
+// let a malformed asset's undefined `recipe` reach setRecipe/localValidation
+// and recipe controls that dereference `recipe.puck`, crashing the
+// dashboard. This discriminated union forces every catalogue consumer to
+// check `"recipe" in entry` before touching entry.recipe.
+export type RecipeCatalogueEntry =
+  | { id: string; name: string; recipe: Recipe }
+  | { id: string; error: { code: string; message: string } };
+
 export interface ShotSample {
   time_s: number;
   pressure_bar: number;

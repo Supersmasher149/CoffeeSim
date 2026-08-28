@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { ApiFailure, api, type HealthResponse } from "./api/client";
-import type { Recipe, ReferenceCatalogue, ShotResult } from "./api/types";
+import type { Recipe, RecipeCatalogueEntry, ReferenceCatalogue, ShotResult } from "./api/types";
 import { MeasuredShotComparison } from "./features/calibration/MeasuredShotComparison";
 import { ComparisonTray } from "./features/comparison/ComparisonTray";
 import { ReferenceShotsPanel } from "./features/references/ReferenceShotsPanel";
@@ -18,9 +18,19 @@ import {
   type ShotWorkspace,
 } from "./state/workspace";
 
+// Audit P4, issue #18: narrows a RecipeCatalogueEntry so callers can filter
+// out {id, error} entries and still have TypeScript know `.recipe` exists on
+// what's left, instead of the plain `"recipe" in entry` check widening back
+// to the union.
+function hasRecipe(
+  entry: RecipeCatalogueEntry,
+): entry is Extract<RecipeCatalogueEntry, { recipe: Recipe }> {
+  return "recipe" in entry;
+}
+
 export function App() {
   const [health, setHealth] = useState<HealthResponse>();
-  const [catalogue, setCatalogue] = useState<{ id: string; name: string; recipe: Recipe }[]>([]);
+  const [catalogue, setCatalogue] = useState<RecipeCatalogueEntry[]>([]);
   const [selectedId, setSelectedId] = useState("baseline");
   const [error, setError] = useState<string>();
   const [referenceError, setReferenceError] = useState<string>();
@@ -45,7 +55,11 @@ export function App() {
       .recipes()
       .then((body) => {
         setCatalogue(body.recipes);
-        const first = body.recipes.find((entry) => entry.id === "baseline") ?? body.recipes[0];
+        // Audit P4, issue #18: a malformed asset's {id, error} entry has no
+        // `recipe`, so the initial selection must skip it rather than seed
+        // the workspace with an undefined draft recipe.
+        const loaded = body.recipes.filter(hasRecipe);
+        const first = loaded.find((entry) => entry.id === "baseline") ?? loaded[0];
         if (first) {
           setSelectedId(first.id);
           setWorkspace((current) => ({ ...current, draftRecipe: first.recipe }));
@@ -70,8 +84,12 @@ export function App() {
 
   const selectRecipe = (id: string) => {
     const entry = catalogue.find((candidate) => candidate.id === id);
+    // Audit P4, issue #18: an {id, error} entry has no `recipe`. ControlRail
+    // already renders it as a disabled, unselectable option; this is the
+    // defensive second check so a selection can never dereference undefined.
+    if (!entry || !hasRecipe(entry)) return;
     setSelectedId(id);
-    if (entry) setRecipe(entry.recipe);
+    setRecipe(entry.recipe);
   };
 
   const run = async () => {

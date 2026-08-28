@@ -8,6 +8,7 @@ import type {
   MeasuredShotCatalogue,
   MeasuredShotComparison,
   Recipe,
+  RecipeCatalogueEntry,
   ReferenceCatalogue,
   ShotResult,
   SweepAccepted,
@@ -64,7 +65,7 @@ export interface HealthResponse {
 export const api = {
   health: () => request<HealthResponse>("/health"),
 
-  recipes: () => request<{ recipes: { id: string; name: string; recipe: Recipe }[] }>("/recipes"),
+  recipes: () => request<{ recipes: RecipeCatalogueEntry[] }>("/recipes"),
 
   referenceShots: () => request<ReferenceCatalogue>("/reference-shots"),
 

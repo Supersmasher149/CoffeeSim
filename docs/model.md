@@ -165,6 +165,50 @@ were shaped around.
 what it has been checked against. No PSD here has been compared to a measured
 shot, and the default coefficients remain the same uncalibrated set.
 
+### The grinder (`espressolab_cli grind`)
+
+A separate comminution model produces such a distribution from burr geometry.
+It sits outside the shot pipeline in the same position as the CFD solvers: it
+reads no recipe and no `ModelCoefficients`, writes its own artifacts, and cannot
+affect a shot's result hash. Its output is a `GrindDistribution` that a recipe
+may then carry.
+
+A standard population balance over a fixed logarithmic size grid. On each pass a
+mass fraction `S(d)` of every class breaks and is redistributed over the smaller
+classes by `B`:
+
+```
+selection   S(d)       = 0                                     for d <= gap
+                       = clamp(S_rate * (d/gap - 1)^alpha, 0, 1) otherwise
+breakage    B(d_i|d_j) = (d_i / d_j)^beta        (Broadbent-Callcott, normalised)
+fines       a fraction phi of every broken parent bypasses B and goes to the
+            cell-wall mode at its own characteristic size
+```
+
+Both closures are textbook comminution. Two details carry the model's weight:
+
+- **The gap classifies.** A particle at or below the burr gap has left the
+  grinding zone and is finished product, so it is never selected again. Without
+  that cutoff every class grinds down toward the fines mode and the model
+  converges on a distribution far finer than any real grinder produces — with
+  it, the coarse mode sits at the gap, as it should.
+- **The fines term is per event, not per unit feed.** Mass is broken repeatedly
+  on its way down from whole beans, so a `fines_yield` of 0.01 accumulates to
+  roughly 3–4% of total mass. That is the order real grinds show: fines dominate
+  by particle count, not by mass.
+
+At the shipped defaults the mapping is roughly `d32 ≈ 0.4 * burr_gap`, rising
+monotonically with the gap. Mass is conserved to machine epsilon across every
+pass, and the model is fully deterministic — no RNG, fixed evaluation order.
+
+**Not validated, and not a dial model.** `burr_gap_um` is a physical length;
+nothing maps a grinder dial number onto it. The coefficients are a plausible
+baseline in exactly the sense the shot model's defaults are, and no distribution
+this produces has been compared against a measured one. A grinder spec is also
+free to describe a bed the shot correlations do not cover — a fine enough gap
+yields a d32 below the supported 150–800 µm band, and a recipe carrying it is
+rejected. The CLI says so rather than letting it fail later.
+
 Compression and porosity respond to pressure through a bounded empirical curve:
 
 ```

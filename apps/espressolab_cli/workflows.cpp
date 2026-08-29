@@ -362,4 +362,29 @@ Cfd3dOutcome run_cfd3d(const Cfd3dRequest& request, const CancellationCallback& 
     return outcome;
 }
 
+GrindOutcome run_grind(const GrindRequest& request) {
+    GrindOutcome outcome;
+    outcome.spec = request.spec_path.empty() ? GrinderSpec{}
+                                             : grinder_io::load_spec_file(request.spec_path);
+
+    const auto started = std::chrono::steady_clock::now();
+    outcome.result = grind(outcome.spec);
+    outcome.wall_time_ms =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started)
+            .count();
+
+    if (!request.out_path.empty()) {
+        const std::filesystem::path dir(request.out_path);
+        outcome.result_path = dir / "grind.json";
+        // The second file is the `grind` object a recipe's `puck` takes, so a
+        // generated distribution can be pasted into a recipe without being
+        // reshaped by hand.
+        outcome.grind_path = dir / "recipe-grind.json";
+        write_text_file(outcome.result_path,
+                        grinder_io::dump_result_json(outcome.spec, outcome.result));
+        write_text_file(outcome.grind_path, grinder_io::dump_recipe_grind_json(outcome.result));
+    }
+    return outcome;
+}
+
 }  // namespace espressolab::cli_workflows

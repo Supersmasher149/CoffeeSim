@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://espressolab.local/schemas/grinder-result-1.0.json",
+  "title": "EspressoLab grinder result",
+  "description": "Output of `espressolab_cli grind`. The `distribution` object is exactly the shape a recipe's puck.grind takes, so it can be pasted across unchanged.",
+  "$comment": "Kept synchronized with engine/grind/grinder_io.cpp's dump_result_json(). This is not a shot artifact: it carries no recipe hash, no coefficient hash, and no result hash, because the grinder is outside the shot pipeline.",
+  "type": "object",
+  "required": ["name", "spec", "distribution", "derived", "provenance"],
+  "additionalProperties": false,
+  "properties": {
+    "name": { "type": "string" },
+    "spec": { "$ref": "https://espressolab.local/schemas/grinder-spec-1.0.json" },
+    "distribution": {
+      "type": "object",
+      "required": ["bins"],
+      "additionalProperties": false,
+      "properties": {
+        "bins": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "$comment": "Same contract as recipe.puck.grind.bins: strictly increasing diameter and mass fractions summing to 1, both enforced by GrindDistribution::validate() rather than by this schema. Diameters are emitted at nanometre resolution so a re-saved document is byte-identical.",
+          "items": {
+            "type": "object",
+            "required": ["diameter_um", "mass_fraction"],
+            "additionalProperties": false,
+            "properties": {
+              "diameter_um": { "type": "number", "minimum": 10, "maximum": 2000 },
+              "mass_fraction": { "type": "number", "minimum": 0, "maximum": 1 }
+            }
+          }
+        }
+      }
+    },
+    "derived": {
+      "type": "object",
+      "required": ["sauter_mean_diameter_um", "geometric_std_dev", "cumulative_fines_fraction", "mass_balance_residual"],
+      "additionalProperties": false,
+      "properties": {
+        "sauter_mean_diameter_um": {
+          "type": "number",
+          "description": "d32. A recipe carrying this distribution requires it to fall in 150-800 um; a grinder spec is free to produce one outside that band, and the CLI says so."
+        },
+        "geometric_std_dev": { "type": "number", "minimum": 1 },
+        "cumulative_fines_fraction": { "type": "number", "minimum": 0 },
+        "mass_balance_residual": {
+          "type": "number", "minimum": 0,
+          "description": "Largest deviation from unit mass across the passes. The population balance conserves mass exactly, so this is machine epsilon and exists to prove it."
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["model", "validated", "limitations"],
+      "additionalProperties": false,
+      "description": "Travels with the file so a document that outlives this repository still carries its own caveat.",
+      "properties": {
+        "model": { "type": "string" },
+        "validated": { "const": false },
+        "limitations": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

@@ -1,4 +1,5 @@
 #pragma once
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -27,6 +28,19 @@ public:
 
 private:
     std::vector<ValidationIssue> issues_;
+};
+
+// Thrown for input that fails validation before any work happens. Declared here
+// rather than beside the solver so that modules outside the shot pipeline (the
+// grinder, and anything else that validates its own spec) can raise the same
+// error shape without linking espressolab_core.
+class InvalidInputError : public std::runtime_error {
+public:
+    explicit InvalidInputError(const ValidationResult& result);
+    [[nodiscard]] const ValidationResult& validation() const { return validation_; }
+
+private:
+    ValidationResult validation_;
 };
 
 // Range helper used by recipe and coefficient validation. Inclusive bounds.

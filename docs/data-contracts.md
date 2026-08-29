@@ -204,6 +204,30 @@ They are intentionally separate from measured-shot calibration files. The
 current catalogue does not provide DE1 time series or complete shot timing, so it
 must not be used as calibration or validation input.
 
+## Grinder Specs and Results
+
+`espressolab_cli grind` has its own documents, its own schemas
+(`schemas/grinder-spec.schema.json`, `schemas/grinder-result.schema.json`) and
+its own loader/serializer in `engine/grind/grinder_io.cpp`. They are deliberately
+**not** shot artifacts: they carry no recipe hash, no coefficient hash and no
+result hash, because the grinder is outside the shot pipeline and must never
+become a hidden dependency of it.
+
+- Every spec field is optional; the loader defaults each to the compiled-in
+  `GrinderSpec` value, so `{}` is a valid spec.
+- The result's `distribution` object is exactly the shape `recipe.puck.grind`
+  takes, so it pastes across unchanged. `grind --out` writes it separately as
+  `recipe-grind.json` for that purpose.
+- Bin diameters are emitted at nanometre resolution, the same fixed-point rule
+  recipe grind bins follow.
+- `provenance` travels in the file, recording that the model is unvalidated, so
+  a document that outlives this repository still carries its own caveat.
+
+A spec that validates may still produce a distribution a recipe rejects: the
+recipe requires a derived d32 in 150–800 µm, and a fine enough burr gap falls
+below it. That is intended — the shot correlations do not cover that bed — and
+the CLI reports it rather than deferring the failure.
+
 ## Contract Change Procedure
 
 1. Update the C++ owner and define validation, default, and compatibility rules.

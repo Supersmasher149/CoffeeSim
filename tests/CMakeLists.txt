@@ -8,6 +8,7 @@ add_executable(espressolab_tests
   unit/test_water_properties.cpp
   unit/test_permeability.cpp
   unit/test_grind.cpp
+  unit/test_grinder.cpp
   unit/test_flow.cpp
   unit/test_heat.cpp
   unit/test_extraction.cpp
@@ -37,7 +38,7 @@ add_executable(espressolab_tests
 # not require a real terminal").
 target_link_libraries(espressolab_tests
   PRIVATE catch2_amalgamated espressolab_core espressolab_artifacts espressolab_references espressolab_experiments
-          espressolab_calibration espressolab_cfd espressolab_warnings tp_json espressolab_cli_support)
+          espressolab_calibration espressolab_cfd espressolab_grind espressolab_warnings tp_json espressolab_cli_support)
 target_compile_definitions(espressolab_tests
   PRIVATE ESPRESSOLAB_ASSET_DIR="${PROJECT_SOURCE_DIR}/assets"
           ESPRESSOLAB_REFERENCE_DIR="${PROJECT_SOURCE_DIR}/espresso_real_world_refs"

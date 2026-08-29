@@ -620,8 +620,6 @@ void finalize_result(ShotResult& result, std::vector<RegionState>& regions,
 
 }  // namespace
 
-InvalidInputError::InvalidInputError(const ValidationResult& result)
-    : std::runtime_error("invalid simulation input: " + result.summary()), validation_(result) {}
 
 Simulator::Simulator() : water_(std::make_shared<TabulatedWaterProperties>()) {}
 

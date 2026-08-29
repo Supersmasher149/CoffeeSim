@@ -36,6 +36,9 @@
 // `espressolab::InvalidInputError` or `espressolab::artifact_io::LoadError`
 // with the same codes the legacy CLI has always used, so error translation
 // stays centralized and exit codes do not move.
+#include "espressolab/grinder.hpp"
+#include "espressolab/grinder_io.hpp"
+
 namespace espressolab::cli_workflows {
 
 // ---------------------------------------------------------------- simulate --
@@ -194,6 +197,24 @@ struct Cfd3dOutcome {
 };
 
 Cfd3dOutcome run_cfd3d(const Cfd3dRequest& request, const CancellationCallback& is_cancelled = {});
+
+// ----------------------------------------------------------------- grind ---
+// The comminution model. Outside the shot pipeline entirely: it reads no
+// recipe and writes no shot artifact.
+struct GrindRequest {
+    std::string spec_path;  // empty => the built-in default spec
+    std::string out_path;   // empty => print only, write nothing
+};
+
+struct GrindOutcome {
+    GrinderSpec spec;
+    GrinderResult result;
+    double wall_time_ms = 0.0;
+    std::filesystem::path result_path;  // empty when nothing was written
+    std::filesystem::path grind_path;
+};
+
+GrindOutcome run_grind(const GrindRequest& request);
 
 // ---------------------------------------------------------------- helpers ---
 // Shared so both frontends read/write files identically. `path` may name a

@@ -55,6 +55,10 @@ Usage:
                          [--material <file>] [--quiet]
   espressolab_cli cfd3d --case <file> [--out <dir>] [--quiet]
 
+  espressolab_cli grind [--spec <file>] [--out <dir>]
+                            # burr geometry -> particle size distribution;
+                            # outside the shot pipeline, writes its own files
+
   espressolab_cli params      # sweepable recipe parameters
   espressolab_cli fit-params  # fittable coefficients, with bounds
   espressolab_cli version
@@ -64,6 +68,7 @@ Examples:
   espressolab_cli simulate --recipe assets/recipes/baseline.json \
     --coefficients assets/coefficients/default-v1.json --out outputs/shots/baseline
   espressolab_cli sweep --spec assets/sweeps/grind-size.json --out outputs/sweeps/grind-size
+  espressolab_cli grind --spec assets/grinders/burr-baseline.json --out outputs/grinds/baseline
 
   espressolab_cli calibrate --shots assets/measured_shots \
     --fit kozeny_constant,extraction_rate_ref_s --leave-one-out \
@@ -541,6 +546,65 @@ int command_cfd(int argc, char** argv) {
     return is_failure_termination(result.termination) ? kSolverFailure : kOk;
 }
 
+int command_grind(int argc, char** argv) {
+    if (!reject_unknown_options(argc, argv, 2, {"spec", "out"}, "grind")) {
+        return kUsageError;
+    }
+    const auto flags = parse_flags(argc, argv, 2);
+
+    cli_workflows::GrindRequest request;
+    if (flags.count("spec")) request.spec_path = flags.at("spec");
+    if (flags.count("out")) request.out_path = flags.at("out");
+
+    const cli_workflows::GrindOutcome outcome = cli_workflows::run_grind(request);
+    const GrinderResult& result = outcome.result;
+
+    std::cout << "grinder: " << outcome.spec.name
+              << (request.spec_path.empty() ? " (built-in default spec)"
+                                            : " (" + request.spec_path + ")")
+              << "\nburr gap: " << outcome.spec.burr_gap_um << " um over " << outcome.spec.passes
+              << " passes\nwall time: " << outcome.wall_time_ms << " ms\n\n";
+
+    std::cout << std::fixed << std::setprecision(2)
+              << "  d32 (Sauter)    " << result.sauter_mean_diameter_um << " um\n"
+              << std::setprecision(3)
+              << "  spread (sigma)  " << result.geometric_std_dev << '\n'
+              << "  fines produced  " << result.cumulative_fines_fraction * 100.0 << " % of mass\n"
+              << "  bins            " << result.distribution.bins.size() << '\n'
+              << std::scientific << std::setprecision(2)
+              << "  mass residual   " << result.mass_balance_residual << '\n'
+              << std::defaultfloat;
+
+    std::cout << "\n  distribution (diameter um : mass fraction)\n";
+    std::cout << std::fixed;
+    for (const GrindBin& bin : result.distribution.bins) {
+        const double um = units::m_to_microns(bin.diameter_m);
+        std::cout << "   " << std::setw(8) << std::setprecision(1) << um << " : "
+                  << std::setw(6) << std::setprecision(4) << bin.mass_fraction << "  "
+                  << std::string(static_cast<std::size_t>(bin.mass_fraction * 200.0), '#') << '\n';
+    }
+
+    // A grinder spec is free to describe a bed the shot correlations do not
+    // cover, so say plainly whether this distribution can be used as-is.
+    const ValidationResult usable = result.distribution.validate();
+    if (!usable.ok()) {
+        std::cout << "\n  NOTE: this distribution is not usable in a recipe: " << usable.summary()
+                  << '\n';
+    } else if (result.sauter_mean_diameter_um < 150.0 ||
+               result.sauter_mean_diameter_um > 800.0) {
+        std::cout << "\n  NOTE: d32 is outside the 150-800 um range a recipe supports, so a "
+                     "recipe carrying this distribution will be rejected. Widen the burr gap.\n";
+    }
+
+    if (!outcome.result_path.empty()) {
+        std::cout << "\nartifacts: " << outcome.result_path.parent_path().string() << '\n'
+                  << "  " << outcome.result_path.filename().string() << "  (full run)\n"
+                  << "  " << outcome.grind_path.filename().string()
+                  << "  (paste into a recipe's puck.grind)\n";
+    }
+    return kOk;
+}
+
 int command_cfd3d(int argc, char** argv) {
     if (!reject_unknown_options(argc, argv, 2,
                                  {"recipe", "case", "coefficients", "nx", "ny", "nz", "dt", "sample-interval",
@@ -612,6 +676,7 @@ int main(int argc, char** argv) {
         if (command == "sweep") return command_sweep(argc, argv);
         if (command == "bench") return command_bench(argc, argv);
         if (command == "cfd") return command_cfd(argc, argv);
+        if (command == "grind") return command_grind(argc, argv);
         if (command == "cfd3d") return command_cfd3d(argc, argv);
         if (command == "calibrate") return command_calibrate(argc, argv);
         if (command == "synthesize") return command_synthesize(argc, argv);

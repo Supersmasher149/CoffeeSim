@@ -57,6 +57,10 @@ Finer grind, more resistance, longer shot, stronger and more extracted — until
 
 ## The dashboard
 
+![Sixty-second capture of the EspressoLab dashboard: running the baseline recipe, watching the puck cross-section and charts play out the shot in real time, then running a 1600-run grind x temperature sweep to a heat map.](docs/images/dashboard-demo.gif)
+
+*Baseline shot run to completion, then a 1600-point grind x temperature sweep (`puck.particle_diameter_um` x `temperature_profile_c.constant`, 40 steps each) rendered as a heat map — captured against `./scripts/dev.sh` at commit `4f6e51c`, not staged or narrated.*
+
 Recipes are edited through draggable pressure and inlet-temperature curves with
 the numeric point list underneath, charts share one time cursor, and sweeps run
 in the background with live progress and a cancel button — a 1600-run

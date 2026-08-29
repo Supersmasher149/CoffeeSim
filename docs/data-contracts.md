@@ -53,6 +53,38 @@ profiles, termination settings, and optional fidelity controls:
 - `axial_cells` selects one to 32 stacked cells in every region. One cell is the
   lumped default.
 - Profiles are ordered `[time_s, value]` pairs and are linearly interpolated.
+- Grind is spelled **either** as the scalar pair `particle_diameter_um` +
+  `particle_spread_factor` **or** as a distribution `puck.grind.bins`, never
+  both. A document carrying both is rejected with `CONFLICTING_FIELD`.
+
+### Grind: the two spellings
+
+When `puck.grind` is present the loader derives `particle_diameter_m` (the bins'
+Sauter mean, d32) and `particle_spread_factor` from it. Those two fields become
+*derived cache values*, not authored input, which has three consequences worth
+stating explicitly:
+
+1. **Every existing consumer is unaffected.** The solver, both CFD solvers and
+   calibration read the two scalars and need no knowledge of the distribution.
+   Only size-resolved extraction walks the bins.
+2. **The distribution is what is serialized and hashed.** `dump_recipe_json()`
+   emits `grind` and omits the derived scalars, so `recipe_hash()` is taken over
+   the authored input rather than over a derivation whose rounding could shift.
+   Conversely, when `grind` is absent the key is omitted from the document
+   entirely — an unconditional key would have changed the hash of every recipe
+   predating the distribution path.
+3. **Sweeps retarget the distribution, not the scalar.** Sweeping
+   `puck.particle_diameter_um` on a distribution-bearing recipe scales every bin
+   by one factor, which leaves the shape (and so the spread) untouched and lands
+   d32 exactly on the requested value. Sweeping `puck.particle_spread_factor`
+   on such a recipe is refused rather than guessed: there is no shape-preserving
+   way to retarget the spread of a fixed distribution.
+
+Bin diameters span 10–2000 µm — wider than the scalar envelope, because real
+coffee fines sit at 10–100 µm. The *derived* d32 must still land in 150–800 µm.
+Bin diameters are emitted rounded to nanometre resolution so that
+load → dump → load → dump is an exact fixed point; without it the µm↔m
+round trip drifts by an ulp per save and a re-saved recipe would change hash.
 
 Recipe loading first checks JSON shape and required field types, then the
 simulation path calls `Recipe::validate()` for physical ranges and profile

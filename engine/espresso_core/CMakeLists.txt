@@ -7,6 +7,7 @@ add_library(espressolab_core_types
   validation.cpp
   profile.cpp
   types.cpp
+  grind.cpp
   result.cpp
 )
 target_include_directories(espressolab_core_types PUBLIC ${PROJECT_SOURCE_DIR}/include)

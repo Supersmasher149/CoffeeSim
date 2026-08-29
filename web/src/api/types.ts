@@ -8,6 +8,21 @@ export interface ParallelRegion {
   permeability_multiplier: number;
 }
 
+export interface GrindBin {
+  diameter_um: number;
+  mass_fraction: number;
+}
+
+// A particle size distribution, in place of the scalar pair below. The two
+// spellings are mutually exclusive: the loader rejects a recipe carrying both
+// (CONFLICTING_FIELD), and when the distribution is present it derives the
+// representative diameter (Sauter mean, d32) and the spread penalty from it.
+// The dashboard therefore renders a PSD recipe read-only rather than offering
+// scalar sliders that would contradict the distribution.
+export interface GrindDistribution {
+  bins: GrindBin[];
+}
+
 export interface Recipe {
   schema_version: string;
   name: string;
@@ -15,8 +30,10 @@ export interface Recipe {
     dose_g: number;
     basket_diameter_mm: number;
     depth_mm: number;
-    particle_diameter_um: number;
-    particle_spread_factor: number;
+    // Present only on the scalar spelling; absent when `grind` is supplied.
+    particle_diameter_um?: number;
+    particle_spread_factor?: number;
+    grind?: GrindDistribution;
   };
   // Optional in the dashboard: a recipe without it is a single region, and the
   // field is carried through an edit untouched so a multi-region recipe from

@@ -32,7 +32,7 @@ Tags: `[unit]` `[units]` `[profile]` `[water]` `[permeability]` `[flow]` `[heat]
 `[extraction]` `[artifacts]` `[integration]` `[invariants]` `[convergence]`
 `[sweep]` `[calibration]` `[recovery]` `[property]` `[performance]` `[regions]`
 `[axial]` `[cfd]` `[cfd3d]` `[verification]` `[references]` `[progress]`
-`[cancellation]` `[tui]` `[cli_workflows]`.
+`[cancellation]` `[tui]` `[cli_workflows]` `[grind]`.
 
 A POSIX PTY smoke matrix for the TUI runs separately from `espressolab_tests`
 (it needs a real pseudo-terminal, not just the Catch2 binary):
@@ -208,6 +208,10 @@ equation is in `docs/model.md`.
   simulation and fixed coefficients. It is not a fitting path, and the current
   stored shots are synthetic fixtures.
 - No grinder-dial-to-particle-size mapping; grind is a physical input in µm.
+  A recipe may carry a particle size distribution (`puck.grind`) instead of the
+  scalar diameter/spread pair; the solver derives d32 and the spread from it and
+  extracts each size class at its own rate. Still an input in microns, and no
+  distribution here has been checked against a measured shot.
 - No flavour prediction — TDS/extraction are engineering outputs only.
 
 ## Data contracts

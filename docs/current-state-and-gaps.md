@@ -179,6 +179,13 @@ project can support:
 - Pressure and inlet-temperature profiles are inputs. Pump and group-head
   dynamics are not inferred from measurements.
 - There is no universal conversion from grinder dial number to particle size.
+  A recipe may now carry a measured particle size distribution
+  (`puck.grind`), from which the solver derives the representative diameter and
+  extracts each size class at its own rate — but the distribution is still a
+  physical input in microns, not a grinder setting, and nothing maps a dial to
+  one. No distribution in this repository has been compared against a measured
+  shot; the size-resolved path is verified against the equations it claims to
+  solve, not validated against reality.
 - Extraction and TDS do not predict flavor or sensory quality.
 - Additional model fidelity is not a substitute for measurements. Levels 2, 3,
   and 4 currently resolve more structure than has been checked against real

@@ -19,10 +19,53 @@ const std::map<std::string, Setter>& setters() {
         {"puck.basket_diameter_mm",
          [](Recipe& r, double v) { r.basket_diameter_m = units::mm_to_m(v); }},
         {"puck.depth_mm", [](Recipe& r, double v) { r.puck_depth_m = units::mm_to_m(v); }},
+        // On a distribution-bearing recipe the scalar is derived, so writing it
+        // directly would leave particle_diameter_m disagreeing with the bins the
+        // solver still extracts from. Scale the whole distribution instead:
+        // multiplying every bin diameter by a constant leaves ln-variance -- and
+        // so the spread -- untouched, and d32 is homogeneous of degree one, so
+        // the scaled distribution lands exactly on the requested diameter. That
+        // is precisely a grind-size sweep: one shape, moved finer or coarser.
         {"puck.particle_diameter_um",
-         [](Recipe& r, double v) { r.particle_diameter_m = units::microns_to_m(v); }},
+         [](Recipe& r, double v) {
+             const double target_m = units::microns_to_m(v);
+             if (r.grind.has_value()) {
+                 const double current_m = r.grind->sauter_mean_diameter_m();
+                 if (!(current_m > 0.0)) {
+                     ValidationResult result;
+                     result.add("NONPHYSICAL_INPUT",
+                                "cannot sweep puck.particle_diameter_um: the baseline recipe's "
+                                "grind distribution has no positive Sauter mean diameter",
+                                "recipe.puck.grind.bins");
+                     throw InvalidInputError(result);
+                 }
+                 const double scale = target_m / current_m;
+                 for (GrindBin& bin : r.grind->bins) bin.diameter_m *= scale;
+                 // Re-derive rather than assign the target, so the invariant the
+                 // loader establishes -- the scalar is exactly the bins' d32 --
+                 // survives a sweep instead of holding only to within an ulp.
+                 r.particle_diameter_m = r.grind->sauter_mean_diameter_m();
+                 r.particle_spread_factor = r.grind->equivalent_spread_factor();
+                 return;
+             }
+             r.particle_diameter_m = target_m;
+         }},
         {"puck.particle_spread_factor",
-         [](Recipe& r, double v) { r.particle_spread_factor = v; }},
+         [](Recipe& r, double v) {
+             // Unlike the diameter there is no shape-preserving way to retarget
+             // the spread of a fixed distribution -- any answer would be an
+             // invented reshaping. Refuse rather than pick one silently.
+             if (r.grind.has_value()) {
+                 ValidationResult result;
+                 result.add("UNSUPPORTED_PARAMETER",
+                            "puck.particle_spread_factor cannot be swept on a recipe that carries "
+                            "a grind distribution: the spread is derived from the bins. Sweep "
+                            "puck.particle_diameter_um, or use a scalar recipe.",
+                            "recipe.puck.grind");
+                 throw InvalidInputError(result);
+             }
+             r.particle_spread_factor = v;
+         }},
         {"stop.target_beverage_g",
          [](Recipe& r, double v) { r.target_beverage_mass_kg = units::grams_to_kg(v); }},
         {"stop.maximum_time_s", [](Recipe& r, double v) { r.maximum_time_s = v; }},

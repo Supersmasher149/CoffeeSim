@@ -7,6 +7,7 @@ add_executable(espressolab_tests
   unit/test_profiles.cpp
   unit/test_water_properties.cpp
   unit/test_permeability.cpp
+  unit/test_grind.cpp
   unit/test_flow.cpp
   unit/test_heat.cpp
   unit/test_extraction.cpp

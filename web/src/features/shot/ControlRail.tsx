@@ -1,4 +1,4 @@
-import type { Recipe, RecipeCatalogueEntry, ValidationIssue } from "../../api/types";
+import type { GrindBin, Recipe, RecipeCatalogueEntry, ValidationIssue } from "../../api/types";
 import { inputRanges } from "../../state/workspace";
 import { ProfileEditor } from "./ProfileEditor";
 
@@ -21,6 +21,36 @@ interface NumberFieldProps {
   path: string;
   issues: ValidationIssue[];
   onChange: (value: number) => void;
+}
+
+// Renders the authored distribution and nothing else. The representative
+// diameter (d32) and the spread penalty are derived from these bins by the
+// native solver, so they are deliberately NOT recomputed here: per CLAUDE.md
+// the dashboard renders model outputs and never re-derives an authoritative
+// quantity in the browser. Bar widths are display-only presentation.
+function GrindDistributionReadout({ bins }: { bins: GrindBin[] }) {
+  const peak = bins.reduce((max, bin) => Math.max(max, bin.mass_fraction), 0) || 1;
+  return (
+    <div className="grind-psd">
+      <ul className="grind-psd-bins">
+        {bins.map((bin) => (
+          <li key={bin.diameter_um}>
+            <span className="grind-psd-label">{bin.diameter_um} µm</span>
+            <span className="grind-psd-bar" aria-hidden="true">
+              <span style={{ width: `${(bin.mass_fraction / peak) * 100}%` }} />
+            </span>
+            <span className="grind-psd-value">{(bin.mass_fraction * 100).toFixed(1)}%</span>
+          </li>
+        ))}
+      </ul>
+      <p className="note">
+        This recipe carries a particle size distribution rather than a single diameter, so the
+        scalar controls do not apply. The solver derives the representative diameter (Sauter mean,
+        d32) and the spread penalty from these bins, and extracts each size class at its own rate.
+        Edit the recipe file to change the distribution.
+      </p>
+    </div>
+  );
 }
 
 // Units live in the label, never only in surrounding prose (12.5).
@@ -88,20 +118,26 @@ export function ControlRail(props: Props) {
 
       <div className="section">
         <h2>Grind</h2>
-        <NumberField
-          label="Particle ⌀ (µm)" value={recipe.puck.particle_diameter_um}
-          range={inputRanges.particle_diameter_um} step={5}
-          path="recipe.puck.particle_diameter_um" issues={issues}
-          onChange={(v) => puck({ particle_diameter_um: v })} />
-        <NumberField
-          label="Spread factor" value={recipe.puck.particle_spread_factor}
-          range={inputRanges.particle_spread_factor} step={0.05}
-          path="recipe.puck.particle_spread_factor" issues={issues}
-          onChange={(v) => puck({ particle_spread_factor: v })} />
-        <p className="note">
-          A grinder dial number has no universal physical meaning (5.3). This is an effective
-          particle diameter, and the spread factor is an empirical penalty for fines.
-        </p>
+        {recipe.puck.grind ? (
+          <GrindDistributionReadout bins={recipe.puck.grind.bins} />
+        ) : (
+          <>
+            <NumberField
+              label="Particle ⌀ (µm)" value={recipe.puck.particle_diameter_um ?? 350}
+              range={inputRanges.particle_diameter_um} step={5}
+              path="recipe.puck.particle_diameter_um" issues={issues}
+              onChange={(v) => puck({ particle_diameter_um: v })} />
+            <NumberField
+              label="Spread factor" value={recipe.puck.particle_spread_factor ?? 0.55}
+              range={inputRanges.particle_spread_factor} step={0.05}
+              path="recipe.puck.particle_spread_factor" issues={issues}
+              onChange={(v) => puck({ particle_spread_factor: v })} />
+            <p className="note">
+              A grinder dial number has no universal physical meaning (5.3). This is an effective
+              particle diameter, and the spread factor is an empirical penalty for fines.
+            </p>
+          </>
+        )}
       </div>
 
       <div className="section">

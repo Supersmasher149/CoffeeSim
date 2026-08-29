@@ -112,6 +112,59 @@ a single representative particle diameter cannot express a real fines-filled,
 tamped bed, and `C_k` is where that discrepancy is parked until measured shots
 replace it.
 
+### Particle size distribution
+
+A recipe may supply `puck.grind` — a set of `(diameter_um, mass_fraction)`
+bins — instead of the scalar `particle_diameter_um` / `particle_spread_factor`
+pair. The two spellings are mutually exclusive and the loader rejects a document
+carrying both.
+
+When a distribution is present, `d_p` above is its **Sauter mean diameter**:
+
+```
+d32 = 1 / sum(w_i / d_i)
+```
+
+This is not a new model. Kozeny-Carman's length scale *is* the bed's
+surface-area-to-volume ratio, and d32 is by definition the diameter of the
+monodisperse bed with the same ratio — so the polydisperse form of the equation
+already in use is exactly `d_p := d32`. A one-bin distribution returns its own
+diameter, and reproduces the scalar shot exactly.
+
+The spread penalty is likewise derived rather than authored:
+
+```
+sigma_g = exp(sqrt(sum(w_i * (ln d_i - mean_ln_d)^2)))
+spread  = clamp(ln(sigma_g) / ln(4), 0.1, 1.0)
+```
+
+`sigma_g` is 1.0 for a monodisperse grind and grows with polydispersity. The
+reference `4` is a **fixed model choice, deliberately not a coefficient**: every
+member of `ModelCoefficients` is hashed into `coefficient_hash()` and therefore
+into every `result_hash`, so adding one would rewrite the hash of every existing
+run for a code path those runs never take. It is chosen so a typical espresso
+grind (`sigma_g` ≈ 2.2) lands near 0.57 — within rounding of the 0.55 this
+project has defaulted to since the scalar-only model — meaning converting a
+recipe to a distribution does not silently step its permeability.
+
+Extraction becomes size-resolved: each bin carries its own extractable pool and
+its own rate, since `grind_factor` is already `(d_ref/d)^n` and is simply
+evaluated per bin. With `grind_exponent = 1` the mass-weighted mean rate equals
+the rate at d32 exactly (because `sum(w_i/d_i)` *is* `1/d32`), so a distribution
+and a lumped puck at its own d32 start out identical and diverge only as the
+fast bins empty. That divergence — fines exhausting early while the coarse mode
+keeps producing — is the behaviour a single diameter structurally cannot
+produce, and it is what carrying a distribution buys.
+
+Bin diameters are allowed over 10–2000 µm, far wider than the scalar envelope,
+because real coffee fines sit at 10–100 µm. It is the *derived* d32 that must
+land in the supported 150–800 µm band, since that is the range the correlations
+were shaped around.
+
+**Not validated.** The distribution changes what the model can represent, not
+what it has been checked against. No PSD here has been compared to a measured
+shot, and the default coefficients remain the same uncalibrated set.
+
 Compression and porosity respond to pressure through a bounded empirical curve:
 
 ```

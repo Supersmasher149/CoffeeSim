@@ -37,12 +37,17 @@ double flow_contact_factor(double flow_m3_s, double half_saturation_m3_s) {
     return q / (q + q_half);  // bounded below 1, no unbounded growth (8.3)
 }
 
-double extraction_rate_coefficient(const ShotState& state, const Recipe& recipe,
-                                   const ModelCoefficients& coeff, double flow_m3_s) {
+double extraction_rate_coefficient_at(const ShotState& state, const ModelCoefficients& coeff,
+                                      double flow_m3_s, double particle_diameter_m) {
     return coeff.extraction_rate_ref_s * temperature_factor(state.puck_temperature_k, coeff) *
-           grind_factor(recipe.particle_diameter_m, coeff) *
+           grind_factor(particle_diameter_m, coeff) *
            saturation_factor(state.liquid_saturation) *
            flow_contact_factor(flow_m3_s, coeff.flow_half_saturation_m3_s);
+}
+
+double extraction_rate_coefficient(const ShotState& state, const Recipe& recipe,
+                                   const ModelCoefficients& coeff, double flow_m3_s) {
+    return extraction_rate_coefficient_at(state, coeff, flow_m3_s, recipe.particle_diameter_m);
 }
 
 }  // namespace espressolab

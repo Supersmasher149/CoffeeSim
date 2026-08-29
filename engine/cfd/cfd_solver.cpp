@@ -299,6 +299,14 @@ CfdResult CfdSolver::run(const Recipe& recipe, const ModelCoefficients& coeff,
     std::vector<double> last_flux_r(static_cast<std::size_t>(nr + 1) * static_cast<std::size_t>(nz), 0.0);
     std::vector<double> total_mobility(static_cast<std::size_t>(nr) * static_cast<std::size_t>(nz));
     std::vector<double> water_fraction(static_cast<std::size_t>(nr) * static_cast<std::size_t>(nz));
+    // Water properties at a given temperature are a pure function of that
+    // temperature, and every cell's temperature is fixed for the duration of
+    // a step. Each of these arrays is filled once per step (pre_step_water
+    // from the temperature the step starts with, post_step_water from the
+    // temperature the step just produced) and read many times below instead
+    // of re-deriving density/viscosity/heat-capacity per read site.
+    std::vector<WaterValues> pre_step_water(static_cast<std::size_t>(nr) * static_cast<std::size_t>(nz));
+    std::vector<WaterValues> post_step_water(static_cast<std::size_t>(nr) * static_cast<std::size_t>(nz));
 
     double time_s = 0.0;
     double next_sample_s = 0.0;
@@ -312,12 +320,15 @@ CfdResult CfdSolver::run(const Recipe& recipe, const ModelCoefficients& coeff,
         throw_if_cancelled(is_cancelled);
         const double inlet_pressure_pa = recipe.pressure_pa.sample(time_s);
         const double inlet_temperature_k = recipe.inlet_temperature_k.sample(time_s);
+        const WaterValues inlet_water_values = water_values_at(*water_, inlet_temperature_k);
 
         // ---- mobilities -------------------------------------------------
         for (int j = 0; j < nz; ++j) {
             for (int i = 0; i < nr; ++i) {
                 const double k_abs = absolute_permeability_m2 * multiplier.at(i, j);
-                const double mu_w = water_values_at(*water_, temperature.at(i, j)).viscosity_pa_s;
+                const WaterValues& cell_water = pre_step_water[cell(i, j)] =
+                    water_values_at(*water_, temperature.at(i, j));
+                const double mu_w = cell_water.viscosity_pa_s;
                 const double lambda_w =
                     k_abs * water_relative_permeability(saturation.at(i, j),
                                                         coeff.dry_permeability_multiplier) /
@@ -489,6 +500,7 @@ CfdResult CfdSolver::run(const Recipe& recipe, const ModelCoefficients& coeff,
                 double f_w = 0.0;
                 double donor_t = inlet_temperature_k;
                 double donor_c = 0.0;
+                WaterValues donor_values = inlet_water_values;
                 if (q > 0.0) {
                     if (j == 0) {
                         f_w = 1.0;  // the screen delivers water, not air
@@ -496,14 +508,15 @@ CfdResult CfdSolver::run(const Recipe& recipe, const ModelCoefficients& coeff,
                         f_w = water_fraction[cell(i, j - 1)];
                         donor_t = temperature.at(i, j - 1);
                         donor_c = donor_concentration(i, j - 1);
+                        donor_values = pre_step_water[cell(i, j - 1)];
                     }
                 } else {
                     if (j == nz) continue;  // no backflow through the basket
                     f_w = water_fraction[cell(i, j)];
                     donor_t = temperature.at(i, j);
                     donor_c = donor_concentration(i, j);
+                    donor_values = pre_step_water[cell(i, j)];
                 }
-                const WaterValues donor_values = water_values_at(*water_, donor_t);
                 const double mass = q * f_w * donor_values.density_kg_m3 * dt;
                 face_water_z[zface(i, j)] = mass;
                 face_solids_z[zface(i, j)] = mass * donor_c;
@@ -518,7 +531,7 @@ CfdResult CfdSolver::run(const Recipe& recipe, const ModelCoefficients& coeff,
                 const int donor = q > 0.0 ? i - 1 : i;
                 const double f_w = water_fraction[cell(donor, j)];
                 const double donor_t = temperature.at(donor, j);
-                const WaterValues donor_values = water_values_at(*water_, donor_t);
+                const WaterValues& donor_values = pre_step_water[cell(donor, j)];
                 const double mass = q * f_w * donor_values.density_kg_m3 * dt;
                 face_water_r[rface(i, j)] = mass;
                 face_solids_r[rface(i, j)] = mass * donor_concentration(donor, j);
@@ -610,8 +623,7 @@ CfdResult CfdSolver::run(const Recipe& recipe, const ModelCoefficients& coeff,
             inflow_kg += face_water_z[zface(i, 0)];
             outflow_kg += face_water_z[zface(i, nz)];
             outflow_solids_kg += face_solids_z[zface(i, nz)];
-            const double outlet_density =
-                water_values_at(*water_, temperature.at(i, nz - 1)).density_kg_m3;
+            const double outlet_density = pre_step_water[cell(i, nz - 1)].density_kg_m3;
             outflow_volume_m3 +=
                 face_water_z[zface(i, nz)] / std::max(outlet_density, kMassEpsilon);
         }
@@ -635,7 +647,7 @@ CfdResult CfdSolver::run(const Recipe& recipe, const ModelCoefficients& coeff,
                 // Enthalpy against the solid matrix, using the advected energy
                 // that actually crossed the faces.
                 const double cell_dose_kg = recipe.dose_kg * (g.volume(i) / bed_volume_m3);
-                const WaterValues cell_values = water_values_at(*water_, temperature.at(i, j));
+                const WaterValues& cell_values = pre_step_water[cell(i, j)];
                 const double cp_water = cell_values.heat_capacity_j_kg_k;
                 const double thermal_capacity =
                     cell_dose_kg * coeff.coffee_heat_capacity_j_kg_k +
@@ -713,9 +725,9 @@ CfdResult CfdSolver::run(const Recipe& recipe, const ModelCoefficients& coeff,
         extractable_kg = new_extractable;
         for (int j = 0; j < nz; ++j) {
             for (int i = 0; i < nr; ++i) {
-                const double capacity =
-                    g.volume(i) * porosity *
-                    water_values_at(*water_, temperature.at(i, j)).density_kg_m3;
+                const WaterValues& values = post_step_water[cell(i, j)] =
+                    water_values_at(*water_, temperature.at(i, j));
+                const double capacity = g.volume(i) * porosity * values.density_kg_m3;
                 saturation.at(i, j) =
                     capacity > kMassEpsilon ? retained_kg.at(i, j) / capacity : 0.0;
             }
@@ -737,8 +749,7 @@ CfdResult CfdSolver::run(const Recipe& recipe, const ModelCoefficients& coeff,
                 for (int i = 0; i < nr; ++i) {
                     retained_total += retained_kg.at(i, j);
                     const double capacity =
-                        g.volume(i) * porosity *
-                        water_values_at(*water_, temperature.at(i, j)).density_kg_m3;
+                        g.volume(i) * porosity * post_step_water[cell(i, j)].density_kg_m3;
                     capacity_total += capacity;
                     weighted_t += temperature.at(i, j) * capacity;
                 }

@@ -10,7 +10,7 @@ Tags: `[unit]` `[units]` `[profile]` `[water]` `[permeability]` `[flow]` `[heat]
 `[extraction]` `[artifacts]` `[integration]` `[invariants]` `[convergence]`
 `[sweep]` `[calibration]` `[recovery]` `[property]` `[performance]` `[regions]`
 `[axial]` `[cfd]` `[cfd3d]` `[verification]` `[references]` `[progress]`
-`[cancellation]` `[tui]` `[cli_workflows]`.
+`[cancellation]` `[tui]` `[cli_workflows]` `[grind]` `[grind_sim]`.
 
 ```bash
 python3 tests/pty/tui_smoke.py    # separate POSIX PTY smoke matrix for the TUI
@@ -19,7 +19,7 @@ ctest --test-dir build -L server  # black-box REST/CLI smoke scripts, registered
 
 `./scripts/test.sh` does not run the PTY script, the `server`-labeled ctest
 smoke scripts, dashboard checks, demo, or warnings-as-errors build. The
-current Catch2 run passes 165 test cases and 18,213 assertions. The PTY
+current Catch2 run passes 204 test cases and 20,364 assertions. The PTY
 script currently defines 14 checks, but it was not rerun for this
 documentation refresh.
 
@@ -64,6 +64,48 @@ concentration has to rise and local yield has to fall with depth, which is the
 mechanism the lumped puck could not express; the balances have to close at 1, 3,
 8 and 32 cells; and the per-cell summary has to reach the serialized artifacts
 in screen-to-basket order.
+
+**Particle size distribution tests** (`[grind]`) guard the second grind
+spelling against the first. The load-bearing pair is the two "scalar recipes
+keep their pre-PSD hashes" cases: a recipe written with
+`particle_diameter_um`/`particle_spread_factor` has to produce the same recipe
+hash and the same result hash it produced before the distribution path
+existed, which is what makes `puck.grind` an addition rather than a silent
+contract change. Beyond that: a single-bin distribution has to reproduce the
+scalar shot exactly, d32 has to match the hand-computed harmonic form and get
+dragged down by a small mass of fines, permeability at d32 has to equal the
+scalar call, a size-resolved shot has to close its mass balances, and a
+distribution has to extract *less* than its own d32 would, because fines
+deplete first. The serialization cases pin the fixed point (load → dump →
+load → dump is exact), the mutual exclusion of the two spellings
+(`CONFLICTING_FIELD`), and the sweep behaviour: sweeping grind size rescales
+every bin, while sweeping the spread of a distribution is refused rather than
+guessed.
+
+**Grinder tests** (`[grind_sim]`) cover the comminution model behind
+`espressolab_cli grind`, which is outside the shot pipeline and owns no result
+hash. Breakage has to conserve mass exactly; the emitted distribution has to be
+one a recipe can actually carry; a finer burr gap has to give a finer grind and
+more passes a finer one still, with diminishing return; the distribution has to
+be bimodal rather than merely broad, since the fines peak is the whole point;
+and the same spec always has to give the same distribution. A round-trip case
+pastes a generated distribution into a recipe and runs it, which is the only
+place the grinder and the solver meet.
+
+**Parallel sweep tests** (`[sweep]`, plus `[unit]` ring-buffer tests) exist
+because `espressolab_cli sweep --workers` added a second execution path, and
+two paths that disagree are worse than one slow one. The load-bearing case
+requires the parallel batch runner to produce the same runs, in the same
+order, with the same per-run result hashes as `ExperimentRunner::run` for the
+same spec — concurrency may change arrival order at the consumer, never a
+run's content or its final position. A ring smaller than the worker count
+still has to deliver every run in order (the back-pressure path), cancellation
+has to leave an unbroken index prefix rather than a hole, an out-of-range
+corner has to be recorded rather than thrown, and an invalid spec has to be
+rejected before any worker thread starts. The `BoundedRingBuffer` underneath
+is tested separately: zero capacity is rejected, capacity actually bounds what
+is pending, multiple producers and one consumer see every value exactly once,
+and `pop` returns false only once the buffer is closed *and* drained.
 
 **CFD verification tests** are a different kind of test from everything else
 here, and the distinction matters. They do not ask whether the solver describes

@@ -55,6 +55,16 @@ side of the puck down to the basket, each entry reporting that cell's final
 `saturation`, `temperature_c`, `pore_tds_percent` and `extraction_yield_percent`.
 Samples and the CSV export stay aggregate at every cell count.
 
+Grind may be posted in either of two spellings, never both: the scalar pair
+`puck.particle_diameter_um` + `puck.particle_spread_factor`, or a distribution
+`puck.grind.bins`, an array of `{diameter_um, mass_fraction}` objects. A body
+carrying both is rejected with `CONFLICTING_FIELD`. When `grind` is present the
+loader derives the representative diameter (the bins' Sauter mean, d32) and the
+spread from it, and extraction runs per size class; the derived d32 must still
+land in 150-800 µm even though bin diameters may span 10-2000 µm. The response
+shape is unchanged either way — the distribution affects the numbers, not the
+result contract. `assets/recipes/psd-bimodal.json` is a postable example.
+
 ## Running a Cartesian 3D CFD case
 
 The 3D endpoint is an explicit Level 4b path and does not change the standard
@@ -204,6 +214,11 @@ same-origin proxy, and direct API clients are expected to run locally.
 `GET /api/v1/health` returns the sweepable parameter paths, and
 `espressolab_cli params` prints the same list. The CLI still runs sweeps
 synchronously: it has nothing to poll from.
+
+Each REST sweep job runs on one thread, through the sequential
+`ExperimentRunner`. The CLI's parallel batch path (`sweep --workers`) has no
+REST equivalent and no effect on this endpoint. Since both paths emit identical
+runs, order, and per-run result hashes, that is a throughput difference only.
 
 ## Error contract
 

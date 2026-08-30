@@ -98,12 +98,48 @@ direct API use, see [api.md](api.md).
   --spec assets/sweeps/grind-size.json
 ```
 
-The CLI also exposes `calibrate`, `synthesize`, `bench`, and separate `cfd`
-and `cfd3d` commands. The default `simulate` pipeline is the Level 1-3 model
-used by the REST server and dashboard. `cfd`/`cfd3d` are experimental,
+The CLI also exposes `calibrate`, `synthesize`, `bench`, separate `cfd` and
+`cfd3d` commands, and `grind`. The default `simulate` pipeline is the Level 1-3
+model used by the REST server and dashboard. `cfd`/`cfd3d` are experimental,
 separate solvers; neither alters dashboard results, standard artifacts, or
 their hashes. See [model.md](model.md) before interpreting either solver as a
 real-world prediction.
+
+A large sweep can use more than one core:
+
+```bash
+./build/apps/espressolab_cli/espressolab_cli sweep \
+  --spec assets/sweeps/grind-size.json --workers 8
+```
+
+`--workers` opts into the parallel batch runner; without it the sweep runs
+sequentially exactly as before. `--ring-capacity <n>` overrides the default
+`workers * 4` bound on how many finished runs may queue up ahead of the
+aggregating consumer, and requires `--workers` to be set too.
+`ESPRESSOLAB_SWEEP_WORKERS` and `ESPRESSOLAB_SWEEP_RING_CAPACITY` are the same
+two overrides as environment variables, for benchmarking without editing a
+command line; a flag wins over its variable. Neither setting changes results:
+the parallel path produces the same runs, in the same order, with the same
+per-run result hashes as the sequential one.
+
+### Generate a grind distribution
+
+`espressolab_cli grind` turns burr geometry into a particle size distribution.
+It sits outside the shot pipeline, like the CFD solvers, and writes its own
+files rather than shot artifacts:
+
+```bash
+./build/apps/espressolab_cli/espressolab_cli grind \
+  --spec assets/grinders/burr-baseline.json --out outputs/grinds/baseline
+```
+
+The `recipe-grind.json` it writes is exactly the shape a recipe's `puck.grind`
+takes, so it pastes across unchanged. A recipe spells grind *either* as the
+scalar `particle_diameter_um` + `particle_spread_factor` pair *or* as a
+distribution, never both. Note that a spec which validates can still produce a
+distribution a recipe rejects: the recipe requires a derived d32 between 150
+and 800 µm, and a fine enough burr gap falls below that. Nothing in the grind
+model has been checked against a measured grind.
 
 ## Use the Interactive Terminal UI
 
@@ -111,8 +147,9 @@ real-world prediction.
 ./build/apps/espressolab_cli/espressolab_cli tui
 ```
 
-This launches a guided, form-based frontend to every command above, on an
-interactive macOS or Linux terminal. It calls the same native loaders,
+This launches a guided, form-based frontend to the command set above, on an
+interactive macOS or Linux terminal. It covers ten commands; `grind` is
+currently file-oriented only and has no TUI form. It calls the same native loaders,
 solvers, calibration APIs, and artifact writers as the file-oriented commands
 -- not the REST server, and not the CLI itself -- so it produces the same
 units, artifacts, and result hashes for the same inputs.

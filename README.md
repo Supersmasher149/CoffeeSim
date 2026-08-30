@@ -33,7 +33,10 @@ A baseline shot on an M-series laptop:
 ```
 
 `espressolab_cli bench` runs a 60-second shot at 100 Hz in **0.49 ms** median —
-about 2000 simulations per second, and 40x inside the 20 ms budget.
+about 2000 simulations per second, and 40x inside the 20 ms budget. Like the
+shot above, that is the M-series laptop; the millisecond figure is
+hardware-dependent, so run the command for your own host rather than treating
+it as a property of the solver. The budget check is the portable claim.
 
 ## What a grind sweep looks like
 
@@ -112,6 +115,9 @@ web (React/TS)  ->  tool_server (REST)  ->  experiment_runner
 
 CLI and CFD tests  ->  cfd / cfd3d (separate Level 4 solvers)
                                       -> espresso_core + model_library
+
+espressolab_cli grind  ->  grind (separate comminution model)
+                                      -> espressolab_core_types only
 ```
 
 Dependencies point inward. The simulation library knows nothing about HTTP,
@@ -140,7 +146,12 @@ What it does **not** do:
 - **Nothing is validated against a real shot**, CFD included. Verification and
   validation are different claims; see below.
 - No mapping from a grinder dial number to particle size. Grind is a physical
-  input in micrometres.
+  input in micrometres. A recipe may instead carry a particle size distribution
+  (`puck.grind`), from which the solver derives d32 and the spread and extracts
+  each size class at its own rate; `espressolab_cli grind` generates one from
+  burr geometry, but it too takes a physical gap in microns, not a dial number,
+  and sits outside the shot pipeline. Nothing here has been checked against a
+  measured grind.
 - **No flavour prediction.** Estimated TDS and extraction yield are engineering
   outputs. Taste depends on compound composition, roast, water chemistry,
   distribution and sensory context this model does not resolve.
@@ -203,6 +214,7 @@ a re-fit never silently changes what a past run meant.
 espressolab_cli simulate --recipe <file> [--coefficients <file>] [--out <dir>]
                          [--dt <s>] [--sample-interval <s>] [--quiet]
 espressolab_cli sweep    --spec <file> [--out <dir>] [--quiet]
+                         [--workers <n>] [--ring-capacity <n>]
 espressolab_cli calibrate --shots <dir> --fit <name,...> [--holdout <id,...>]
                            [--coefficients <file>] [--out <file>] [--report <file>]
                            [--leave-one-out]
@@ -215,6 +227,7 @@ espressolab_cli cfd3d    --recipe <file> [--coefficients <file>] [--out <dir>]
                          [--sample-interval <s>] [--snapshot-interval <s>]
                          [--material <file>] [--quiet]
 espressolab_cli cfd3d    --case <file> [--out <dir>] [--quiet]
+espressolab_cli grind    [--spec <file>] [--out <dir>]
 espressolab_cli bench    [--seconds <s>] [--repeats <n>]
 
 espressolab_cli params     # sweepable recipe parameters
@@ -223,7 +236,15 @@ espressolab_cli version
 espressolab_cli tui        # interactive terminal UI (POSIX TTY only)
 ```
 
-`espressolab_cli tui` is a guided, form-based frontend to every command above,
+`sweep --workers <n>` opts into a parallel batch runner; leaving it unset keeps
+the sequential path. It produces the same runs, in the same order, with the
+same per-run result hashes either way — `--workers` and `--ring-capacity` buy
+wall time, never a different answer. `grind` turns burr geometry into a
+particle size distribution and, like the CFD commands, sits outside the shot
+pipeline and writes its own files.
+
+`espressolab_cli tui` is a guided, form-based frontend to the commands above
+(all but `grind`, which is file-oriented only),
 for interactive macOS/Linux terminals. It calls the same native loaders,
 solvers, calibration APIs, and artifact writers directly -- not the CLI, not
 the REST server -- so it produces the same units, artifacts, and result
@@ -239,6 +260,7 @@ Artifacts land in the layout of section 10.4:
 outputs/shots/<run-id>/{recipe,coefficients,summary,manifest}.json + samples.csv
 outputs/sweeps/<sweep-id>/{sweep.json,runs.jsonl,aggregate.csv,manifest.json}
 <cfd3d-out-dir>/{case,summary,manifest,mesh,index}.json + samples.csv + fields.elf3d
+<grind-out-dir>/grind.json + recipe-grind.json   (no hashes; not a shot artifact)
 ```
 
 ## Tests
@@ -247,10 +269,13 @@ outputs/sweeps/<sweep-id>/{sweep.json,runs.jsonl,aggregate.csv,manifest.json}
 ./scripts/test.sh
 ```
 
-The current native suite passes 165 test cases and 18,213 assertions: unit tests
+The current native suite passes 204 test cases and 20,364 assertions: unit tests
 for every correlation, whole-shot
 integration tests, generated-input property tests, mass-balance invariants, a
-step-size convergence test, sweep progress and cancellation tests, parallel-region
+step-size convergence test, sweep progress and cancellation tests, parallel
+sweep tests requiring the `--workers` path to match the sequential path run for
+run and hash for hash, particle size distribution tests pinning the pre-PSD
+recipe and result hashes, grinder comminution tests, parallel-region
 balance and serialization tests, axial grid-refinement and wetting-front tests, CFD verification tests
 (divergence, exact solutions, mesh convergence, conservation),
 calibration recovery tests, deterministic leave-one-out validation tests,
@@ -279,7 +304,7 @@ and dashboard jobs at commit `736cef3`; current branch hardening through
 | [docs/testing.md](docs/testing.md) | What each test layer is for |
 | [docs/roadmap.md](docs/roadmap.md) | Status against the four-week plan, and what is not done |
 | [docs/current-state-and-gaps.md](docs/current-state-and-gaps.md) | Evidence-based implementation status and open gaps |
-| [schemas/](schemas/) | JSON Schema for recipes, coefficients, shot results, and CFD3D cases/results |
+| [schemas/](schemas/) | JSON Schema for recipes, coefficients, shot results, CFD3D cases/results, and grinder specs/results |
 
 ## Requirements
 

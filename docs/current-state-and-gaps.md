@@ -45,7 +45,7 @@ server is local and session-bound.
 | Simulation core | Deterministic C++20 shot solver with pressure and inlet-temperature profiles, wetting, thermal state, extraction, transport, termination, warnings, and mass-balance diagnostics | Implemented and locally tested |
 | Model fidelity | Level 1 lumped puck behavior, Level 2 lateral parallel regions, and Level 3 stacked axial finite-volume cells | Implemented |
 | CFD | Separate 2D axisymmetric and Cartesian 3D finite-volume solvers with pressure, saturation, enthalpy, and solute transport | Implemented as explicit CLI paths; 3D also has asynchronous REST status/snapshot routes; verified, not validated |
-| CLI | `simulate`, `sweep`, `calibrate`, `synthesize`, `cfd`, `cfd3d`, `bench`, `params`, `fit-params`, and `version` commands | Implemented |
+| CLI | `simulate`, `sweep`, `calibrate`, `synthesize`, `cfd`, `cfd3d`, `grind`, `bench`, `params`, `fit-params`, and `version` commands | Implemented |
 | Terminal UI | `espressolab_cli tui`: guided forms over every CLI command, calling the same shared workflow services as the file-oriented commands; cooperative cancellation; POSIX-only | Implemented; native logic is locally tested, while the current 14-check PTY script was not rerun for this refresh |
 | REST server | Local API for health, recipes, references, measured-shot catalogue/comparison, shots, asynchronous sweeps and CFD3D jobs, cancellation, status, snapshots, and CSV artifacts | Implemented |
 | Dashboard | Recipe controls, measured-shot comparison, draggable pressure and temperature profiles, synchronized charts, pinned runs, sweep heat maps, progress/cancellation, exports, diagnostics, and puck cross-section replay | Implemented; some literal browser interactions remain unverified |
@@ -65,9 +65,13 @@ web -> local REST server -> experiment runner -> simulation core
 
 The physics core does not know about HTTP, React, plotting, or filesystem
 locations. The dashboard renders authoritative values returned by the native
-solver rather than reimplementing the model in browser code. The server owns
-background sweep workers and cancellation, leaving the runner usable by the CLI
-and tests without threads.
+solver rather than reimplementing the model in browser code. Threads are owned
+by the applications, never the engine: the server's background sweep and CFD3D
+jobs, the TUI's worker thread, and the CLI's opt-in parallel sweep pool
+(`sweep --workers`) are the only three thread owners, leaving the runner usable
+by the CLI and tests without threads. The parallel sweep path is required by
+test to produce the same runs, order, and per-run result hashes as the
+sequential one.
 
 ### Model and Scientific Scope
 
@@ -91,7 +95,7 @@ TDS and extraction yield are engineering outputs, not taste predictions.
 
 The repository documents the following local checks:
 
-- `./scripts/test.sh` passes 165 Catch2 test cases and 18,213 assertions. It does
+- `./scripts/test.sh` passes 204 Catch2 test cases and 20,364 assertions. It does
   not run PTY, dashboard, demo, or warnings-as-errors checks.
 - The dashboard production build succeeds and reports the existing non-blocking
   583.67 kB minified JavaScript chunk warning.
@@ -102,13 +106,18 @@ The repository documents the following local checks:
   and repeated-run hash equality.
 - The baseline reaches 36 g in approximately 29.03 seconds with no clamps and
   near-machine-precision water and solids residuals.
-- A 60-second, 100 Hz benchmark records approximately 0.468 ms median runtime,
-  substantially inside the documented 20 ms budget.
+- A 60-second, 100 Hz benchmark records approximately 0.468 ms median runtime
+  on the development machine, substantially inside the documented 20 ms budget.
+  The millisecond figure is hardware-dependent (a container used for this
+  documentation pass reported 2.454 ms median, still passing); the budget
+  result, not the absolute number, is the portable claim.
 - Verification tests cover units, correlations, whole-shot behavior, generated
   inputs, invariants, convergence, sweeps, parallel regions, axial cells, CFD,
   calibration recovery, deterministic leave-one-out mechanics, native
-  cancellation checkpoints, measured-shot comparison, and the TUI's pure
-  (terminal-free) navigation, form, and shared-workflow logic.
+  cancellation checkpoints, measured-shot comparison, the particle size
+  distribution and grinder models, the parallel sweep path's agreement with the
+  sequential one, and the TUI's pure (terminal-free) navigation, form, and
+  shared-workflow logic.
 - A separate POSIX PTY script (`tests/pty/tui_smoke.py`) defines 14 checks for
   launch, resize, guided execution, long-form scrolling, Ctrl-C, terminal
   restoration, and non-TTY rejection. It is outside Catch2/`ctest` and was not
@@ -144,9 +153,9 @@ and output should be presented as a model result rather than a prediction.
 | Gap | Impact | Completion signal |
 | --- | --- | --- |
 | Current-branch hosted CI evidence is absent | Commit `736cef3` passed macOS/Linux/dashboard jobs, but later hardening through `94fbe7a` has only local evidence recorded here | Hosted workflow passes at the current branch head |
-| Full browser interaction pass is outstanding | API and served-page checks pass, but profile editing, pinned comparison overlays, synchronized chart behavior, and UI downloads have not all been exercised literally in a browser | A repeatable browser checklist is run and recorded |
+| Full browser interaction pass is outstanding | API and served-page checks pass, and a headless Chromium session at `4f6e51c` drove recipe load, a shot run, the cross-section/charts, and a 1600-point sweep for the README capture; profile editing by dragging, pinned comparison overlays, UI-initiated downloads, and accessibility have not been exercised literally in a browser | A repeatable browser checklist is run and recorded |
 | Dashboard has a non-blocking 583.67 kB minified JavaScript chunk warning | Does not block the MVP, but indicates a performance/packaging follow-up for a polished release | Chunk is reduced or the warning is explicitly accepted with measured load impact |
-| Portfolio packaging is unfinished | The project is not yet represented by a final demo video and evidence-based resume/project claims | Demo recording and portfolio copy use only verified benchmark and validation results |
+| Portfolio packaging is unfinished | A 60-second dashboard capture is now in the README; evidence-based resume/project claims are still unwritten | Portfolio copy uses only verified benchmark and validation results |
 
 ### Product and Operational Gaps
 

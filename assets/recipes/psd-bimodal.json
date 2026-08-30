@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0",
+  "name": "Bimodal PSD 18 g espresso",
+  "puck": {
+    "dose_g": 18.0,
+    "basket_diameter_mm": 58.0,
+    "depth_mm": 9.0,
+    "grind": {
+      "bins": [
+        { "diameter_um": 30.0,  "mass_fraction": 0.015 },
+        { "diameter_um": 60.0,  "mass_fraction": 0.012 },
+        { "diameter_um": 120.0, "mass_fraction": 0.013 },
+        { "diameter_um": 250.0, "mass_fraction": 0.100 },
+        { "diameter_um": 400.0, "mass_fraction": 0.280 },
+        { "diameter_um": 550.0, "mass_fraction": 0.300 },
+        { "diameter_um": 700.0, "mass_fraction": 0.200 },
+        { "diameter_um": 900.0, "mass_fraction": 0.080 }
+      ]
+    }
+  },
+  "pressure_profile_bar": [[0, 2], [6, 2], [10, 9], [30, 9]],
+  "temperature_profile_c": [[0, 93]],
+  "stop": { "target_beverage_g": 36, "maximum_time_s": 45 }
+}

@@ -70,8 +70,15 @@ export function localValidation(recipe: Recipe): ValidationIssue[] {
   check(recipe.puck.dose_g, "recipe.puck.dose_g", inputRanges.dose_g);
   check(recipe.puck.basket_diameter_mm, "recipe.puck.basket_diameter_mm", inputRanges.basket_diameter_mm);
   check(recipe.puck.depth_mm, "recipe.puck.depth_mm", inputRanges.depth_mm);
-  check(recipe.puck.particle_diameter_um, "recipe.puck.particle_diameter_um", inputRanges.particle_diameter_um);
-  check(recipe.puck.particle_spread_factor, "recipe.puck.particle_spread_factor", inputRanges.particle_spread_factor);
+  // The scalar pair and the distribution are mutually exclusive spellings of
+  // the same input, so only the one actually present is range-checked. A PSD's
+  // own constraints (ordering, mass fractions, the derived d32 envelope) are
+  // the native validator's to rule on -- section 4.2's "no browser-side
+  // authoritative calculation" applies to derived quantities like d32.
+  if (recipe.puck.grind === undefined) {
+    check(recipe.puck.particle_diameter_um ?? NaN, "recipe.puck.particle_diameter_um", inputRanges.particle_diameter_um);
+    check(recipe.puck.particle_spread_factor ?? NaN, "recipe.puck.particle_spread_factor", inputRanges.particle_spread_factor);
+  }
   check(recipe.stop.maximum_time_s, "recipe.stop.maximum_time_s", inputRanges.maximum_time_s);
   if (recipe.stop.target_beverage_g !== null) {
     check(recipe.stop.target_beverage_g, "recipe.stop.target_beverage_g", inputRanges.target_beverage_g);

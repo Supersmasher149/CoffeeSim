@@ -192,6 +192,75 @@ def main():
         note="schema cannot express the cross-item sum-to-1 rule; documented in the property description",
     )
 
+    # 9-13. Grind: the scalar pair and the distribution are mutually exclusive
+    #       spellings of one input, and the schema's oneOf must agree with
+    #       load_recipe_json()'s CONFLICTING_FIELD rejection.
+    psd_recipe = json.loads(
+        (repo_root / "assets" / "recipes" / "psd-bimodal.json").read_text()
+    )
+    check(
+        "valid_recipe_with_grind_distribution",
+        psd_recipe,
+        default_coeff,
+        expect_schema=True,
+        expect_cli=True,
+        note="distribution replaces the scalar pair; loader derives d32 and the spread",
+    )
+
+    r = copy.deepcopy(psd_recipe)
+    r["puck"]["particle_diameter_um"] = 350.0
+    r["puck"]["particle_spread_factor"] = 0.55
+    check(
+        "invalid_recipe_both_grind_spellings",
+        r,
+        default_coeff,
+        expect_schema=False,
+        expect_cli=False,
+        note="schema oneOf and the loader's CONFLICTING_FIELD agree",
+    )
+
+    r = copy.deepcopy(psd_recipe)
+    del r["puck"]["grind"]
+    check(
+        "invalid_recipe_no_grind_spelling_at_all",
+        r,
+        default_coeff,
+        expect_schema=False,
+        expect_cli=False,
+    )
+
+    # A distribution every one of whose bins is individually legal, but whose
+    # derived d32 falls outside the band the correlations were shaped around.
+    r = copy.deepcopy(psd_recipe)
+    r["puck"]["grind"]["bins"] = [
+        {"diameter_um": 10.0, "mass_fraction": 0.5},
+        {"diameter_um": 20.0, "mass_fraction": 0.5},
+    ]
+    check(
+        "documented_divergence_grind_d32_out_of_band",
+        r,
+        default_coeff,
+        expect_schema=True,
+        expect_cli=False,
+        note="schema cannot express the derived-d32 envelope; Recipe::validate() enforces it",
+    )
+
+    # Mass fractions summing to something other than 1: another cross-item rule
+    # a JSON Schema array constraint cannot express.
+    r = copy.deepcopy(psd_recipe)
+    r["puck"]["grind"]["bins"] = [
+        {"diameter_um": 250.0, "mass_fraction": 0.3},
+        {"diameter_um": 450.0, "mass_fraction": 0.3},
+    ]
+    check(
+        "documented_divergence_grind_mass_fraction_sum",
+        r,
+        default_coeff,
+        expect_schema=True,
+        expect_cli=False,
+        note="schema cannot express the cross-item sum-to-1 rule; GrindDistribution::validate() enforces it",
+    )
+
     print(f"\n{checked - len(failures)}/{checked} cases matched expectations.")
     if failures:
         print("\nFAILURES:")

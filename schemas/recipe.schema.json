@@ -15,8 +15,22 @@
     "name": { "type": "string" },
     "puck": {
       "type": "object",
-      "required": ["dose_g", "basket_diameter_mm", "depth_mm", "particle_diameter_um", "particle_spread_factor"],
+      "required": ["dose_g", "basket_diameter_mm", "depth_mm"],
       "additionalProperties": false,
+      "$comment": "Grind is spelled either as the scalar pair (particle_diameter_um + particle_spread_factor) or as a distribution (grind), never both -- load_recipe_json() rejects a document carrying both with CONFLICTING_FIELD. The oneOf below expresses that. When grind is present the loader derives the two scalars from it (d32 and the equivalent spread factor) and dump_recipe_json() emits only the distribution, so recipe_hash() is taken over the authored input rather than the derivation.",
+      "oneOf": [
+        {
+          "required": ["particle_diameter_um", "particle_spread_factor"],
+          "not": { "required": ["grind"] }
+        },
+        {
+          "required": ["grind"],
+          "not": { "anyOf": [
+            { "required": ["particle_diameter_um"] },
+            { "required": ["particle_spread_factor"] }
+          ] }
+        }
+      ],
       "properties": {
         "dose_g": { "type": "number", "minimum": 14, "maximum": 22 },
         "basket_diameter_mm": { "type": "number", "minimum": 51, "maximum": 58.5 },
@@ -28,6 +42,32 @@
         "particle_spread_factor": {
           "type": "number", "minimum": 0.1, "maximum": 1.0,
           "description": "Empirical penalty for fines and a broad distribution."
+        },
+        "grind": {
+          "type": "object",
+          "required": ["bins"],
+          "additionalProperties": false,
+          "description": "Particle size distribution, in place of the scalar pair above. The solver derives the representative diameter (Sauter mean, d32) and the spread penalty from it.",
+          "properties": {
+            "bins": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 64,
+              "$comment": "Strictly increasing diameter and mass fractions summing to 1 are enforced by GrindDistribution::validate(), not this schema, which cannot express an item-to-item or cross-item constraint. The derived d32 must additionally fall in 150-800 um; Recipe::validate() enforces that.",
+              "items": {
+                "type": "object",
+                "required": ["diameter_um", "mass_fraction"],
+                "additionalProperties": false,
+                "properties": {
+                  "diameter_um": {
+                    "type": "number", "minimum": 10, "maximum": 2000,
+                    "description": "Wider than the scalar particle_diameter_um envelope on purpose: real coffee fines sit at 10-100 um. It is the derived d32, not any single bin, that must land in 150-800 um."
+                  },
+                  "mass_fraction": { "type": "number", "minimum": 0, "maximum": 1 }
+                }
+              }
+            }
+          }
         }
       }
     },

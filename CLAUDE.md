@@ -32,7 +32,7 @@ Tags: `[unit]` `[units]` `[profile]` `[water]` `[permeability]` `[flow]` `[heat]
 `[extraction]` `[artifacts]` `[integration]` `[invariants]` `[convergence]`
 `[sweep]` `[calibration]` `[recovery]` `[property]` `[performance]` `[regions]`
 `[axial]` `[cfd]` `[cfd3d]` `[verification]` `[references]` `[progress]`
-`[cancellation]` `[tui]` `[cli_workflows]`.
+`[cancellation]` `[tui]` `[cli_workflows]` `[grind]` `[grind_sim]`.
 
 A POSIX PTY smoke matrix for the TUI runs separately from `espressolab_tests`
 (it needs a real pseudo-terminal, not just the Catch2 binary):
@@ -78,6 +78,7 @@ espressolab_cli simulate --recipe <file> [--coefficients <file>] [--out <dir>]
 espressolab_cli sweep    --spec <file> [--out <dir>] [--workers <n>] [--ring-capacity <n>]
 espressolab_cli calibrate --shots <dir> --fit <name,...> [--holdout <id,...>] [--leave-one-out]
 espressolab_cli synthesize --recipe <file> [--noise <g>] --out <file>
+espressolab_cli grind    [--spec <file>] [--out <dir>]
 espressolab_cli cfd      --recipe <file> [--radial <n>] [--axial <n>] [--field pressure|saturation|temperature|tds]
 espressolab_cli cfd3d    --recipe <file> [--nx <n>] [--ny <n>] [--nz <n>] [--out <dir>]
 espressolab_cli bench    [--seconds <s>] [--repeats <n>]
@@ -103,6 +104,9 @@ web (React/TS)  ->  tool_server (REST)  ->  experiment_runner
 CLI and CFD tests  ->  cfd / cfd3d (separate Level 4 solvers)
                                       -> espresso_core + model_library
 
+espressolab_cli grind  ->  grind (separate comminution model)
+                                      -> espressolab_core_types only
+
 espressolab_cli tui  ->  espressolab_cli_support (workflows.cpp, tui/tui_forms.cpp)
                                                      |
                             same call as every legacy command_* handler above
@@ -116,6 +120,7 @@ espressolab_cli tui  ->  espressolab_cli_support (workflows.cpp, tui/tui_forms.c
 | `espressolab_artifacts` | Versioned JSON/CSV load and dump, result hashes | Physics decisions |
 | `espressolab_experiments` | Sweeps, run schedules, aggregation, artifact naming | Chart rendering |
 | `espressolab_calibration` | Measured shots, the loss function, the fit | Anything the solver depends on |
+| `espressolab_grind` | Separate comminution model (burr geometry -> particle size distribution) and its own spec/result documents | Recipes, shot artifacts, the default pipeline, any result hash |
 | `espressolab_cfd` | Separate Level 4 axisymmetric pressure/transport solver | REST, dashboard, standard artifacts, default result hashes |
 | `espressolab_cfd3d` | Separate Cartesian 3D pressure/transport solver and field snapshots | Standard shot artifacts and default result hashes |
 | `espressolab_references` | Published reference-shot metadata, partial-load reporting | Simulation, fitting, validation decisions |
@@ -151,6 +156,7 @@ recipe, coefficient, configuration, and result hashes.
 | --- | --- |
 | `engine/espresso_core/` | Domain types, validation, profiles, state stepping, termination, invariants for the Level 1-3 solver |
 | `engine/model_library/` | Water properties, puck geometry/permeability, heat, extraction correlations |
+| `engine/grind/` | Separate comminution model: burr geometry to particle size distribution, with its own IO |
 | `engine/cfd/` | Separate Level 4 axisymmetric porous-media solver |
 | `engine/cfd3d/` | Separate Cartesian 3D porous-media solver and field storage |
 | `engine/artifact_io/` | JSON/CSV load and dump, canonical hashes, manifests, artifact files |
@@ -208,6 +214,12 @@ equation is in `docs/model.md`.
   simulation and fixed coefficients. It is not a fitting path, and the current
   stored shots are synthetic fixtures.
 - No grinder-dial-to-particle-size mapping; grind is a physical input in µm.
+  A recipe may carry a particle size distribution (`puck.grind`) instead of the
+  scalar diameter/spread pair; the solver derives d32 and the spread from it and
+  extracts each size class at its own rate. `espressolab_cli grind` generates
+  such a distribution from burr geometry, but sits outside the shot pipeline
+  like the CFD solvers and takes a physical gap in microns, not a dial number.
+  Nothing here has been checked against a measured grind or a measured shot.
 - No flavour prediction — TDS/extraction are engineering outputs only.
 
 ## Data contracts
@@ -281,7 +293,7 @@ reproducibility, not correctness.
 | `docs/testing.md` | What each test layer is for |
 | `docs/roadmap.md` | Status against the four-week plan, and what's not done |
 | `docs/current-state-and-gaps.md` | Evidence-based implementation status and open gaps |
-| `schemas/` | JSON Schema for recipes, coefficients, shot results, CFD3D cases/results |
+| `schemas/` | JSON Schema for recipes, coefficients, shot results, CFD3D cases/results, grinder specs/results |
 
 ## Requirements
 

@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://espressolab.local/schemas/grinder-spec-1.0.json",
+  "title": "EspressoLab grinder spec",
+  "description": "Input to `espressolab_cli grind`: burr geometry and breakage behaviour. Outside the shot pipeline -- this document never reaches the solver and cannot affect a shot's result hash.",
+  "$comment": "Kept synchronized with engine/grind/grinder_io.cpp's load_spec_json() (structure) and GrinderSpec::validate() (ranges and the cross-field rules noted below, which this schema cannot express structurally). Every field is optional: the loader defaults each to the compiled-in GrinderSpec value.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": { "type": "string" },
+    "burr_gap_um": {
+      "type": "number", "minimum": 50, "maximum": 1500,
+      "description": "A physical length, not a grinder dial number. Nothing maps a dial onto it. Particles at or below this size have left the grinding zone and are not broken again."
+    },
+    "bean_diameter_um": {
+      "type": "number", "minimum": 2000, "maximum": 12000,
+      "description": "Whole-bean feed size. Must exceed burr_gap_um; GrinderSpec::validate() enforces that cross-field rule, not this schema."
+    },
+    "passes": {
+      "type": "integer", "minimum": 1, "maximum": 200,
+      "description": "Applications of the breakage operator; stands in for residence time in the burrs."
+    },
+    "selection_rate": {
+      "type": "number", "minimum": 0.001, "maximum": 1.0,
+      "description": "Breakage propensity at twice the burr gap. Higher for a darker, more brittle roast."
+    },
+    "selection_exponent": { "type": "number", "minimum": 0.1, "maximum": 5.0 },
+    "breakage_exponent": {
+      "type": "number", "minimum": 0.1, "maximum": 5.0,
+      "description": "Broadbent-Callcott exponent. Larger values push progeny toward the top of the available range, i.e. a narrower grind."
+    },
+    "fines_yield": {
+      "type": "number", "minimum": 0, "maximum": 0.5,
+      "description": "Mass fraction of each breakage EVENT routed to the cell-wall fines mode. Mass is broken repeatedly, so the cumulative fines fraction lands several times higher than this."
+    },
+    "fines_diameter_um": {
+      "type": "number", "minimum": 5, "maximum": 200,
+      "description": "Where the cell-wall mode sits. Must be smaller than burr_gap_um; GrinderSpec::validate() enforces that."
+    },
+    "bins": {
+      "type": "integer", "minimum": 4, "maximum": 64,
+      "description": "Logarithmically spaced size classes from fines_diameter_um to bean_diameter_um. Classes carrying no mass are dropped from the output."
+    }
+  }
+}

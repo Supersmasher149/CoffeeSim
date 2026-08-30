@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 
+#include "espressolab/grind.hpp"
 #include "espressolab/profile.hpp"
 
 namespace espressolab {
@@ -21,8 +22,18 @@ struct Recipe {
     double dose_kg = 0.018;
     double basket_diameter_m = 0.058;
     double puck_depth_m = 0.009;
+    // Both are derived from `grind` at load time when a distribution is
+    // supplied, and are the authored input otherwise. Every consumer -- the
+    // solver, both CFD solvers, calibration -- reads these two and so needs no
+    // knowledge of the PSD; only the size-resolved extraction path additionally
+    // walks `grind.bins`.
     double particle_diameter_m = 350.0e-6;
     double particle_spread_factor = 0.55;
+    // Absent means the scalar pair above was authored directly (section 5.3's
+    // single representative diameter). Present means they were derived from it,
+    // and it -- not they -- is what the recipe hash is taken over. The two forms
+    // are mutually exclusive; Recipe::validate() enforces that.
+    std::optional<GrindDistribution> grind;
     std::vector<ParallelRegion> parallel_regions{{}};
     // Fidelity level 3: stacked finite-volume cells along the flow direction,
     // applied uniformly to every region. One cell is the Level 2 lumped puck.

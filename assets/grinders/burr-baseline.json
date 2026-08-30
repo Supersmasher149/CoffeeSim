@@ -1,0 +1,12 @@
+{
+  "name": "58 mm flat burr, espresso setting",
+  "burr_gap_um": 700.0,
+  "bean_diameter_um": 6000.0,
+  "passes": 12,
+  "selection_rate": 0.35,
+  "selection_exponent": 1.2,
+  "breakage_exponent": 1.4,
+  "fines_yield": 0.01,
+  "fines_diameter_um": 40.0,
+  "bins": 24
+}

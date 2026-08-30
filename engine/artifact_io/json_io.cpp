@@ -103,6 +103,45 @@ json profile_to_json(const PiecewiseLinearProfile& profile, double (*convert)(do
     return out;
 }
 
+// um -> m -> um is not an identity in binary floating point, so emitting the
+// raw conversion makes load/dump/load/dump drift by an ulp each pass -- and
+// since recipe_hash() is a digest of that document, simply re-saving a recipe
+// would change its hash. Rounding to nanometre resolution (far finer than any
+// real particle measurement, and finer than any grinder can resolve) makes the
+// round trip an exact fixed point instead.
+//
+// Applied to grind bins only: the scalar particle_diameter_um has shipped
+// without it, and re-rounding there would move hashes that already exist.
+double canonical_micron_value(double metres) {
+    constexpr double kScale = 1.0e6;  // six decimal places, i.e. 1 nm
+    return std::round(units::m_to_microns(metres) * kScale) / kScale;
+}
+
+GrindDistribution parse_grind(const json& node, const std::string& path) {
+    if (!node.is_object()) {
+        fail("MISSING_FIELD", path, "grind must be an object with a bins array");
+    }
+    if (!node.contains("bins") || !node.at("bins").is_array()) {
+        fail("MISSING_FIELD", path + ".bins", "grind.bins must be an array of size bins");
+    }
+    const json& bins = node.at("bins");
+
+    GrindDistribution grind;
+    grind.bins.reserve(bins.size());
+    for (std::size_t i = 0; i < bins.size(); ++i) {
+        const std::string bin_path = path + ".bins[" + std::to_string(i) + "]";
+        if (!bins[i].is_object()) {
+            fail("MISSING_FIELD", bin_path, "each grind bin must be an object");
+        }
+        // Ranges, ordering and the mass-fraction sum are GrindDistribution's
+        // job, the same split the rest of this loader keeps: parse the shape
+        // here, let validate() rule on the physics.
+        grind.bins.push_back({units::microns_to_m(required_number(bins[i], "diameter_um", bin_path)),
+                              required_number(bins[i], "mass_fraction", bin_path)});
+    }
+    return grind;
+}
+
 json parse_or_throw(const std::string& text, const std::string& path) {
     try {
         return json::parse(text);
@@ -161,9 +200,31 @@ Recipe load_recipe_json(const std::string& json_text) {
     recipe.basket_diameter_m =
         units::mm_to_m(require_number(puck, "basket_diameter_mm", "recipe.puck"));
     recipe.puck_depth_m = units::mm_to_m(require_number(puck, "depth_mm", "recipe.puck"));
-    recipe.particle_diameter_m =
-        units::microns_to_m(require_number(puck, "particle_diameter_um", "recipe.puck"));
-    recipe.particle_spread_factor = require_number(puck, "particle_spread_factor", "recipe.puck");
+    // Two mutually exclusive spellings of the same physical input: a single
+    // representative diameter, or the distribution it stands in for. Supplying
+    // both is rejected rather than silently resolved, so a reader never has to
+    // guess which one the run actually used.
+    const bool has_grind = puck.contains("grind");
+    const bool has_scalar_grind =
+        puck.contains("particle_diameter_um") || puck.contains("particle_spread_factor");
+    if (has_grind && has_scalar_grind) {
+        fail("CONFLICTING_FIELD", "recipe.puck.grind",
+             "recipe.puck.grind and particle_diameter_um/particle_spread_factor are mutually "
+             "exclusive; supply one or the other");
+    }
+    if (has_grind) {
+        recipe.grind = parse_grind(puck.at("grind"), "recipe.puck.grind");
+        // The scalars become derived values. Every downstream consumer -- the
+        // solver, both CFD solvers, calibration -- keeps reading them and needs
+        // no knowledge of the distribution.
+        recipe.particle_diameter_m = recipe.grind->sauter_mean_diameter_m();
+        recipe.particle_spread_factor = recipe.grind->equivalent_spread_factor();
+    } else {
+        recipe.particle_diameter_m =
+            units::microns_to_m(require_number(puck, "particle_diameter_um", "recipe.puck"));
+        recipe.particle_spread_factor =
+            require_number(puck, "particle_spread_factor", "recipe.puck");
+    }
     if (root.contains("axial_cells")) {
         const json& cells = root.at("axial_cells");
         if (!cells.is_number_integer()) {
@@ -225,9 +286,27 @@ std::string dump_recipe_json(const Recipe& recipe, int indent) {
     root["name"] = recipe.name;
     root["puck"] = {{"dose_g", units::kg_to_grams(recipe.dose_kg)},
                     {"basket_diameter_mm", units::m_to_mm(recipe.basket_diameter_m)},
-                    {"depth_mm", units::m_to_mm(recipe.puck_depth_m)},
-                    {"particle_diameter_um", units::m_to_microns(recipe.particle_diameter_m)},
-                     {"particle_spread_factor", recipe.particle_spread_factor}};
+                    {"depth_mm", units::m_to_mm(recipe.puck_depth_m)}};
+    if (recipe.grind.has_value()) {
+        // The distribution is the authored input and the scalars are derived
+        // from it, so the distribution is what gets serialized -- and therefore
+        // what recipe_hash() is taken over. Emitting the derived scalars too
+        // would hash the same fact twice and let a rounding change in the
+        // derivation move the hash.
+        json bins = json::array();
+        for (const GrindBin& bin : recipe.grind->bins) {
+            bins.push_back({{"diameter_um", canonical_micron_value(bin.diameter_m)},
+                            {"mass_fraction", bin.mass_fraction}});
+        }
+        root["puck"]["grind"] = {{"bins", std::move(bins)}};
+    } else {
+        // Omitted entirely rather than written as null when there is no
+        // distribution: recipe_hash() is a digest of this whole document, so an
+        // unconditional key would change the hash of every recipe that predates
+        // the PSD path. Same reason coefficient provenance is optional.
+        root["puck"]["particle_diameter_um"] = units::m_to_microns(recipe.particle_diameter_m);
+        root["puck"]["particle_spread_factor"] = recipe.particle_spread_factor;
+    }
     root["axial_cells"] = recipe.axial_cells;
     root["parallel_regions"] = json::array();
     for (const ParallelRegion& region : recipe.parallel_regions) {

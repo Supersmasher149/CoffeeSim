@@ -55,4 +55,7 @@ void require_finite(ValidationResult& result, double value, const char* path) {
     }
 }
 
+InvalidInputError::InvalidInputError(const ValidationResult& result)
+    : std::runtime_error("invalid input: " + result.summary()), validation_(result) {}
+
 }  // namespace espressolab

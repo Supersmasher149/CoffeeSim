@@ -45,6 +45,13 @@ struct CellState {
     double retained_water_kg = 0.0;
     double dissolved_solids_kg = 0.0;
     double remaining_extractable_solids_kg = 0.0;
+    // One extractable pool per PSD bin, when the recipe supplies a
+    // distribution. Empty on the scalar path, where
+    // remaining_extractable_solids_kg is the only store. When it is populated
+    // that scalar stays authoritative -- it is recomputed as the sum of the
+    // bins each step, so aggregation, the mass balances and the sample series
+    // all keep reading one number and need no knowledge of the bins.
+    std::vector<double> bin_remaining_kg;
 };
 
 struct RegionState {
@@ -56,6 +63,9 @@ struct RegionState {
 };
 
 bool all_finite(const CellState& cell) {
+    for (double bin_kg : cell.bin_remaining_kg) {
+        if (!std::isfinite(bin_kg)) return false;
+    }
     return std::isfinite(cell.temperature_k) && std::isfinite(cell.liquid_saturation) &&
            std::isfinite(cell.retained_water_kg) && std::isfinite(cell.dissolved_solids_kg) &&
            std::isfinite(cell.remaining_extractable_solids_kg);
@@ -291,6 +301,17 @@ std::vector<RegionState> initialize_regions(const Recipe& recipe,
             // column; the sum over cells is the region's share exactly.
             cell.remaining_extractable_solids_kg =
                 region_extractable_kg / static_cast<double>(cell_count);
+            if (recipe.grind.has_value()) {
+                // Extractable mass splits across the size classes in proportion
+                // to the mass each class holds, so the bins sum to the cell's
+                // share exactly and the scalar total is unchanged at t = 0.
+                const auto& bins = recipe.grind->bins;
+                cell.bin_remaining_kg.reserve(bins.size());
+                for (const GrindBin& bin : bins) {
+                    cell.bin_remaining_kg.push_back(cell.remaining_extractable_solids_kg *
+                                                    bin.mass_fraction);
+                }
+            }
         }
     }
     return regions;
@@ -429,11 +450,32 @@ bool advance_regions(std::vector<RegionState>& regions, const std::vector<Derive
             ShotState cell_view;
             cell_view.puck_temperature_k = cell.temperature_k;
             cell_view.liquid_saturation = cell.liquid_saturation;
-            const double k_ext =
-                extraction_rate_coefficient(cell_view, recipe, coeff, d.flow.flow_m3_s);
-            double extracted_kg = k_ext * cell.remaining_extractable_solids_kg * dt;
-            extracted_kg = std::clamp(extracted_kg, 0.0, cell.remaining_extractable_solids_kg);
-            cell.remaining_extractable_solids_kg -= extracted_kg;
+            double extracted_kg = 0.0;
+            if (cell.bin_remaining_kg.empty()) {
+                const double k_ext =
+                    extraction_rate_coefficient(cell_view, recipe, coeff, d.flow.flow_m3_s);
+                extracted_kg = k_ext * cell.remaining_extractable_solids_kg * dt;
+                extracted_kg = std::clamp(extracted_kg, 0.0, cell.remaining_extractable_solids_kg);
+                cell.remaining_extractable_solids_kg -= extracted_kg;
+            } else {
+                // Size-resolved: each class extracts at its own rate, so the
+                // fines exhaust while the coarse mode is still producing. That
+                // ordering is the whole reason for carrying a distribution --
+                // a single mean diameter cannot express it.
+                const std::vector<GrindBin>& bins = recipe.grind->bins;
+                double remaining_total_kg = 0.0;
+                for (std::size_t b = 0; b < cell.bin_remaining_kg.size(); ++b) {
+                    const double k_ext = extraction_rate_coefficient_at(
+                        cell_view, coeff, d.flow.flow_m3_s, bins[b].diameter_m);
+                    double bin_extracted_kg = k_ext * cell.bin_remaining_kg[b] * dt;
+                    bin_extracted_kg =
+                        std::clamp(bin_extracted_kg, 0.0, cell.bin_remaining_kg[b]);
+                    cell.bin_remaining_kg[b] -= bin_extracted_kg;
+                    extracted_kg += bin_extracted_kg;
+                    remaining_total_kg += cell.bin_remaining_kg[b];
+                }
+                cell.remaining_extractable_solids_kg = remaining_total_kg;
+            }
             cell.dissolved_solids_kg += extracted_kg;
             cell.retained_water_kg += extracted_kg;
 
@@ -578,8 +620,6 @@ void finalize_result(ShotResult& result, std::vector<RegionState>& regions,
 
 }  // namespace
 
-InvalidInputError::InvalidInputError(const ValidationResult& result)
-    : std::runtime_error("invalid simulation input: " + result.summary()), validation_(result) {}
 
 Simulator::Simulator() : water_(std::make_shared<TabulatedWaterProperties>()) {}
 

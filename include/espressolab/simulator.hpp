@@ -5,6 +5,7 @@
 #include "espressolab/execution.hpp"
 #include "espressolab/result.hpp"
 #include "espressolab/types.hpp"
+#include "espressolab/validation.hpp"
 #include "espressolab/water_properties.hpp"
 
 namespace espressolab {
@@ -16,16 +17,9 @@ struct SimulationConfig {
     bool strict_invariants = true;
 };
 
-// Thrown for input that fails validation before any stepping happens. A run
-// that starts always finishes with a recorded termination reason instead.
-class InvalidInputError : public std::runtime_error {
-public:
-    explicit InvalidInputError(const ValidationResult& result);
-    [[nodiscard]] const ValidationResult& validation() const { return validation_; }
-
-private:
-    ValidationResult validation_;
-};
+// InvalidInputError now lives in validation.hpp (included above) so modules
+// outside the shot pipeline can raise it too. A run that starts always
+// finishes with a recorded termination reason instead of throwing.
 
 class Simulator {
 public:

@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <numbers>
+#include <string>
 
 #include "espressolab/units.hpp"
 #include "espressolab/version.hpp"
@@ -30,10 +31,42 @@ ValidationResult Recipe::validate() const {
     require_in_range(result, units::m_to_mm(basket_diameter_m), 51.0, 58.5,
                      "recipe.puck.basket_diameter_mm", "mm");
     require_in_range(result, units::m_to_mm(puck_depth_m), 6.0, 14.0, "recipe.puck.depth_mm", "mm");
-    require_in_range(result, units::m_to_microns(particle_diameter_m), 150.0, 800.0,
-                     "recipe.puck.particle_diameter_um", "um");
-    require_in_range(result, particle_spread_factor, 0.1, 1.0,
-                      "recipe.puck.particle_spread_factor", "");
+    if (grind.has_value()) {
+        // The scalars are derived from the distribution here, so validating them
+        // as authored input would report a path the author never wrote. Check
+        // the distribution instead, then confirm the derivation landed inside
+        // the same envelope the scalar form is held to.
+        const ValidationResult grind_result = grind->validate();
+        result.merge(grind_result);
+        if (grind_result.ok()) {
+            const double d32_m = grind->sauter_mean_diameter_m();
+            const double derived_diameter_um = units::m_to_microns(d32_m);
+            if (derived_diameter_um < 150.0 || derived_diameter_um > 800.0) {
+                result.add("NONPHYSICAL_INPUT",
+                           "recipe.puck.grind has a Sauter mean diameter of " +
+                               std::to_string(derived_diameter_um) +
+                               " um, outside the supported 150-800 um range",
+                           "recipe.puck.grind.bins");
+            }
+            // The loader keeps particle_diameter_m equal to the bins' d32, and
+            // the flow path reads that scalar while extraction reads the bins.
+            // A Recipe assembled in code that sets one without the other would
+            // therefore run two different grinds at once -- silently, since the
+            // numbers stay individually plausible. Catch it here.
+            if (std::abs(particle_diameter_m - d32_m) > 1.0e-12 * std::max(d32_m, 1.0e-9)) {
+                result.add("NONPHYSICAL_INPUT",
+                           "recipe.puck.particle_diameter_m does not match the Sauter mean "
+                           "diameter of recipe.puck.grind; it is derived from the distribution "
+                           "and must not be set independently",
+                           "recipe.puck.grind");
+            }
+        }
+    } else {
+        require_in_range(result, units::m_to_microns(particle_diameter_m), 150.0, 800.0,
+                         "recipe.puck.particle_diameter_um", "um");
+        require_in_range(result, particle_spread_factor, 0.1, 1.0,
+                          "recipe.puck.particle_spread_factor", "");
+    }
     if (parallel_regions.empty() || parallel_regions.size() > 8) {
         result.add("NONPHYSICAL_INPUT", "recipe.parallel_regions must contain between 1 and 8 regions",
                    "recipe.parallel_regions");

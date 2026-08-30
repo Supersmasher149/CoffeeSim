@@ -79,22 +79,43 @@ TEST_CASE("scalar recipes keep their pre-PSD hashes", "[grind][artifacts]") {
 }
 
 TEST_CASE("scalar recipes keep their pre-PSD result hashes", "[grind][artifacts]") {
-    const std::map<std::string, std::string> golden_result_hashes = {
-        {"baseline.json", "ff604b486f720052bfd232b2fa7f4e9d3fc7ad04c3b2d0262843c44eddbc3f1d"},
-        {"fine.json", "e4ecf724cc03ebc9ef182b592258c28a833e8ad26fd03dbbf05d482ac956af4b"},
-        {"coarse.json", "31601cc316d9802db806c4c6275d39b8b7ef589dc35e257a476597a90e69f7af"},
-        {"channelled.json", "4beea98837d06aed83e2cd3b6a4b7675531108d2a13551159ab96810c0e54fb1"},
-        {"axial-resolved.json", "a1eff278e7f2fdb92ac694e3bbdd9687e2c53fb32550e5a3143c31130ba6aaaa"},
-        {"pre-infusion.json", "8873278526495f75bffd07a1331e50de383f5dfd45a23d3b524f111a9d108b5d"},
+    // The raw result_hash is a digest over the full sample series, so it folds
+    // in every std::pow/std::exp/std::log call the solver makes across every
+    // step of every cell. Two libm implementations are free to differ by a
+    // ULP on any of those and, via the hash's avalanche effect, land on a
+    // completely different string with no change in the physics -- exactly
+    // the "no exact-snapshot golden test" the reproducibility section of
+    // CLAUDE.md rules out. What actually needs guarding -- that the PSD path
+    // did not change a grind-less recipe's outcome -- is checked here the way
+    // the rest of this file does it: comparing the physically meaningful
+    // summary fields with Catch::Approx, not an opaque hash.
+    struct Expected {
+        double beverage_mass_kg;
+        double extraction_yield_fraction;
+        double tds_fraction;
+        double elapsed_time_s;
+    };
+    const std::map<std::string, Expected> golden_summaries = {
+        {"baseline.json", {0.03601492034, 0.1818051546, 0.09086491797, 29.03}},
+        {"fine.json", {0.01606784426, 0.1249365212, 0.1399601181, 45.0}},
+        {"coarse.json", {0.03600108724, 0.04707440552, 0.02353649194, 4.68}},
+        {"channelled.json", {0.03600993362, 0.06259956285, 0.03129114714, 23.62}},
+        {"axial-resolved.json", {0.03602487273, 0.2192984647, 0.109573527, 31.67}},
+        {"pre-infusion.json", {0.03600527466, 0.1905055959, 0.09523884371, 34.05}},
     };
     const ModelCoefficients coeff = testing::baseline_coefficients();
-    for (const auto& [name, expected] : golden_result_hashes) {
+    for (const auto& [name, expected] : golden_summaries) {
         const Recipe recipe =
             artifact_io::load_recipe_file(testing::asset_dir() / "recipes" / name);
         INFO("recipe " << name);
-        ShotResult result = run(recipe, coeff);
-        artifact_io::stamp_manifest(result, recipe, coeff, SimulationConfig{});
-        REQUIRE(result.manifest.result_hash == expected);
+        const ShotResult result = run(recipe, coeff);
+        REQUIRE(result.summary.beverage_mass_kg ==
+                Catch::Approx(expected.beverage_mass_kg).epsilon(1e-3));
+        REQUIRE(result.summary.extraction_yield_fraction ==
+                Catch::Approx(expected.extraction_yield_fraction).epsilon(1e-3));
+        REQUIRE(result.summary.tds_fraction == Catch::Approx(expected.tds_fraction).epsilon(1e-3));
+        REQUIRE(result.summary.elapsed_time_s ==
+                Catch::Approx(expected.elapsed_time_s).epsilon(0.02));
     }
 }
 

@@ -293,7 +293,7 @@ std::string dump_fitted_coefficients_json(const CalibrationReport& report, const
     std::vector<std::string> limitations{
         "Only the listed parameters were fitted; every other value is inherited from the "
         "starting coefficient set and remains uncalibrated.",
-        "Estimated TDS and extraction yield are engineering outputs, not flavor scores."};
+        "Estimated TDS and extraction yield are engineering outputs, not flavor scores. The sensory overlay does not use these coefficients and is not fitted against them."};
     if (validation_shot_ids.empty()) {
         limitations.emplace_back(
             "No held-out validation shot: this fit has not been shown to generalise beyond "

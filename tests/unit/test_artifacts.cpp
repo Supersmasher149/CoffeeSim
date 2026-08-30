@@ -461,3 +461,65 @@ TEST_CASE("the samples CSV has a stable column header", "[artifacts]") {
                       0) == 0);
     REQUIRE(std::count(csv.begin(), csv.end(), '\n') == static_cast<long>(result.samples.size()) + 1);
 }
+
+// Audit: the flavour overlay (bean profiles, sensory axes) is additive and must
+// leave every pre-existing run untouched. These literals were captured from the
+// build immediately BEFORE the overlay was written -- that ordering is the whole
+// point. Regenerating them from the current build would make this test compare
+// the code against itself and pass no matter what moved.
+TEST_CASE("beanless runs still hash exactly as they did before the flavour overlay",
+          "[artifacts][flavor]") {
+    struct PinnedRun {
+        const char* recipe_file;
+        const char* recipe_hash;
+        const char* result_hash;
+        const char* run_id;
+    };
+    // baseline, the PSD path, the multi-region path and the axially resolved
+    // path: one pin per branch the solver can take.
+    const PinnedRun pinned[] = {
+        {"baseline.json",
+         "f744a2ed317ba0cfca42b9bd8940aa049a79f530403923a9f31133d0b858e3ab",
+         "ff604b486f720052bfd232b2fa7f4e9d3fc7ad04c3b2d0262843c44eddbc3f1d",
+         "shot-ff604b486f72"},
+        {"psd-bimodal.json",
+         "727b5fec1b06a07a0a78f5e7098e42935ab86403cfe97ef8e46cc529660f0b60",
+         "0b63570e110fa7a8821b955ce94f0acab468afa3550305717f107431dd7c5f42",
+         "shot-0b63570e110f"},
+        {"channelled.json",
+         "f7bcc9c53d02baacbfdcfac156a358191dedd356c47c02680ce6915670b1fe60",
+         "4beea98837d06aed83e2cd3b6a4b7675531108d2a13551159ab96810c0e54fb1",
+         "shot-4beea98837d0"},
+        {"axial-resolved.json",
+         "2e9673ba2145030279b6a12fdd118b7e49bd65a855db37018c9ecdaca31edd2e",
+         "a1eff278e7f2fdb92ac694e3bbdd9687e2c53fb32550e5a3143c31130ba6aaaa",
+         "shot-a1eff278e7f2"},
+    };
+    const ModelCoefficients coefficients = testing::baseline_coefficients();
+    REQUIRE(artifact_io::coefficient_hash(coefficients) ==
+            "e279c1fe7e2e4dd74332ee8dc45ada37420da76d4621e9c19a8d06b47eb06fb8");
+
+    for (const PinnedRun& expected : pinned) {
+        INFO("recipe: " << expected.recipe_file);
+        const Recipe recipe =
+            artifact_io::load_recipe_file(testing::asset_dir() / "recipes" / expected.recipe_file);
+        REQUIRE_FALSE(recipe.bean.has_value());
+        REQUIRE(artifact_io::recipe_hash(recipe) == expected.recipe_hash);
+
+        ShotResult result = Simulator().run(recipe, coefficients);
+        artifact_io::stamp_manifest(result, recipe, coefficients, {});
+        REQUIRE(result.manifest.result_hash == expected.result_hash);
+        REQUIRE(result.manifest.run_id == expected.run_id);
+        REQUIRE(result.manifest.solver_version == "solver-0.4.0");
+
+        // The artifacts a beanless run emits are unchanged in shape too.
+        REQUIRE_FALSE(result.flavor.has_value());
+        const nlohmann::json document =
+            nlohmann::json::parse(artifact_io::dump_result_json(result));
+        REQUIRE_FALSE(document.contains("flavor"));
+        REQUIRE(artifact_io::dump_samples_csv(result).substr(
+                    0, artifact_io::dump_samples_csv(result).find('\n')) ==
+                "time_s,pressure_bar,inlet_temperature_c,puck_temperature_c,flow_ml_s,"
+                "beverage_mass_g,tds_percent,extraction_yield_percent,saturation");
+    }
+}

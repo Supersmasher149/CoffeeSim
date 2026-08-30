@@ -4,62 +4,155 @@
   "title": "EspressoLab shot result",
   "description": "Section 10.1. Emitted by POST /api/v1/shots and written to summary.json + manifest.json.",
   "type": "object",
-  "required": ["manifest", "termination", "elapsed_time_s", "samples"],
+  "required": [
+    "manifest",
+    "termination",
+    "elapsed_time_s",
+    "samples"
+  ],
   "properties": {
     "manifest": {
       "type": "object",
       "description": "Identity: everything needed to reproduce this run.",
-      "required": ["run_id", "solver_version", "recipe_hash", "coefficient_hash", "result_hash"],
+      "required": [
+        "run_id",
+        "solver_version",
+        "recipe_hash",
+        "coefficient_hash",
+        "result_hash"
+      ],
       "properties": {
-        "run_id": { "type": "string" },
-        "result_schema_version": { "const": "1.0" },
-        "solver_version": { "type": "string" },
-        "recipe_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-        "coefficient_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-        "result_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-        "coefficient_id": { "type": "string" },
-        "coefficient_version": { "type": "string" },
-        "timestamp_utc": { "type": "string" },
-        "dt_s": { "type": "number" },
-        "sample_interval_s": { "type": "number" }
+        "run_id": {
+          "type": "string"
+        },
+        "result_schema_version": {
+          "const": "1.0"
+        },
+        "solver_version": {
+          "type": "string"
+        },
+        "recipe_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "coefficient_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "result_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "coefficient_id": {
+          "type": "string"
+        },
+        "coefficient_version": {
+          "type": "string"
+        },
+        "timestamp_utc": {
+          "type": "string"
+        },
+        "dt_s": {
+          "type": "number"
+        },
+        "sample_interval_s": {
+          "type": "number"
+        }
       }
     },
     "termination": {
-      "enum": ["target_mass_reached", "time_limit_reached", "numerical_failure", "invalid_state", "not_terminated"]
+      "enum": [
+        "target_mass_reached",
+        "time_limit_reached",
+        "numerical_failure",
+        "invalid_state",
+        "not_terminated"
+      ]
     },
-    "elapsed_time_s": { "type": "number" },
-    "target_mass_reached": { "type": "boolean" },
-    "beverage_mass_g": { "type": "number" },
-    "average_flow_ml_s": { "type": "number" },
-    "peak_flow_ml_s": { "type": "number" },
-    "tds_percent": { "type": "number" },
-    "extraction_yield_percent": { "type": "number" },
-    "brew_ratio": { "type": "number" },
-    "warning_count": { "type": "integer" },
+    "elapsed_time_s": {
+      "type": "number"
+    },
+    "target_mass_reached": {
+      "type": "boolean"
+    },
+    "beverage_mass_g": {
+      "type": "number"
+    },
+    "average_flow_ml_s": {
+      "type": "number"
+    },
+    "peak_flow_ml_s": {
+      "type": "number"
+    },
+    "tds_percent": {
+      "type": "number"
+    },
+    "extraction_yield_percent": {
+      "type": "number"
+    },
+    "brew_ratio": {
+      "type": "number"
+    },
+    "warning_count": {
+      "type": "integer"
+    },
     "diagnostics": {
       "type": "object",
       "description": "Residuals close the mass balances of section 9.3.",
       "properties": {
-        "water_mass_residual_g": { "type": "number" },
-        "solids_mass_residual_g": { "type": "number" },
-        "clamp_count": { "type": "integer" },
-        "step_count": { "type": "integer" },
-        "min_permeability_m2": { "type": "number" },
-        "max_flow_ml_s": { "type": "number" },
-        "min_puck_temperature_c": { "type": "number" },
-        "max_puck_temperature_c": { "type": "number" }
+        "water_mass_residual_g": {
+          "type": "number"
+        },
+        "solids_mass_residual_g": {
+          "type": "number"
+        },
+        "clamp_count": {
+          "type": "integer"
+        },
+        "step_count": {
+          "type": "integer"
+        },
+        "min_permeability_m2": {
+          "type": "number"
+        },
+        "max_flow_ml_s": {
+          "type": "number"
+        },
+        "min_puck_temperature_c": {
+          "type": "number"
+        },
+        "max_puck_temperature_c": {
+          "type": "number"
+        }
       }
     },
     "warnings": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["code", "message", "time_s", "severity"],
+        "required": [
+          "code",
+          "message",
+          "time_s",
+          "severity"
+        ],
         "properties": {
-          "code": { "type": "string" },
-          "message": { "type": "string" },
-          "time_s": { "type": "number" },
-          "severity": { "enum": ["info", "soft", "hard"] }
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "time_s": {
+            "type": "number"
+          },
+          "severity": {
+            "enum": [
+              "info",
+              "soft",
+              "hard"
+            ]
+          }
         }
       }
     },
@@ -69,22 +162,51 @@
       "items": {
         "type": "object",
         "properties": {
-          "area_fraction": { "type": "number" },
-          "permeability_multiplier": { "type": "number" },
-          "beverage_mass_g": { "type": "number" },
-          "flow_fraction": { "type": "number", "minimum": 0, "maximum": 1 },
-          "tds_percent": { "type": "number" },
-          "extraction_yield_percent": { "type": "number" },
+          "area_fraction": {
+            "type": "number"
+          },
+          "permeability_multiplier": {
+            "type": "number"
+          },
+          "beverage_mass_g": {
+            "type": "number"
+          },
+          "flow_fraction": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "tds_percent": {
+            "type": "number"
+          },
+          "extraction_yield_percent": {
+            "type": "number"
+          },
           "cells": {
             "type": "array",
             "items": {
               "type": "object",
-              "required": ["saturation", "temperature_c", "pore_tds_percent", "extraction_yield_percent"],
+              "required": [
+                "saturation",
+                "temperature_c",
+                "pore_tds_percent",
+                "extraction_yield_percent"
+              ],
               "properties": {
-                "saturation": { "type": "number", "minimum": 0, "maximum": 1 },
-                "temperature_c": { "type": "number" },
-                "pore_tds_percent": { "type": "number" },
-                "extraction_yield_percent": { "type": "number" }
+                "saturation": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "temperature_c": {
+                  "type": "number"
+                },
+                "pore_tds_percent": {
+                  "type": "number"
+                },
+                "extraction_yield_percent": {
+                  "type": "number"
+                }
               }
             }
           }
@@ -95,17 +217,286 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["time_s", "pressure_bar", "flow_ml_s", "beverage_mass_g"],
+        "required": [
+          "time_s",
+          "pressure_bar",
+          "flow_ml_s",
+          "beverage_mass_g"
+        ],
         "properties": {
-          "time_s": { "type": "number" },
-          "pressure_bar": { "type": "number" },
-          "inlet_temperature_c": { "type": "number" },
-          "puck_temperature_c": { "type": "number" },
-          "flow_ml_s": { "type": "number" },
-          "beverage_mass_g": { "type": "number" },
-          "tds_percent": { "type": "number" },
-          "extraction_yield_percent": { "type": "number" },
-          "saturation": { "type": "number", "minimum": 0, "maximum": 1 }
+          "time_s": {
+            "type": "number"
+          },
+          "pressure_bar": {
+            "type": "number"
+          },
+          "inlet_temperature_c": {
+            "type": "number"
+          },
+          "puck_temperature_c": {
+            "type": "number"
+          },
+          "flow_ml_s": {
+            "type": "number"
+          },
+          "beverage_mass_g": {
+            "type": "number"
+          },
+          "tds_percent": {
+            "type": "number"
+          },
+          "extraction_yield_percent": {
+            "type": "number"
+          },
+          "saturation": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        }
+      }
+    },
+    "flavor": {
+      "type": "object",
+      "description": "The sensory overlay, present only when the recipe carried a bean. A heuristic estimate from authored, unmeasured priors -- never validated against tasting. Purely additive: a beanless run omits this key entirely and is byte-identical to a pre-overlay run.",
+      "required": [
+        "bean_id",
+        "match_score",
+        "verdict",
+        "axes"
+      ],
+      "properties": {
+        "bean_id": {
+          "type": "string"
+        },
+        "bean_version": {
+          "type": "string"
+        },
+        "flavor_model_version": {
+          "type": "string",
+          "description": "Versioned independently of solver_version."
+        },
+        "match_score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Against the bean\u2019s declared target, not an absolute quality score."
+        },
+        "rms_deviation": {
+          "type": "number",
+          "minimum": 0
+        },
+        "verdict": {
+          "enum": [
+            "under_extracted_sour",
+            "balanced",
+            "over_extracted_bitter"
+          ],
+          "description": "Relative to the bean\u2019s declared target balance, not a universal ideal."
+        },
+        "dominant_deviation_axis": {
+          "enum": [
+            "fruit",
+            "acidity",
+            "sweetness",
+            "chocolate",
+            "body",
+            "bitterness",
+            "astringency"
+          ]
+        },
+        "class_clamp_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "composition_residual_g": {
+          "type": "number",
+          "description": "The overlay\u2019s own mass balance: class pools against dissolved solids in the cup."
+        },
+        "composition_percent": {
+          "type": "object",
+          "description": "Cup share per solute class, percent, summing to 100.",
+          "properties": {
+            "acids": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "sugars": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "maillard": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "lipids": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "bitter": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "polyphenols": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100
+            }
+          }
+        },
+        "axes": {
+          "type": "object",
+          "properties": {
+            "fruit": {
+              "type": "object",
+              "properties": {
+                "intensity": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 10
+                },
+                "target": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 10
+                },
+                "deviation": {
+                  "type": "number"
+                }
+              }
+            },
+            "acidity": {
+              "type": "object",
+              "properties": {
+                "intensity": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 10
+                },
+                "target": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 10
+                },
+                "deviation": {
+                  "type": "number"
+                }
+              }
+            },
+            "sweetness": {
+              "type": "object",
+              "properties": {
+                "intensity": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 10
+                },
+                "target": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 10
+                },
+                "deviation": {
+                  "type": "number"
+                }
+              }
+            },
+            "chocolate": {
+              "type": "object",
+              "properties": {
+                "intensity": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 10
+                },
+                "target": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 10
+                },
+                "deviation": {
+                  "type": "number"
+                }
+              }
+            },
+            "body": {
+              "type": "object",
+              "properties": {
+                "intensity": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 10
+                },
+                "target": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 10
+                },
+                "deviation": {
+                  "type": "number"
+                }
+              }
+            },
+            "bitterness": {
+              "type": "object",
+              "properties": {
+                "intensity": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 10
+                },
+                "target": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 10
+                },
+                "deviation": {
+                  "type": "number"
+                }
+              }
+            },
+            "astringency": {
+              "type": "object",
+              "properties": {
+                "intensity": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 10
+                },
+                "target": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 10
+                },
+                "deviation": {
+                  "type": "number"
+                }
+              }
+            }
+          }
+        },
+        "series": {
+          "type": "array",
+          "description": "Per-sample composition and intensity, parallel to `samples`. Emitted by dump_result_json only.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "time_s": {
+                "type": "number"
+              },
+              "composition_percent": {
+                "type": "object"
+              },
+              "intensity": {
+                "type": "object"
+              }
+            }
+          }
         }
       }
     }

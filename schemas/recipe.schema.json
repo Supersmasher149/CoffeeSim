@@ -5,47 +5,95 @@
   "description": "Brew inputs in dashboard units. The solver converts to SI at load time (section 4.2).",
   "$comment": "Audit P6, issue #19: kept synchronized with engine/artifact_io/json_io.cpp's load_recipe_json() (structure and required-ness) and engine/espresso_core/types.cpp's Recipe::validate() (ranges and the profile/parallel_regions cross-field rules noted below, which load_recipe_json() itself does not check and this schema cannot express structurally) -- see CLAUDE.md 'Data contracts'.",
   "type": "object",
-  "required": ["puck", "pressure_profile_bar", "temperature_profile_c", "stop"],
+  "required": [
+    "puck",
+    "pressure_profile_bar",
+    "temperature_profile_c",
+    "stop"
+  ],
   "additionalProperties": false,
   "properties": {
     "schema_version": {
       "const": "1.0",
       "description": "Optional: load_recipe_json() defaults an absent schema_version to the current version, so it is not in the required list above. A present value must still be exactly \"1.0\"."
     },
-    "name": { "type": "string" },
+    "name": {
+      "type": "string"
+    },
     "puck": {
       "type": "object",
-      "required": ["dose_g", "basket_diameter_mm", "depth_mm"],
+      "required": [
+        "dose_g",
+        "basket_diameter_mm",
+        "depth_mm"
+      ],
       "additionalProperties": false,
       "$comment": "Grind is spelled either as the scalar pair (particle_diameter_um + particle_spread_factor) or as a distribution (grind), never both -- load_recipe_json() rejects a document carrying both with CONFLICTING_FIELD. The oneOf below expresses that. When grind is present the loader derives the two scalars from it (d32 and the equivalent spread factor) and dump_recipe_json() emits only the distribution, so recipe_hash() is taken over the authored input rather than the derivation.",
       "oneOf": [
         {
-          "required": ["particle_diameter_um", "particle_spread_factor"],
-          "not": { "required": ["grind"] }
+          "required": [
+            "particle_diameter_um",
+            "particle_spread_factor"
+          ],
+          "not": {
+            "required": [
+              "grind"
+            ]
+          }
         },
         {
-          "required": ["grind"],
-          "not": { "anyOf": [
-            { "required": ["particle_diameter_um"] },
-            { "required": ["particle_spread_factor"] }
-          ] }
+          "required": [
+            "grind"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "particle_diameter_um"
+                ]
+              },
+              {
+                "required": [
+                  "particle_spread_factor"
+                ]
+              }
+            ]
+          }
         }
       ],
       "properties": {
-        "dose_g": { "type": "number", "minimum": 14, "maximum": 22 },
-        "basket_diameter_mm": { "type": "number", "minimum": 51, "maximum": 58.5 },
-        "depth_mm": { "type": "number", "minimum": 6, "maximum": 14 },
+        "dose_g": {
+          "type": "number",
+          "minimum": 14,
+          "maximum": 22
+        },
+        "basket_diameter_mm": {
+          "type": "number",
+          "minimum": 51,
+          "maximum": 58.5
+        },
+        "depth_mm": {
+          "type": "number",
+          "minimum": 6,
+          "maximum": 14
+        },
         "particle_diameter_um": {
-          "type": "number", "minimum": 150, "maximum": 800,
+          "type": "number",
+          "minimum": 150,
+          "maximum": 800,
           "description": "Effective particle diameter, not a grinder dial setting (section 5.3)."
         },
         "particle_spread_factor": {
-          "type": "number", "minimum": 0.1, "maximum": 1.0,
+          "type": "number",
+          "minimum": 0.1,
+          "maximum": 1.0,
           "description": "Empirical penalty for fines and a broad distribution."
         },
         "grind": {
           "type": "object",
-          "required": ["bins"],
+          "required": [
+            "bins"
+          ],
           "additionalProperties": false,
           "description": "Particle size distribution, in place of the scalar pair above. The solver derives the representative diameter (Sauter mean, d32) and the spread penalty from it.",
           "properties": {
@@ -56,20 +104,33 @@
               "$comment": "Strictly increasing diameter and mass fractions summing to 1 are enforced by GrindDistribution::validate(), not this schema, which cannot express an item-to-item or cross-item constraint. The derived d32 must additionally fall in 150-800 um; Recipe::validate() enforces that.",
               "items": {
                 "type": "object",
-                "required": ["diameter_um", "mass_fraction"],
+                "required": [
+                  "diameter_um",
+                  "mass_fraction"
+                ],
                 "additionalProperties": false,
                 "properties": {
                   "diameter_um": {
-                    "type": "number", "minimum": 10, "maximum": 2000,
+                    "type": "number",
+                    "minimum": 10,
+                    "maximum": 2000,
                     "description": "Wider than the scalar particle_diameter_um envelope on purpose: real coffee fines sit at 10-100 um. It is the derived d32, not any single bin, that must land in 150-800 um."
                   },
-                  "mass_fraction": { "type": "number", "minimum": 0, "maximum": 1 }
+                  "mass_fraction": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
                 }
               }
             }
           }
         }
       }
+    },
+    "bean": {
+      "$ref": "https://espressolab.local/schemas/bean-1.0.json",
+      "description": "Optional coffee profile for the flavour overlay (schemas/bean.schema.json). Absent by default, and omitted entirely from dump_recipe_json() when absent, so every recipe written before the overlay existed keeps its hash. It drives no physical quantity."
     },
     "pressure_profile_bar": {
       "$ref": "#/$defs/profile_pressure",
@@ -80,7 +141,10 @@
       "description": "Inlet water temperature, 85-100 C. Point ranges are enforced here; strictly increasing time is enforced by Recipe::validate(), not this schema (see $defs.profile_temperature)."
     },
     "axial_cells": {
-      "type": "integer", "minimum": 1, "maximum": 32, "default": 1,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 32,
+      "default": 1,
       "description": "Fidelity level 3: stacked finite-volume cells along the flow direction, applied to every region. 1 is the lumped Level 2 puck."
     },
     "parallel_regions": {
@@ -90,22 +154,44 @@
       "description": "Optional lateral puck partitions that share pressure but evolve independently. Omit for one uniform region. area_fraction across all regions must also sum to 1; that cross-item constraint is enforced by Recipe::validate(), not this schema.",
       "items": {
         "type": "object",
-        "required": ["area_fraction", "permeability_multiplier"],
+        "required": [
+          "area_fraction",
+          "permeability_multiplier"
+        ],
         "additionalProperties": false,
         "properties": {
-          "area_fraction": { "type": "number", "minimum": 0.01, "maximum": 1.0 },
-          "permeability_multiplier": { "type": "number", "minimum": 0.05, "maximum": 20.0 }
+          "area_fraction": {
+            "type": "number",
+            "minimum": 0.01,
+            "maximum": 1.0
+          },
+          "permeability_multiplier": {
+            "type": "number",
+            "minimum": 0.05,
+            "maximum": 20.0
+          }
         }
       }
     },
     "stop": {
       "type": "object",
-      "required": ["maximum_time_s"],
+      "required": [
+        "maximum_time_s"
+      ],
       "additionalProperties": false,
       "properties": {
-        "maximum_time_s": { "type": "number", "minimum": 10, "maximum": 60 },
+        "maximum_time_s": {
+          "type": "number",
+          "minimum": 10,
+          "maximum": 60
+        },
         "target_beverage_g": {
-          "type": ["number", "null"], "minimum": 20, "maximum": 80,
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 20,
+          "maximum": 80,
           "description": "Optional mass-based stop; null runs to the time limit."
         }
       }
@@ -119,8 +205,17 @@
       "items": {
         "type": "array",
         "prefixItems": [
-          { "type": "number", "minimum": 0, "description": "time_s" },
-          { "type": "number", "minimum": 0, "maximum": 12, "description": "pressure_bar" }
+          {
+            "type": "number",
+            "minimum": 0,
+            "description": "time_s"
+          },
+          {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 12,
+            "description": "pressure_bar"
+          }
         ],
         "items": false,
         "minItems": 2,
@@ -134,8 +229,17 @@
       "items": {
         "type": "array",
         "prefixItems": [
-          { "type": "number", "minimum": 0, "description": "time_s" },
-          { "type": "number", "minimum": 85, "maximum": 100, "description": "temperature_c" }
+          {
+            "type": "number",
+            "minimum": 0,
+            "description": "time_s"
+          },
+          {
+            "type": "number",
+            "minimum": 85,
+            "maximum": 100,
+            "description": "temperature_c"
+          }
         ],
         "items": false,
         "minItems": 2,

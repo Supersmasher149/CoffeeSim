@@ -10,7 +10,7 @@ Tags: `[unit]` `[units]` `[profile]` `[water]` `[permeability]` `[flow]` `[heat]
 `[extraction]` `[artifacts]` `[integration]` `[invariants]` `[convergence]`
 `[sweep]` `[calibration]` `[recovery]` `[property]` `[performance]` `[regions]`
 `[axial]` `[cfd]` `[cfd3d]` `[verification]` `[references]` `[progress]`
-`[cancellation]` `[tui]` `[cli_workflows]` `[grind]` `[grind_sim]`.
+`[cancellation]` `[tui]` `[cli_workflows]` `[grind]` `[grind_sim]` `[flavor]`.
 
 ```bash
 python3 tests/pty/tui_smoke.py    # separate POSIX PTY smoke matrix for the TUI
@@ -81,6 +81,17 @@ load → dump is exact), the mutual exclusion of the two spellings
 (`CONFLICTING_FIELD`), and the sweep behaviour: sweeping grind size rescales
 every bin, while sweeping the spread of a distribution is refused rather than
 guessed.
+
+**Sensory overlay tests** (`[flavor]`) cover bean documents and the flavour
+layer. The load-bearing one is in `[artifacts]`: pinned hash literals, captured
+from the build *before* the overlay was written, assert that a beanless run
+still produces exactly the recipe hash, result hash and `run_id` it always did.
+Regenerating those literals from the current build would make the test compare
+the code against itself. The integration tests assert the rest bit-for-bit --
+attaching a bean must leave every sample, region and summary field equal -- and
+otherwise make only relative claims (a light natural reads fruitier than a dark
+roast), never absolute intensities, because no absolute intensity means anything
+until a tasting panel has been run.
 
 **Grinder tests** (`[grind_sim]`) cover the comminution model behind
 `espressolab_cli grind`, which is outside the shot pipeline and owns no result

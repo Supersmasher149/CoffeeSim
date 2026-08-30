@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 
+#include "espressolab/bean.hpp"
 #include "espressolab/grind.hpp"
 #include "espressolab/profile.hpp"
 
@@ -34,6 +35,11 @@ struct Recipe {
     // and it -- not they -- is what the recipe hash is taken over. The two forms
     // are mutually exclusive; Recipe::validate() enforces that.
     std::optional<GrindDistribution> grind;
+    // The coffee itself, for the sensory overlay of docs/model.md. Absent by
+    // default and absent from the serialized document when absent, so every
+    // recipe that predates it hashes exactly as it did. It drives no physical
+    // quantity: mass, flow, TDS and yield are identical with and without one.
+    std::optional<BeanProfile> bean;
     std::vector<ParallelRegion> parallel_regions{{}};
     // Fidelity level 3: stacked finite-volume cells along the flow direction,
     // applied uniformly to every region. One cell is the Level 2 lumped puck.
@@ -121,6 +127,11 @@ struct ShotState {
     // be closed without re-deriving them from the series.
     double retained_water_kg = 0.0;
     double dissolved_solids_in_cup_kg = 0.0;
+
+    // Sensory overlay only: per-solute-class share of dissolved_solids_in_cup_kg.
+    // Empty unless the recipe carries a bean, which is what keeps every loop
+    // that touches it a no-op on the default path.
+    std::vector<double> class_in_cup_kg;
 };
 
 }  // namespace espressolab

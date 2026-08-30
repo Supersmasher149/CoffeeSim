@@ -13,4 +13,13 @@ const char* to_string(TerminationReason reason) {
     return "unknown";
 }
 
+const char* to_string(FlavorVerdict value) {
+    switch (value) {
+        case FlavorVerdict::under_extracted_sour: return "under_extracted_sour";
+        case FlavorVerdict::balanced: return "balanced";
+        case FlavorVerdict::over_extracted_bitter: return "over_extracted_bitter";
+    }
+    return "unknown";
+}
+
 }  // namespace espressolab

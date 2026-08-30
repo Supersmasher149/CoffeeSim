@@ -1,6 +1,9 @@
 #pragma once
+#include <optional>
 #include <string>
 #include <vector>
+
+#include "espressolab/flavor_result.hpp"
 
 namespace espressolab {
 
@@ -104,6 +107,11 @@ struct ShotResult {
     std::vector<ShotSample> samples;
     std::vector<SimulationWarning> warnings;
     std::vector<RegionSummary> regions;
+    // Engaged only when the recipe carried a bean. Additive and optional at
+    // every layer: the JSON key, the CSV file and the dashboard panel all appear
+    // only alongside it, so a beanless run's artifacts are byte-for-byte what
+    // they were before the overlay existed.
+    std::optional<FlavorResult> flavor;
 };
 
 }  // namespace espressolab

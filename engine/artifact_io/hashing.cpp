@@ -28,7 +28,19 @@ std::string fixed(double value) {
 }  // namespace
 
 std::string recipe_hash(const Recipe& recipe) {
-    return sha256_hex(canonicalise(dump_recipe_json(recipe, -1)));
+    if (!recipe.bean.has_value() || !recipe.bean->description.has_value()) {
+        return sha256_hex(canonicalise(dump_recipe_json(recipe, -1)));
+    }
+    // A bean's description -- roaster, origins, cupping notes, source URL -- is
+    // metadata about the numbers, not a solver input. Hashing it in would mean
+    // fixing a typo in a tasting note changes the run's identity, its run_id and
+    // the artifact directory it lands in, with every number identical. Same rule
+    // and same reason as coefficient_hash()'s treatment of provenance below; the
+    // rest of the bean (class shares, weights, target) IS hashed, because it
+    // changes the flavour the run reports.
+    nlohmann::json document = nlohmann::json::parse(dump_recipe_json(recipe, -1));
+    document["bean"].erase("description");
+    return sha256_hex(document.dump());
 }
 
 std::string coefficient_hash(const ModelCoefficients& coeff) {

@@ -55,7 +55,9 @@ function rampColor(t: number): string {
 
 // Extraction yield deliberately gets the same sequential ramp as everything
 // else. A diverging scale centred on "ideal extraction" would encode a flavour
-// judgement the model does not support (section 8.5).
+// judgement the model does not support (section 8.5). That stays true now that a
+// per-bean sensory overlay exists: the overlay is bean-relative and lives on the
+// shot view, and no sweep metric encodes a taste judgement.
 export function HeatMap({
   rows, xValues, yValues, xLabel, yLabel, metric, metricLabel, metricUnit,
 }: Props) {

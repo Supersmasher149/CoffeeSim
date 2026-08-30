@@ -18,6 +18,19 @@ inline Recipe baseline_recipe() {
     return artifact_io::load_recipe_file(asset_dir() / "recipes" / "baseline.json");
 }
 
+// The shipped Counter Culture Hologram profile, and the baseline shot with it
+// attached. Loaded from assets/ rather than hand-built so a test that passes is
+// evidence about the document the project actually ships.
+inline BeanProfile hologram_bean() {
+    return artifact_io::load_bean_file(asset_dir() / "beans" / "counter-culture-hologram.json");
+}
+
+inline Recipe hologram_recipe() {
+    Recipe recipe = baseline_recipe();
+    recipe.bean = hologram_bean();
+    return recipe;
+}
+
 inline ModelCoefficients baseline_coefficients() {
     return artifact_io::load_coefficients_file(asset_dir() / "coefficients" / "default-v1.json");
 }

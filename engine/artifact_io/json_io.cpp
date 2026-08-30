@@ -1,3 +1,4 @@
+#include <array>
 #include <cmath>
 #include <fstream>
 #include <iomanip>
@@ -6,6 +7,7 @@
 #include <nlohmann/json.hpp>
 
 #include "espressolab/artifact_io.hpp"
+#include "espressolab/flavor.hpp"
 #include "espressolab/units.hpp"
 #include "espressolab/version.hpp"
 
@@ -117,6 +119,134 @@ double canonical_micron_value(double metres) {
     return std::round(units::m_to_microns(metres) * kScale) / kScale;
 }
 
+// A bean profile. The class and axis vocabularies are closed enums, so an
+// unknown key is a load error naming the offending term rather than a silently
+// ignored column -- the same stance parse_grind() takes on bin ordering.
+BeanProfile parse_bean(const json& node, const std::string& path) {
+    require_root_object(node, path);
+    BeanProfile bean;
+    bean.schema_version =
+        optional_string(node, "schema_version", path, std::string(version::kBeanSchema));
+    if (bean.schema_version != version::kBeanSchema) {
+        fail("UNSUPPORTED_SCHEMA_VERSION", path + ".schema_version",
+             "bean schema_version '" + bean.schema_version + "' is not supported (expected " +
+                 std::string(version::kBeanSchema) + ")");
+    }
+    bean.id = require_string(node, "id", path);
+    bean.version = optional_string(node, "version", path, "1.0.0");
+
+    const std::array<double, kSoluteClassCount> default_rates = default_relative_rates();
+    ESPRESSOLAB_SUPPRESS_DANGLING_REF_BEGIN
+    const json& classes = require_object(node, "classes", path);
+    ESPRESSOLAB_SUPPRESS_DANGLING_REF_END
+    const std::string classes_path = path + ".classes";
+    for (auto it = classes.begin(); it != classes.end(); ++it) {
+        SoluteClass unused = SoluteClass::acids;
+        if (!solute_class_from_string(it.key(), unused)) {
+            fail("UNKNOWN_SOLUTE_CLASS", classes_path + "." + it.key(),
+                 "'" + it.key() + "' is not a known solute class");
+        }
+    }
+    for (std::size_t k = 0; k < kSoluteClassCount; ++k) {
+        const char* name = to_string(static_cast<SoluteClass>(k));
+        const std::string class_path = classes_path + "." + name;
+        const json& entry = require_object(classes, name, classes_path);
+        bean.classes[k].mass_fraction = required_number(entry, "mass_fraction", class_path);
+        bean.classes[k].relative_rate =
+            entry.contains("relative_rate")
+                ? required_number(entry, "relative_rate", class_path)
+                : default_rates[k];
+    }
+
+    // The weight matrix and the target both default to the shared model tables,
+    // so a bean document only has to state what makes it that coffee.
+    bean.axis_weights = default_axis_weights();
+    if (node.contains("axis_weights")) {
+        const json& weights = node.at("axis_weights");
+        const std::string weights_path = path + ".axis_weights";
+        require_root_object(weights, weights_path);
+        for (auto it = weights.begin(); it != weights.end(); ++it) {
+            SensoryAxis axis = SensoryAxis::fruit;
+            if (!sensory_axis_from_string(it.key(), axis)) {
+                fail("UNKNOWN_SENSORY_AXIS", weights_path + "." + it.key(),
+                     "'" + it.key() + "' is not a known sensory axis");
+            }
+            const std::string row_path = weights_path + "." + it.key();
+            require_root_object(it.value(), row_path);
+            for (auto entry = it.value().begin(); entry != it.value().end(); ++entry) {
+                SoluteClass klass = SoluteClass::acids;
+                if (!solute_class_from_string(entry.key(), klass)) {
+                    fail("UNKNOWN_SOLUTE_CLASS", row_path + "." + entry.key(),
+                         "'" + entry.key() + "' is not a known solute class");
+                }
+                bean.axis_weights[static_cast<std::size_t>(axis)]
+                                 [static_cast<std::size_t>(klass)] =
+                    required_number(it.value(), entry.key().c_str(), row_path);
+            }
+        }
+    }
+
+    ESPRESSOLAB_SUPPRESS_DANGLING_REF_BEGIN
+    const json& target = require_object(node, "target", path);
+    ESPRESSOLAB_SUPPRESS_DANGLING_REF_END
+    const std::string target_path = path + ".target";
+    for (auto it = target.begin(); it != target.end(); ++it) {
+        SensoryAxis unused = SensoryAxis::fruit;
+        if (!sensory_axis_from_string(it.key(), unused)) {
+            fail("UNKNOWN_SENSORY_AXIS", target_path + "." + it.key(),
+                 "'" + it.key() + "' is not a known sensory axis");
+        }
+    }
+    for (std::size_t a = 0; a < kSensoryAxisCount; ++a) {
+        const char* name = to_string(static_cast<SensoryAxis>(a));
+        const std::string axis_path = target_path + "." + name;
+        const json& entry = require_object(target, name, target_path);
+        bean.target[a].intensity = required_number(entry, "intensity", axis_path);
+        bean.target[a].tolerance = entry.contains("tolerance")
+                                       ? required_number(entry, "tolerance", axis_path)
+                                       : kDefaultTolerancePoints;
+        bean.target[a].weight =
+            entry.contains("weight") ? required_number(entry, "weight", axis_path) : 1.0;
+    }
+
+    if (node.contains("description") && !node.at("description").is_null()) {
+        const json& description = node.at("description");
+        const std::string description_path = path + ".description";
+        require_root_object(description, description_path);
+        BeanDescription parsed;
+        parsed.roaster = optional_string(description, "roaster", description_path, "");
+        parsed.display_name = optional_string(description, "display_name", description_path, "");
+        parsed.roast_level = optional_string(description, "roast_level", description_path, "");
+        parsed.source = optional_string(description, "source", description_path, "");
+        const auto string_list = [&](const char* key) {
+            std::vector<std::string> out;
+            if (!description.contains(key) || description.at(key).is_null()) return out;
+            if (!description.at(key).is_array()) {
+                fail("MISSING_FIELD", description_path + "." + key,
+                     std::string(key) + " must be an array of strings");
+            }
+            for (const json& item : description.at(key)) {
+                if (!item.is_string()) {
+                    fail("MISSING_FIELD", description_path + "." + key,
+                         std::string(key) + " must be an array of strings");
+                }
+                out.push_back(item.get<std::string>());
+            }
+            return out;
+        };
+        parsed.origins = string_list("origins");
+        parsed.notes = string_list("notes");
+        parsed.limitations = string_list("limitations");
+        if (description.contains("suggested_ratio") &&
+            !description.at("suggested_ratio").is_null()) {
+            parsed.suggested_ratio = required_number(description, "suggested_ratio",
+                                                     description_path);
+        }
+        bean.description = parsed;
+    }
+    return bean;
+}
+
 GrindDistribution parse_grind(const json& node, const std::string& path) {
     if (!node.is_object()) {
         fail("MISSING_FIELD", path, "grind must be an object with a bins array");
@@ -225,6 +355,9 @@ Recipe load_recipe_json(const std::string& json_text) {
         recipe.particle_spread_factor =
             require_number(puck, "particle_spread_factor", "recipe.puck");
     }
+    if (root.contains("bean") && !root.at("bean").is_null()) {
+        recipe.bean = parse_bean(root.at("bean"), "recipe.bean");
+    }
     if (root.contains("axial_cells")) {
         const json& cells = root.at("axial_cells");
         if (!cells.is_number_integer()) {
@@ -280,6 +413,63 @@ Recipe load_recipe_file(const std::filesystem::path& file) {
     return load_recipe_json(read_file(file));
 }
 
+BeanProfile load_bean_json(const std::string& json_text) {
+    return parse_bean(parse_or_throw(json_text, "bean"), "bean");
+}
+
+BeanProfile load_bean_file(const std::filesystem::path& file) {
+    return load_bean_json(read_file(file));
+}
+
+json bean_to_json(const BeanProfile& bean) {
+    json out;
+    out["schema_version"] = bean.schema_version;
+    out["id"] = bean.id;
+    out["version"] = bean.version;
+    json classes = json::object();
+    for (std::size_t k = 0; k < kSoluteClassCount; ++k) {
+        classes[to_string(static_cast<SoluteClass>(k))] = {
+            {"mass_fraction", bean.classes[k].mass_fraction},
+            {"relative_rate", bean.classes[k].relative_rate}};
+    }
+    out["classes"] = std::move(classes);
+    json weights = json::object();
+    for (std::size_t a = 0; a < kSensoryAxisCount; ++a) {
+        json row = json::object();
+        for (std::size_t c = 0; c < kSoluteClassCount; ++c) {
+            row[to_string(static_cast<SoluteClass>(c))] = bean.axis_weights[a][c];
+        }
+        weights[to_string(static_cast<SensoryAxis>(a))] = std::move(row);
+    }
+    out["axis_weights"] = std::move(weights);
+    json target = json::object();
+    for (std::size_t a = 0; a < kSensoryAxisCount; ++a) {
+        target[to_string(static_cast<SensoryAxis>(a))] = {
+            {"intensity", bean.target[a].intensity},
+            {"tolerance", bean.target[a].tolerance},
+            {"weight", bean.target[a].weight}};
+    }
+    out["target"] = std::move(target);
+    if (bean.description.has_value()) {
+        const BeanDescription& description = *bean.description;
+        json node;
+        node["roaster"] = description.roaster;
+        node["display_name"] = description.display_name;
+        node["roast_level"] = description.roast_level;
+        node["origins"] = description.origins;
+        node["notes"] = description.notes;
+        node["source"] = description.source;
+        node["limitations"] = description.limitations;
+        if (description.suggested_ratio.has_value()) {
+            node["suggested_ratio"] = *description.suggested_ratio;
+        } else {
+            node["suggested_ratio"] = nullptr;
+        }
+        out["description"] = std::move(node);
+    }
+    return out;
+}
+
 std::string dump_recipe_json(const Recipe& recipe, int indent) {
     json root;
     root["schema_version"] = recipe.schema_version;
@@ -306,6 +496,13 @@ std::string dump_recipe_json(const Recipe& recipe, int indent) {
         // the PSD path. Same reason coefficient provenance is optional.
         root["puck"]["particle_diameter_um"] = units::m_to_microns(recipe.particle_diameter_m);
         root["puck"]["particle_spread_factor"] = recipe.particle_spread_factor;
+    }
+    if (recipe.bean.has_value()) {
+        // Omitted entirely when absent, for exactly the reason the grind branch
+        // above gives: recipe_hash() digests this whole document, so an
+        // unconditional key would move the hash of every recipe written before
+        // the sensory overlay existed.
+        root["bean"] = bean_to_json(*recipe.bean);
     }
     root["axial_cells"] = recipe.axial_cells;
     root["parallel_regions"] = json::array();
@@ -469,6 +666,37 @@ std::string dump_manifest_json(const ShotResult& result, int indent) {
     return root.dump(indent);
 }
 
+// The sensory overlay's headline block. Intensities are already the 0-10 scale
+// the model reports, so unlike every other dumper here there is no unit
+// conversion to do -- and deliberately none to invent.
+json flavor_summary_to_json(const FlavorResult& flavor) {
+    json out;
+    out["bean_id"] = flavor.bean_id;
+    out["bean_version"] = flavor.bean_version;
+    out["flavor_model_version"] = flavor.flavor_model_version;
+    out["match_score"] = flavor.summary.match_score;
+    out["rms_deviation"] = flavor.summary.rms_deviation;
+    out["verdict"] = to_string(flavor.summary.verdict);
+    out["dominant_deviation_axis"] = to_string(flavor.summary.dominant_deviation_axis);
+    out["class_clamp_count"] = flavor.summary.class_clamp_count;
+    out["composition_residual_g"] = units::kg_to_grams(flavor.summary.composition_residual);
+    json composition = json::object();
+    for (std::size_t k = 0; k < kSoluteClassCount; ++k) {
+        composition[to_string(static_cast<SoluteClass>(k))] =
+            flavor.summary.composition[k] * 100.0;
+    }
+    out["composition_percent"] = std::move(composition);
+    json axes = json::object();
+    for (std::size_t a = 0; a < kSensoryAxisCount; ++a) {
+        axes[to_string(static_cast<SensoryAxis>(a))] = {
+            {"intensity", flavor.summary.axes[a].intensity},
+            {"target", flavor.summary.axes[a].target},
+            {"deviation", flavor.summary.axes[a].deviation}};
+    }
+    out["axes"] = std::move(axes);
+    return out;
+}
+
 std::string dump_summary_json(const ShotResult& result, int indent) {
     const ShotSummary& s = result.summary;
     const ShotDiagnostics& d = result.diagnostics;
@@ -512,6 +740,9 @@ std::string dump_summary_json(const ShotResult& result, int indent) {
              {"extraction_yield_percent", region.extraction_yield_fraction * 100.0},
              {"cells", std::move(cells)}});
     }
+    if (result.flavor.has_value()) {
+        root["flavor"] = flavor_summary_to_json(*result.flavor);
+    }
     return root.dump(indent);
 }
 
@@ -532,7 +763,49 @@ std::string dump_result_json(const ShotResult& result, int indent) {
                            {"saturation", s.saturation}});
     }
     root["samples"] = std::move(samples);
+    if (result.flavor.has_value()) {
+        json series = json::array();
+        for (const FlavorSample& sample : result.flavor->series) {
+            json composition = json::object();
+            for (std::size_t k = 0; k < kSoluteClassCount; ++k) {
+                composition[to_string(static_cast<SoluteClass>(k))] = sample.composition[k] * 100.0;
+            }
+            json intensity = json::object();
+            for (std::size_t a = 0; a < kSensoryAxisCount; ++a) {
+                intensity[to_string(static_cast<SensoryAxis>(a))] = sample.intensity[a];
+            }
+            series.push_back({{"time_s", sample.time_s},
+                              {"composition_percent", std::move(composition)},
+                              {"intensity", std::move(intensity)}});
+        }
+        root["flavor"]["series"] = std::move(series);
+    }
     return root.dump(indent);
+}
+
+std::string dump_flavor_series_csv(const ShotResult& result) {
+    std::ostringstream out;
+    out << "time_s";
+    for (std::size_t k = 0; k < kSoluteClassCount; ++k) {
+        out << ',' << to_string(static_cast<SoluteClass>(k)) << "_percent";
+    }
+    for (std::size_t a = 0; a < kSensoryAxisCount; ++a) {
+        out << ',' << to_string(static_cast<SensoryAxis>(a));
+    }
+    out << '\n';
+    if (!result.flavor.has_value()) return out.str();
+    out << std::setprecision(10);
+    for (const FlavorSample& sample : result.flavor->series) {
+        out << sample.time_s;
+        for (std::size_t k = 0; k < kSoluteClassCount; ++k) {
+            out << ',' << sample.composition[k] * 100.0;
+        }
+        for (std::size_t a = 0; a < kSensoryAxisCount; ++a) {
+            out << ',' << sample.intensity[a];
+        }
+        out << '\n';
+    }
+    return out.str();
 }
 
 // Stable column order so the CSV opens the same way every run (FR-07).
@@ -560,6 +833,12 @@ void write_shot_artifacts(const std::filesystem::path& directory, const Recipe& 
     write_file(directory / "summary.json", dump_summary_json(result));
     write_file(directory / "manifest.json", dump_manifest_json(result));
     write_file(directory / "samples.csv", dump_samples_csv(result));
+    // A separate file rather than extra columns on samples.csv: that header is a
+    // fixed contract with a stability test, and a beanless run must keep writing
+    // exactly the five files it always has.
+    if (result.flavor.has_value()) {
+        write_file(directory / "flavor.csv", dump_flavor_series_csv(result));
+    }
 }
 
 }  // namespace espressolab::artifact_io

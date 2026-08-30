@@ -4,6 +4,7 @@ add_library(espressolab_models
   water_properties.cpp
   puck.cpp
   extraction.cpp
+  flavor.cpp
 )
 add_library(espressolab::models ALIAS espressolab_models)
 target_include_directories(espressolab_models PUBLIC ${PROJECT_SOURCE_DIR}/include)

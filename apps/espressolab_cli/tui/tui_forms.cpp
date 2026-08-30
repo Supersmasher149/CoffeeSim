@@ -33,6 +33,26 @@ void append_shot_report(std::vector<std::string>& lines, const ShotResult& resul
     lines.push_back("clamps        " + std::to_string(result.diagnostics.clamp_count));
     lines.push_back("samples       " + std::to_string(result.samples.size()));
     lines.push_back("result hash   " + result.manifest.result_hash);
+    // Mirrors print_shot_report() in main.cpp. The two frontends must report the
+    // same run identically, so a change to one belongs in the other.
+    if (result.flavor.has_value()) {
+        const espressolab::FlavorSummary& flavor = result.flavor->summary;
+        lines.push_back("");
+        lines.push_back("sensory estimate (heuristic, uncalibrated) for " +
+                        result.flavor->bean_id);
+        lines.push_back("verdict       " + std::string(to_string(flavor.verdict)));
+        lines.push_back("match score   " + format_number(flavor.match_score, 1) +
+                        " / 100 vs the bean's target");
+        lines.push_back("furthest off  " +
+                        std::string(to_string(flavor.dominant_deviation_axis)));
+        for (std::size_t a = 0; a < espressolab::kSensoryAxisCount; ++a) {
+            const espressolab::FlavorAxisScore& axis = flavor.axes[a];
+            lines.push_back(
+                "  " + std::string(to_string(static_cast<espressolab::SensoryAxis>(a))) + " " +
+                format_number(axis.intensity, 1) + " target " +
+                format_number(axis.target, 1) + " (" + format_number(axis.deviation, 1) + ")");
+        }
+    }
     for (const auto& warning : result.warnings) {
         lines.push_back("warning [" + warning.code + "] " + warning.message);
     }

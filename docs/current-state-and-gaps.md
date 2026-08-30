@@ -88,8 +88,10 @@ its result hashes. The 2D path is CLI-only; the 3D path has its own CLI,
 artifacts, schemas, asynchronous REST jobs, and snapshot responses.
 
 The model does not claim to resolve pore-scale flow, pump or group-head dynamics,
-crema, degassing, flavor, grinder dial settings, or dynamic channel formation.
-TDS and extraction yield are engineering outputs, not taste predictions.
+crema, degassing, grinder dial settings, or dynamic channel formation.
+TDS and extraction yield are engineering outputs, not taste predictions. The
+optional sensory overlay is a heuristic layered on top of them from authored
+priors, not a taste measurement.
 
 ### Verification Evidence
 
@@ -200,7 +202,12 @@ project can support:
   deterministic, but its coefficients are a plausible baseline rather than a fit,
   and no distribution it produces has been compared against a measured one. It
   sits outside the shot pipeline and has no REST or dashboard surface.
-- Extraction and TDS do not predict flavor or sensory quality.
+- Extraction and TDS do not predict flavor or sensory quality. The sensory
+  overlay is a separate, deliberately non-authoritative layer: its solute-class
+  shares, relative rates and axis weights are authored priors, none has been
+  fitted, and no predicted axis has been compared with a tasting panel. It is
+  excluded from calibration by design. A small descriptive-panel or triangle-test
+  dataset would be the first real check on it.
 - Additional model fidelity is not a substitute for measurements. Levels 2, 3,
   and 4 currently resolve more structure than has been checked against real
   data.

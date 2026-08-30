@@ -152,9 +152,14 @@ What it does **not** do:
   burr geometry, but it too takes a physical gap in microns, not a dial number,
   and sits outside the shot pipeline. Nothing here has been checked against a
   measured grind.
-- **No flavour prediction.** Estimated TDS and extraction yield are engineering
-  outputs. Taste depends on compound composition, roast, water chemistry,
-  distribution and sensory context this model does not resolve.
+- **Flavour is a heuristic overlay, not a prediction.** Estimated TDS and
+  extraction yield are engineering outputs. A recipe may carry a bean profile,
+  and the solver then partitions the solids it already extracted across six
+  authored solute classes to report sensory axes and a match score against the
+  bean's declared target. Every number in a bean document is an authored prior:
+  none is measured, and no predicted axis has been compared with a tasting
+  panel. It changes no mass, TDS, yield or hash, and it is not a calibration
+  target. Water chemistry, distribution and sensory context remain unresolved.
 - **The default coefficients are uncalibrated.** They put the baseline recipe in
   a plausible range; no measured shot has been fitted. The calibration machinery
   is built and tested — `espressolab_cli calibrate` fits a named set of

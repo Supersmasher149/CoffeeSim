@@ -87,6 +87,9 @@ ValidationResult Recipe::validate() const {
                        "recipe.parallel_regions");
         }
     }
+    if (bean.has_value()) {
+        result.merge(bean->validate());
+    }
     if (axial_cells < 1 || axial_cells > 32) {
         result.add("NONPHYSICAL_INPUT", "recipe.axial_cells must be between 1 and 32",
                    "recipe.axial_cells");

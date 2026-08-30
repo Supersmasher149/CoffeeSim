@@ -1,0 +1,35 @@
+{
+  "schema_version": "1.0",
+  "id": "continental-dark-roast",
+  "version": "1.0.0",
+  "description": {
+    "roaster": "unspecified",
+    "display_name": "Continental dark roast blend",
+    "roast_level": "dark",
+    "origins": ["unspecified Latin American blend"],
+    "notes": ["dark chocolate", "molasses", "roasty", "low acid"],
+    "suggested_ratio": 15.0,
+    "source": "Authored contrast profile at the opposite end of the roast range from the light natural.",
+    "limitations": [
+      "Authored priors, not measurements. This is a generic dark roast, not any particular roaster's coffee.",
+      "A dark roast converts sugars into melanoidins, raises late-eluting bitter degradation products, and migrates lipids to the bean surface. The direction is well established; the values are authored."
+    ]
+  },
+  "classes": {
+    "acids":       { "mass_fraction": 0.07 },
+    "sugars":      { "mass_fraction": 0.18 },
+    "maillard":    { "mass_fraction": 0.44 },
+    "lipids":      { "mass_fraction": 0.11 },
+    "bitter":      { "mass_fraction": 0.13 },
+    "polyphenols": { "mass_fraction": 0.07 }
+  },
+  "target": {
+    "fruit":       { "intensity": 1.5 },
+    "acidity":     { "intensity": 2.5 },
+    "sweetness":   { "intensity": 5.0 },
+    "chocolate":   { "intensity": 8.0 },
+    "body":        { "intensity": 7.5 },
+    "bitterness":  { "intensity": 5.5, "weight": 0.8 },
+    "astringency": { "intensity": 3.0, "weight": 0.8 }
+  }
+}

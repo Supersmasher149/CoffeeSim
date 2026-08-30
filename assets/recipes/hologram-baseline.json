@@ -1,0 +1,110 @@
+{
+  "schema_version": "1.0",
+  "name": "Counter Culture Hologram 18 g double",
+  "puck": {
+    "dose_g": 18.0,
+    "basket_diameter_mm": 58.0,
+    "depth_mm": 9.0,
+    "particle_diameter_um": 350.0,
+    "particle_spread_factor": 0.55
+  },
+  "bean": {
+    "schema_version": "1.0",
+    "id": "counter-culture-hologram",
+    "version": "1.0.0",
+    "description": {
+      "roaster": "Counter Culture Coffee",
+      "display_name": "Hologram",
+      "roast_level": "medium",
+      "origins": [
+        "70% CODECH, Guatemala (washed)",
+        "30% Dhiba Bate, Ethiopia (natural sundried)"
+      ],
+      "notes": [
+        "fruity",
+        "milk chocolate",
+        "syrupy"
+      ],
+      "suggested_ratio": 17.0,
+      "source": "Composition authored from the roaster's published description of a year-round washed/natural blend. Not a measured assay.",
+      "limitations": [
+        "Every number in this file is an authored prior. No solute-class share here was measured by chromatography, and no predicted axis has been compared with a tasting panel.",
+        "Hologram is a rotating blend: Counter Culture changes the component coffees through the year while aiming at a consistent profile. The 70/30 split recorded above is one published composition, not a fixed recipe.",
+        "The washed majority is what pushes the maillard share up; the natural Ethiopian third is what keeps acids and fruit present. That direction is well established. These specific values are not."
+      ]
+    },
+    "classes": {
+      "acids": {
+        "mass_fraction": 0.14
+      },
+      "sugars": {
+        "mass_fraction": 0.3
+      },
+      "maillard": {
+        "mass_fraction": 0.34
+      },
+      "lipids": {
+        "mass_fraction": 0.07
+      },
+      "bitter": {
+        "mass_fraction": 0.09
+      },
+      "polyphenols": {
+        "mass_fraction": 0.06
+      }
+    },
+    "target": {
+      "fruit": {
+        "intensity": 6.5
+      },
+      "acidity": {
+        "intensity": 5.5
+      },
+      "sweetness": {
+        "intensity": 6.5
+      },
+      "chocolate": {
+        "intensity": 6.5
+      },
+      "body": {
+        "intensity": 6.0
+      },
+      "bitterness": {
+        "intensity": 3.0,
+        "weight": 0.8
+      },
+      "astringency": {
+        "intensity": 2.0,
+        "weight": 0.8
+      }
+    }
+  },
+  "pressure_profile_bar": [
+    [
+      0,
+      2
+    ],
+    [
+      6,
+      2
+    ],
+    [
+      10,
+      9
+    ],
+    [
+      30,
+      9
+    ]
+  ],
+  "temperature_profile_c": [
+    [
+      0,
+      93
+    ]
+  ],
+  "stop": {
+    "target_beverage_g": 36,
+    "maximum_time_s": 45
+  }
+}

@@ -23,6 +23,53 @@ export interface GrindDistribution {
   bins: GrindBin[];
 }
 
+// The six solute classes and seven sensory axes are a closed vocabulary shared
+// with the native core (include/espressolab/bean.hpp). A bean names every one.
+export const SOLUTE_CLASSES = [
+  "acids",
+  "sugars",
+  "maillard",
+  "lipids",
+  "bitter",
+  "polyphenols",
+] as const;
+export type SoluteClass = (typeof SOLUTE_CLASSES)[number];
+
+export const SENSORY_AXES = [
+  "fruit",
+  "acidity",
+  "sweetness",
+  "chocolate",
+  "body",
+  "bitterness",
+  "astringency",
+] as const;
+export type SensoryAxis = (typeof SENSORY_AXES)[number];
+
+// A coffee, for the flavour overlay. Optional on a recipe, and it drives no
+// physical quantity: mass, TDS and extraction yield are identical with and
+// without one. Every value in a bean document is an authored prior that has
+// never been checked against tasting -- the dashboard has to say so wherever it
+// shows a score (assets/beans/README.md).
+export interface BeanProfile {
+  schema_version?: string;
+  id: string;
+  version?: string;
+  classes: Record<SoluteClass, { mass_fraction: number; relative_rate?: number }>;
+  axis_weights?: Partial<Record<SensoryAxis, Partial<Record<SoluteClass, number>>>>;
+  target: Record<SensoryAxis, { intensity: number; tolerance?: number; weight?: number }>;
+  description?: {
+    roaster?: string;
+    display_name?: string;
+    roast_level?: string;
+    origins?: string[];
+    notes?: string[];
+    suggested_ratio?: number | null;
+    source?: string;
+    limitations?: string[];
+  } | null;
+}
+
 export interface Recipe {
   schema_version: string;
   name: string;
@@ -38,6 +85,10 @@ export interface Recipe {
   // Optional in the dashboard: a recipe without it is a single region, and the
   // field is carried through an edit untouched so a multi-region recipe from
   // the catalogue keeps its regions on the way back to the solver.
+  // Optional coffee profile. Carried through an edit untouched, like
+  // parallel_regions below, so selecting a bean and then dragging a profile
+  // point does not silently drop it on the way back to the solver.
+  bean?: BeanProfile;
   parallel_regions?: ParallelRegion[];
   // Audit P5, issue #21: dump_recipe_json() always emits axial_cells (never
   // omitted server-side), but the type omitted it entirely, so typed code
@@ -145,6 +196,36 @@ export interface ShotResult {
   warnings: SimulationWarning[];
   samples: ShotSample[];
   regions?: RegionSummary[];
+  // Present only when the recipe carried a bean. Computed entirely by the
+  // native solver; the dashboard renders these numbers and derives none of them.
+  flavor?: FlavorResult;
+}
+
+export interface FlavorAxisScore {
+  intensity: number;
+  target: number;
+  deviation: number;
+}
+
+export interface FlavorSample {
+  time_s: number;
+  composition_percent: Record<SoluteClass, number>;
+  intensity: Record<SensoryAxis, number>;
+}
+
+export interface FlavorResult {
+  bean_id: string;
+  bean_version: string;
+  flavor_model_version: string;
+  match_score: number;
+  rms_deviation: number;
+  verdict: "under_extracted_sour" | "balanced" | "over_extracted_bitter";
+  dominant_deviation_axis: SensoryAxis;
+  class_clamp_count: number;
+  composition_residual_g: number;
+  composition_percent: Record<SoluteClass, number>;
+  axes: Record<SensoryAxis, FlavorAxisScore>;
+  series?: FlavorSample[];
 }
 
 export interface ReferenceSource {

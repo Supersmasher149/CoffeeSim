@@ -220,6 +220,27 @@ Each REST sweep job runs on one thread, through the sequential
 REST equivalent and no effect on this endpoint. Since both paths emit identical
 runs, order, and per-run result hashes, that is a throughput difference only.
 
+## The sensory overlay
+
+`POST /api/v1/shots` accepts an optional `bean` object on the recipe
+(`schemas/bean.schema.json`). No endpoint changed to support it: the server
+re-dumps the recipe sub-object into the native loader and returns whatever the
+solver emits, so the field flows in and the `flavor` block flows out on its own.
+
+A response carries `flavor` only when the request named a bean. The block gives
+per-axis `intensity`/`target`/`deviation` on a 0-10 scale, the cup's
+`composition_percent` across six solute classes, a `match_score` against the
+bean's declared target, a `verdict`, and (on `/shots`, not the summary) a
+`series` parallel to `samples`.
+
+It is a heuristic from authored priors that have never been checked against
+tasting, and it changes no other field in the response: `tds_percent`,
+`extraction_yield_percent` and every sample are identical with and without a
+bean. A request without one produces a response byte-identical to what the
+server returned before the overlay existed.
+
+Sweep responses deliberately carry no flavour metric.
+
 ## Error contract
 
 Every failure answers with the shape from section 12.2:

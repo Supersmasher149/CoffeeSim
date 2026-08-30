@@ -34,7 +34,9 @@ Rules from 11.3, worth repeating because they are what make the numbers usable:
 
 - Record time and beverage mass first; add pressure and TDS only if the
   equipment measures them.
-- Do not tune on taste descriptions during the MVP.
+- Do not tune on taste descriptions during the MVP. This still holds now that
+  bean profiles exist: the sensory overlay (`assets/beans/README.md`) is a
+  separate, uncalibrated layer and must never become a calibration target.
 - Fit a small set of coefficients with physical interpretations, minimising a
   weighted error across several shots rather than matching one exactly.
 - Hold back at least one shot as a validation case that is never used for

@@ -285,6 +285,89 @@ TDS              = dissolved_solids_in_cup / beverage_mass
 brew_ratio       = beverage_mass / dry_coffee_mass
 ```
 
+## Sensory overlay
+
+Optional, and off unless the recipe carries a `bean` (see
+`assets/beans/README.md`). It reports seven sensory axes, a match score against
+the bean's declared target, and a verdict.
+
+**It is a heuristic built on authored priors, not a prediction.** No solute-class
+share was measured, no relative rate was fitted, and no predicted axis has been
+compared with a tasting panel. It is not a calibration target and
+`espressolab_cli calibrate` does not look at it.
+
+**It changes nothing.** The overlay divides the solids the solver already
+extracted; it never changes how much is extracted. A recipe without a bean
+produces byte-identical results and hashes to one written before the overlay
+existed, and attaching a bean leaves every physical quantity bit-for-bit equal.
+
+### Tracer partition
+
+Six solute classes carry a relative rate against the `maillard` reference
+(1.0): acids 2.60, sugars 1.40, lipids 0.70, bitter 0.45, polyphenols 0.30.
+Per cell per step, the mass the solver already extracted is divided by
+propensity:
+
+```
+w_i    = relative_rate_i * class_remaining_i
+take_i = extracted_kg * w_i / sum(w)        clamped to class_remaining_i
+```
+
+The shares sum to `extracted_kg` by construction rather than by a corrective
+renormalisation, so total dissolved solids cannot drift. Only the *ratio*
+between classes is used, so the scalar and PSD extraction branches need no
+separate treatment. The tracer then travels with the pore liquid at exactly the
+fraction of solids the transport step moved, inventing no second rule.
+
+Fast classes lead and slow ones follow, so the cup drifts from bright toward
+bitter as the shot runs. That drift is the whole mechanism — there is
+deliberately no separate extraction-yield term, which would double-count it and
+smuggle in a "correct yield" judgement.
+
+### Composition to axes
+
+With `f_i` the cup's share of each class (summing to 1):
+
+```
+strength_gain  = clamp((TDS / 0.09)^0.60, 0.30, 1.60)
+r_a            = sum_i W[a][i] * f_i
+I_a            = clamp(5.0 * r_a / mean(W[a]) * strength_gain, 0, 10)
+```
+
+`W` is the bean's axis-weight matrix. Normalising by each row's **mean** — not
+its maximum — matters: `r_a` is a weighted average of the row's weights, so
+dividing by the maximum would compress every real shot into the bottom of the
+scale, and compress the peaked bright rows hardest. Dividing by the mean puts
+1.0 at an even six-way mix, which maps to the middle of the scale. Only a row's
+shape matters either way, so an author cannot buy a louder axis with bigger
+numbers.
+
+Composition sets the balance; `strength_gain` sets intensity, so a watery shot
+reads muted across every axis and a ristretto intense.
+
+### Score and verdict
+
+```
+rms          = sqrt( sum_a w_a (d_a / (tol_a / 1.5))^2 / sum_a w_a )   d_a = I_a - target_a
+match_score  = 100 * max(0, 1 - rms / 4.0)
+balance(v)   = (v_acidity + v_fruit)/2 - (v_bitterness + v_astringency)/2
+offset       = balance(I) - balance(target)
+```
+
+`offset > 1.5` reads under-extracted and sour, `< -1.5` over-extracted and
+bitter, otherwise balanced. Both are **bean-relative**: a coffee whose roaster
+asks for high acidity is not called sour for delivering it.
+
+### Known weaknesses
+
+- `lipids` is the weakest class. An emulsified phase is stripped mechanically
+  rather than dissolved, so a first-order rate ratio is arguably the wrong
+  functional form. It is kept because body has to come from somewhere.
+- `bitter` names a sensation, not a chemical family. Caffeine extracts fast, so
+  an "alkaloids" label would contradict the slow rate this class carries.
+- A solute class and a particle size class are treated as independent
+  partitions of the same solids. Crossing them needs data nobody has.
+
 ## What this does not model
 
 - Momentum, a velocity field, or CFD of any kind. Flow is Darcy's law per cell.
@@ -292,9 +375,10 @@ brew_ratio       = beverage_mass / dry_coffee_mass
   dynamic channel formation.
 - Grinder dial settings. Particle diameter is a physical input; there is no
   universal mapping from a number on a grinder.
-- Flavour. Estimated TDS and extraction yield are engineering outputs. Taste
-  depends on compound composition, roast, water chemistry, distribution and
-  sensory context that this model does not resolve.
+- Compound-resolved chemistry. The sensory overlay below partitions the
+  extracted solids across six lumped, authored solute classes. They are not
+  measured species, and water chemistry, distribution and sensory context are
+  still absent. Estimated TDS and extraction yield remain engineering outputs.
 - Crema, degassing, pressure dynamics inside the group head, or pump behaviour.
 
 ## Numerics

@@ -32,7 +32,7 @@ Tags: `[unit]` `[units]` `[profile]` `[water]` `[permeability]` `[flow]` `[heat]
 `[extraction]` `[artifacts]` `[integration]` `[invariants]` `[convergence]`
 `[sweep]` `[calibration]` `[recovery]` `[property]` `[performance]` `[regions]`
 `[axial]` `[cfd]` `[cfd3d]` `[verification]` `[references]` `[progress]`
-`[cancellation]` `[tui]` `[cli_workflows]` `[grind]` `[grind_sim]`.
+`[cancellation]` `[tui]` `[cli_workflows]` `[grind]` `[grind_sim]` `[flavor]`.
 
 A POSIX PTY smoke matrix for the TUI runs separately from `espressolab_tests`
 (it needs a real pseudo-terminal, not just the Catch2 binary):
@@ -41,8 +41,11 @@ A POSIX PTY smoke matrix for the TUI runs separately from `espressolab_tests`
 python3 tests/pty/tui_smoke.py [path/to/espressolab_cli]
 ```
 
-The current Catch2 suite passes 204 cases/20,364 assertions. The PTY script
-defines 14 checks but was not rerun for the measured-shot documentation refresh.
+The current Catch2 suite passes 225 cases/86,840 assertions (the assertion count
+jumped with the sensory overlay's property sweep over the composition simplex).
+The PTY script's 15 checks pass. Locally verified for the overlay: full suite,
+warnings-as-errors build, `scripts/demo.sh`, `scripts/calibration_demo.sh`, the
+18-case schema contract check, the PTY matrix, and the web typecheck/build.
 Hosted macOS, Linux, and dashboard jobs passed at `736cef3`; later hardening
 through `94fbe7a` does not yet have equivalent hosted evidence.
 
@@ -74,7 +77,7 @@ npm --prefix web run build
 CLI surface:
 
 ```bash
-espressolab_cli simulate --recipe <file> [--coefficients <file>] [--out <dir>]
+espressolab_cli simulate --recipe <file> [--coefficients <file>] [--bean <file>] [--out <dir>]
 espressolab_cli sweep    --spec <file> [--out <dir>] [--workers <n>] [--ring-capacity <n>]
 espressolab_cli calibrate --shots <dir> --fit <name,...> [--holdout <id,...>] [--leave-one-out]
 espressolab_cli synthesize --recipe <file> [--noise <g>] --out <file>
@@ -120,6 +123,7 @@ espressolab_cli tui  ->  espressolab_cli_support (workflows.cpp, tui/tui_forms.c
 | `espressolab_artifacts` | Versioned JSON/CSV load and dump, result hashes | Physics decisions |
 | `espressolab_experiments` | Sweeps, run schedules, aggregation, artifact naming | Chart rendering |
 | `espressolab_calibration` | Measured shots, the loss function, the fit | Anything the solver depends on |
+| `espressolab_models` (flavour) | The sensory overlay's correlations: composition to axes, match score, verdict | Run state, any physical quantity |
 | `espressolab_grind` | Separate comminution model (burr geometry -> particle size distribution) and its own spec/result documents | Recipes, shot artifacts, the default pipeline, any result hash |
 | `espressolab_cfd` | Separate Level 4 axisymmetric pressure/transport solver | REST, dashboard, standard artifacts, default result hashes |
 | `espressolab_cfd3d` | Separate Cartesian 3D pressure/transport solver and field snapshots | Standard shot artifacts and default result hashes |
@@ -174,6 +178,7 @@ recipe, coefficient, configuration, and result hashes.
 | `apps/espressolab_cli/tui/` | Interactive terminal UI: `tui_forms.{hpp,cpp}` (terminal-independent navigation/forms) and `tui.cpp` (FTXUI rendering) |
 | `apps/espressolab_server/` | Local REST translation, measured-shot comparison, in-memory runs, background sweep/CFD3D jobs (cpp-httplib) |
 | `web/src/features/` | shot, sweeps, run comparison, measured-shot comparison, calibration notice |
+| `assets/beans/` | Bean profiles for the sensory overlay. Authored priors, never measured |
 | `assets/` | Versioned example inputs and synthetic measurement fixtures |
 | `schemas/` | Intended JSON exchange formats |
 | `tests/` | Unit, integration, property, convergence, verification tests |
@@ -226,7 +231,12 @@ equation is in `docs/model.md`.
   such a distribution from burr geometry, but sits outside the shot pipeline
   like the CFD solvers and takes a physical gap in microns, not a dial number.
   Nothing here has been checked against a measured grind or a measured shot.
-- No flavour prediction — TDS/extraction are engineering outputs only.
+- Flavour is an optional heuristic overlay, absent unless a recipe carries a
+  `bean`. It partitions the solids the solver already extracted across six
+  authored solute classes; it changes no physical quantity and no beanless hash,
+  is never fed back into the model, and is never a calibration target. TDS and
+  extraction remain the engineering outputs. Nothing in `assets/beans/` has been
+  measured or checked against tasting.
 
 ## Data contracts
 

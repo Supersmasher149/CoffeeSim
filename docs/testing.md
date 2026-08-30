@@ -202,6 +202,82 @@ rendering, raw-mode/alternate-screen lifecycle, resize, and real Ctrl-C
 delivery through a terminal's line discipline -- is the separate PTY smoke
 matrix's job; see `tests/pty/tui_smoke.py`.
 
+## Frontend runtime tests
+
+The dashboard (`web/`) has its own layered suite, separate from the Catch2
+binary above and run by the `web` and `web-e2e` CI jobs rather than
+`./scripts/test.sh`:
+
+```bash
+npm --prefix web run test              # Vitest: unit + component + accessibility
+npm --prefix web run test:watch
+npm --prefix web run test:coverage     # same, with coverage thresholds enforced
+npm --prefix web run test:e2e          # Playwright: chromium + chromium-mobile
+npm --prefix web run test:e2e:all      # + firefox + webkit + a mobile webkit viewport
+```
+
+**Unit tests** (`web/src/state/workspace.test.ts`, `web/src/api/client.test.ts`)
+cover the two modules everything else depends on: every `localValidation`
+boundary (exact, just inside, just outside, NaN/Infinity, scalar vs. PSD,
+null target mass, unordered/duplicate/empty profiles), `preInfusionEnd`'s
+immediate-peak and repeated-peak cases, and the API client's HTTP methods,
+query/path encoding (including reserved characters in measured-shot and
+coefficient identifiers), `AbortSignal` forwarding, and every branch of
+`ApiFailure` parsing (structured error, missing `details.issues`, non-JSON
+body, network rejection). These two files carry their own, higher coverage
+thresholds in `web/vitest.config.ts`.
+
+**Component tests** (React Testing Library, one file per component under
+`web/src/features/`, plus `web/src/App.test.tsx`) run against a mock server
+(`msw`, `web/src/test/fixtures/server.ts`) so they exercise the same
+`fetch()` path production code takes rather than a mocked API client. They
+cover loading/empty/error states, request races (measured-shot comparison's
+abort-on-reselect and disabled-while-loading guards; sweep polling,
+cancellation, and terminal states with real `setTimeout`-driven polling
+rather than fake timers, which fought `userEvent` and `msw` in practice),
+immutable-patch edits, keyboard interaction (arrow-key profile point
+movement, snapping, neighbour fencing), and the two production bugs this
+suite's construction found and fixed: `App.tsx` was handing
+`ReferenceShotsPanel` the live draft recipe instead of the recipe that
+produced the active result (same class of bug the `activeRecipe` contract
+already guarded against for `PuckView`/`ChartStack` -- see the `Audit P7,
+issue #22` comments), and several controls (`ControlRail`'s number fields,
+`ComparisonTray`'s remove buttons, `SweepPanel`'s axis fields and progress
+bar, `HeatMap`'s cells) had no accessible name or label association at all.
+`web/src/test/setup.ts` centralises the jsdom gaps every one of these files
+would otherwise hit individually: `ResizeObserver`, `matchMedia`,
+`requestAnimationFrame`, Blob URLs, and the SVG measurement/coordinate APIs
+(`getBBox`, `createSVGPoint`, `getScreenCTM`) Recharts and `ProfileCanvas`
+both call.
+
+**Accessibility tests** (`web/src/a11y.test.tsx`) run `axe-core` (via
+`vitest-axe`) against five stable states -- the empty app, a completed
+simulation, a completed measured-shot comparison, a completed two-axis sweep,
+and an open diagnostics drawer/profile editor -- and fail only on
+serious/critical violations (`web/src/test/a11y.ts`); moderate/minor findings
+are real but noisier, and gating on them would fail this check for reasons
+unrelated to an actual regression.
+
+**Playwright tests** (`web/e2e/`) are the only layer that runs a real browser
+against the real built `espressolab_server` binary, per
+`web/playwright.config.ts`'s two-stage `webServer`: the native server on an
+isolated port, then Vite with its dev-proxy target pointed at that port via
+`ESPRESSOLAB_SERVER_URL` (`web/vite.config.ts`). They cover what jsdom cannot:
+real SVG pointer geometry and `getScreenCTM` (dragging a profile point),
+keyboard navigation through actual focus order, file downloads (CSV/JSON,
+inspected after `page.waitForEvent("download")`), deterministic result
+hashes across two real solver runs, and that comparing a measured shot or
+pinning a run behaves the same way against the real server as the mocked
+component tests already proved. Desktop and mobile Chromium run in CI on
+every push and PR; the nightly schedule adds Firefox, WebKit and a mobile
+WebKit viewport. CI retries a failure once and still records it as flaky
+rather than a clean pass, and uploads the HTML report plus every failing
+test's trace/screenshot/video.
+
+There is no separate visual-regression layer yet -- Playwright's
+`screenshot: "only-on-failure"` is diagnostic only, not a maintained set of
+golden images.
+
 ## On golden fixtures
 
 There is deliberately no exact-snapshot golden result. Snapshots make every

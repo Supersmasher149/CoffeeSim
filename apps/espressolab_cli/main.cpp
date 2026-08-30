@@ -5,6 +5,7 @@
 #include <iomanip>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -50,6 +51,10 @@ Usage:
                              [--noise <g>] [--seed <n>] --out <file>
 
   espressolab_cli bench [--seconds <s>] [--repeats <n>]
+  espressolab_cli cfd      --recipe <file> [--coefficients <file>]
+                           [--radial <n>] [--axial <n>] [--dt <s>]
+                           [--field pressure|saturation|temperature|tds]
+
   espressolab_cli cfd3d --recipe <file> [--coefficients <file>] [--out <dir>]
                          [--nx <n>] [--ny <n>] [--nz <n>] [--dt <s>]
                          [--sample-interval <s>] [--snapshot-interval <s>]
@@ -125,6 +130,18 @@ bool reject_unknown_options(int argc, char** argv, int start, const std::set<std
     return true;
 }
 
+// Collapses the "reject anything not in `allowed`, then parse what's left"
+// dance every command_* handler repeats. Returns nullopt (having already
+// printed reject_unknown_options's error) so callers do:
+//   const auto parsed = parse_command_flags(argc, argv, {...}, "simulate");
+//   if (!parsed) return kUsageError;
+//   const auto& flags = *parsed;
+std::optional<std::map<std::string, std::string>> parse_command_flags(
+    int argc, char** argv, const std::set<std::string>& allowed, const std::string& command) {
+    if (!reject_unknown_options(argc, argv, 2, allowed, command)) return std::nullopt;
+    return parse_flags(argc, argv, 2);
+}
+
 // Audit F3, issue #4: simulate/cfd/cfd3d printed the termination reason but
 // always returned kOk, so automation could treat a numerical_failure or
 // invalid_state result as a successful run. target_mass_reached and
@@ -197,13 +214,10 @@ void print_shot_report(const ShotResult& result) {
 }
 
 int command_simulate(int argc, char** argv) {
-    if (!reject_unknown_options(argc, argv, 2,
-                                 {"recipe", "coefficients", "bean", "out", "dt",
-                                  "sample-interval", "quiet"},
-                                 "simulate")) {
-        return kUsageError;
-    }
-    const auto flags = parse_flags(argc, argv, 2);
+    const auto parsed = parse_command_flags(
+        argc, argv, {"recipe", "coefficients", "bean", "out", "dt", "sample-interval", "quiet"}, "simulate");
+    if (!parsed) return kUsageError;
+    const auto& flags = *parsed;
     if (!flags.count("recipe")) {
         print_error("MISSING_ARGUMENT", "--recipe <file> is required", "");
         return kUsageError;
@@ -236,11 +250,10 @@ int command_simulate(int argc, char** argv) {
 }
 
 int command_sweep(int argc, char** argv) {
-    if (!reject_unknown_options(argc, argv, 2, {"spec", "out", "workers", "ring-capacity", "quiet"},
-                                 "sweep")) {
-        return kUsageError;
-    }
-    const auto flags = parse_flags(argc, argv, 2);
+    const auto parsed =
+        parse_command_flags(argc, argv, {"spec", "out", "workers", "ring-capacity", "quiet"}, "sweep");
+    if (!parsed) return kUsageError;
+    const auto& flags = *parsed;
     if (!flags.count("spec")) {
         print_error("MISSING_ARGUMENT", "--spec <file> is required", "");
         return kUsageError;
@@ -304,11 +317,10 @@ std::vector<std::string> split_list(const std::string& text) {
 }
 
 int command_synthesize(int argc, char** argv) {
-    if (!reject_unknown_options(
-            argc, argv, 2, {"recipe", "coefficients", "noise", "seed", "out", "recipe-path"}, "synthesize")) {
-        return kUsageError;
-    }
-    const auto flags = parse_flags(argc, argv, 2);
+    const auto parsed = parse_command_flags(
+        argc, argv, {"recipe", "coefficients", "noise", "seed", "out", "recipe-path"}, "synthesize");
+    if (!parsed) return kUsageError;
+    const auto& flags = *parsed;
     if (!flags.count("recipe") || !flags.count("out")) {
         print_error("MISSING_ARGUMENT", "--recipe <file> and --out <file> are required", "");
         return kUsageError;
@@ -337,10 +349,10 @@ int command_synthesize(int argc, char** argv) {
 // release build. Also supplies the simulations-per-second number the resume
 // bullet template asks for (16.4).
 int command_bench(int argc, char** argv) {
-    if (!reject_unknown_options(argc, argv, 2, {"seconds", "repeats", "recipe", "coefficients"}, "bench")) {
-        return kUsageError;
-    }
-    const auto flags = parse_flags(argc, argv, 2);
+    const auto parsed =
+        parse_command_flags(argc, argv, {"seconds", "repeats", "recipe", "coefficients"}, "bench");
+    if (!parsed) return kUsageError;
+    const auto& flags = *parsed;
 
     cli_workflows::BenchRequest request;
     request.seconds = flags.count("seconds") ? std::stod(flags.at("seconds")) : 60.0;
@@ -367,52 +379,7 @@ int command_bench(int argc, char** argv) {
     return median < 20.0 ? kOk : 1;
 }
 
-int command_calibrate(int argc, char** argv) {
-    if (!reject_unknown_options(argc, argv, 2,
-                                 {"shots", "coefficients", "fit", "holdout", "leave-one-out", "report", "out", "id",
-                                  "coefficient-version", "max-iterations"},
-                                 "calibrate")) {
-        return kUsageError;
-    }
-    const auto flags = parse_flags(argc, argv, 2);
-    if (!flags.count("shots") || !flags.count("fit")) {
-        print_error("MISSING_ARGUMENT",
-                    "--shots <dir> and --fit <name,name,...> are required "
-                    "(see `espressolab_cli fit-params`)",
-                    "");
-        return kUsageError;
-    }
-    const bool leave_one_out = flags.count("leave-one-out") > 0;
-    if (leave_one_out && flags.count("holdout")) {
-        print_error("CONFLICTING_ARGUMENTS", "--leave-one-out cannot be combined with --holdout",
-                    "leave-one-out");
-        return kUsageError;
-    }
-    if (leave_one_out && !flags.count("report")) {
-        print_error("MISSING_ARGUMENT", "--leave-one-out requires --report <file>", "report");
-        return kUsageError;
-    }
-
-    cli_workflows::CalibrateRequest request;
-    request.shots_dir = flags.at("shots");
-    if (flags.count("coefficients")) request.coefficients_path = flags.at("coefficients");
-    if (flags.count("max-iterations")) request.max_iterations = std::stoi(flags.at("max-iterations"));
-    request.fit_names = split_list(flags.at("fit"));
-    request.holdout_ids = flags.count("holdout") ? split_list(flags.at("holdout")) : std::vector<std::string>{};
-    request.leave_one_out = leave_one_out;
-    if (flags.count("report")) request.report_path = flags.at("report");
-    if (flags.count("out")) request.out_path = flags.at("out");
-    if (flags.count("id")) request.id = flags.at("id");
-    request.coefficient_version = flags.count("coefficient-version") ? flags.at("coefficient-version") : "1.0.0";
-    if (request.out_path.empty()) {
-        // Legacy `dump_fitted_coefficients_json` names the run after the
-        // output file's stem; keep that even though the workflow layer
-        // cannot derive a stem from an empty path.
-    } else if (request.id.empty()) {
-        request.id = std::filesystem::path(request.out_path).stem().string();
-    }
-
-    const cli_workflows::CalibrateOutcome outcome = cli_workflows::run_calibrate(request);
+void print_calibrate_report(bool leave_one_out, const cli_workflows::CalibrateOutcome& outcome) {
     const auto& leave_one_out_report = outcome.leave_one_out_report;
     const auto& report = outcome.report;
 
@@ -466,10 +433,14 @@ int command_calibrate(int argc, char** argv) {
     } else {
         std::cout << "\n  full-dataset refit skipped because validation failed\n";
     }
-    if (!leave_one_out_report.has_value() && report->validation_losses.empty()) {
+    // Audit-adjacent: `report` is a std::optional and only guaranteed to hold
+    // a value in the leave-one-out path when leave_one_out_report->passed
+    // (see run_calibrate). Check has_value() explicitly before dereferencing
+    // rather than relying on that invariant holding across files.
+    if (!leave_one_out_report.has_value() && report.has_value() && report->validation_losses.empty()) {
         std::cout << "\n  WARNING: no held-out validation shot. This fit has not been shown\n"
                    << "           to generalise beyond the shots it was trained on.\n";
-    } else if (!leave_one_out_report.has_value()) {
+    } else if (!leave_one_out_report.has_value() && report.has_value()) {
         for (const auto& entry : report->validation_losses) {
             std::cout << "  held out " << entry.shot_id << ": mass RMSE " << entry.loss.mass_rmse_g
                        << " g, time " << entry.loss.time_error_s << " s, TDS "
@@ -488,21 +459,65 @@ int command_calibrate(int argc, char** argv) {
     } else if (outcome.coefficients_withheld_by_validation) {
         std::cout << "\ncoefficients not written: leave-one-out validation failed\n";
     }
-    return leave_one_out_report.has_value() && !leave_one_out_report->passed ? 1 : kOk;
 }
 
-}  // namespace
-
-namespace {
-
-int command_cfd(int argc, char** argv) {
-    if (!reject_unknown_options(argc, argv, 2, {"recipe", "coefficients", "radial", "axial", "dt", "field"}, "cfd")) {
+int command_calibrate(int argc, char** argv) {
+    const auto parsed = parse_command_flags(argc, argv,
+                                            {"shots", "coefficients", "fit", "holdout", "leave-one-out", "report",
+                                             "out", "id", "coefficient-version", "max-iterations"},
+                                            "calibrate");
+    if (!parsed) return kUsageError;
+    const auto& flags = *parsed;
+    if (!flags.count("shots") || !flags.count("fit")) {
+        print_error("MISSING_ARGUMENT",
+                    "--shots <dir> and --fit <name,name,...> are required "
+                    "(see `espressolab_cli fit-params`)",
+                    "");
         return kUsageError;
     }
-    const auto flags = parse_flags(argc, argv, 2);
+    const bool leave_one_out = flags.count("leave-one-out") > 0;
+    if (leave_one_out && flags.count("holdout")) {
+        print_error("CONFLICTING_ARGUMENTS", "--leave-one-out cannot be combined with --holdout",
+                    "leave-one-out");
+        return kUsageError;
+    }
+    if (leave_one_out && !flags.count("report")) {
+        print_error("MISSING_ARGUMENT", "--leave-one-out requires --report <file>", "report");
+        return kUsageError;
+    }
+
+    cli_workflows::CalibrateRequest request;
+    request.shots_dir = flags.at("shots");
+    if (flags.count("coefficients")) request.coefficients_path = flags.at("coefficients");
+    if (flags.count("max-iterations")) request.max_iterations = std::stoi(flags.at("max-iterations"));
+    request.fit_names = split_list(flags.at("fit"));
+    request.holdout_ids = flags.count("holdout") ? split_list(flags.at("holdout")) : std::vector<std::string>{};
+    request.leave_one_out = leave_one_out;
+    if (flags.count("report")) request.report_path = flags.at("report");
+    if (flags.count("out")) request.out_path = flags.at("out");
+    if (flags.count("id")) request.id = flags.at("id");
+    request.coefficient_version = flags.count("coefficient-version") ? flags.at("coefficient-version") : "1.0.0";
+    if (request.out_path.empty()) {
+        // Legacy `dump_fitted_coefficients_json` names the run after the
+        // output file's stem; keep that even though the workflow layer
+        // cannot derive a stem from an empty path.
+    } else if (request.id.empty()) {
+        request.id = std::filesystem::path(request.out_path).stem().string();
+    }
+
+    const cli_workflows::CalibrateOutcome outcome = cli_workflows::run_calibrate(request);
+    print_calibrate_report(leave_one_out, outcome);
+    return outcome.leave_one_out_report.has_value() && !outcome.leave_one_out_report->passed ? 1 : kOk;
+}
+
+int command_cfd(int argc, char** argv) {
+    const auto parsed = parse_command_flags(
+        argc, argv, {"recipe", "coefficients", "radial", "axial", "dt", "field"}, "cfd");
+    if (!parsed) return kUsageError;
+    const auto& flags = *parsed;
     if (!flags.count("recipe")) {
-        std::cerr << "cfd requires --recipe <file>\n";
-        return 2;
+        print_error("MISSING_ARGUMENT", "--recipe <file> is required", "");
+        return kUsageError;
     }
     // Audit F12: validate --field before running the solver so an unknown
     // name (e.g. a typo) fails loudly instead of silently falling through
@@ -571,10 +586,9 @@ int command_cfd(int argc, char** argv) {
 }
 
 int command_grind(int argc, char** argv) {
-    if (!reject_unknown_options(argc, argv, 2, {"spec", "out"}, "grind")) {
-        return kUsageError;
-    }
-    const auto flags = parse_flags(argc, argv, 2);
+    const auto parsed = parse_command_flags(argc, argv, {"spec", "out"}, "grind");
+    if (!parsed) return kUsageError;
+    const auto& flags = *parsed;
 
     cli_workflows::GrindRequest request;
     if (flags.count("spec")) request.spec_path = flags.at("spec");
@@ -630,13 +644,12 @@ int command_grind(int argc, char** argv) {
 }
 
 int command_cfd3d(int argc, char** argv) {
-    if (!reject_unknown_options(argc, argv, 2,
-                                 {"recipe", "case", "coefficients", "nx", "ny", "nz", "dt", "sample-interval",
-                                  "snapshot-interval", "material", "out", "quiet"},
-                                 "cfd3d")) {
-        return kUsageError;
-    }
-    const auto flags = parse_flags(argc, argv, 2);
+    const auto parsed = parse_command_flags(argc, argv,
+                                            {"recipe", "case", "coefficients", "nx", "ny", "nz", "dt",
+                                             "sample-interval", "snapshot-interval", "material", "out", "quiet"},
+                                            "cfd3d");
+    if (!parsed) return kUsageError;
+    const auto& flags = *parsed;
     if (!flags.count("recipe") && !flags.count("case")) {
         print_error("MISSING_ARGUMENT", "--recipe <file> or --case <file> is required", "");
         return kUsageError;
@@ -686,6 +699,44 @@ int command_cfd3d(int argc, char** argv) {
     return is_failure_termination(result.termination) ? kSolverFailure : kOk;
 }
 
+int command_params(int, char**) {
+    for (const auto& path : cli_workflows::run_params()) std::cout << path << '\n';
+    return kOk;
+}
+
+int command_fit_params(int, char**) {
+    for (const auto& parameter : cli_workflows::run_fit_params()) {
+        std::cout << parameter.name << "  [" << parameter.low << ", " << parameter.high << "]"
+                  << (parameter.logarithmic ? "  (log scale)" : "") << '\n';
+    }
+    return kOk;
+}
+
+int command_version(int, char**) {
+    const auto info = cli_workflows::run_version();
+    std::cout << info.solver << " recipe-schema=" << info.recipe_schema
+              << " result-schema=" << info.result_schema << '\n';
+    return kOk;
+}
+
+using CommandHandler = int (*)(int, char**);
+
+// Every command whose handler shares the command_*(argc, argv) shape, keyed
+// by its argv[1] name. `tui` and the help aliases are dispatched separately
+// in main() below: run_tui() takes no arguments, and the help aliases are not
+// really commands so much as print_usage() triggers.
+const std::map<std::string, CommandHandler>& command_table() {
+    static const std::map<std::string, CommandHandler> table{
+        {"simulate", command_simulate},   {"sweep", command_sweep},
+        {"bench", command_bench},         {"cfd", command_cfd},
+        {"grind", command_grind},         {"cfd3d", command_cfd3d},
+        {"calibrate", command_calibrate}, {"synthesize", command_synthesize},
+        {"params", command_params},       {"fit-params", command_fit_params},
+        {"version", command_version},
+    };
+    return table;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -696,34 +747,9 @@ int main(int argc, char** argv) {
     const std::string command = argv[1];
 
     try {
-        if (command == "simulate") return command_simulate(argc, argv);
-        if (command == "sweep") return command_sweep(argc, argv);
-        if (command == "bench") return command_bench(argc, argv);
-        if (command == "cfd") return command_cfd(argc, argv);
-        if (command == "grind") return command_grind(argc, argv);
-        if (command == "cfd3d") return command_cfd3d(argc, argv);
-        if (command == "calibrate") return command_calibrate(argc, argv);
-        if (command == "synthesize") return command_synthesize(argc, argv);
-        if (command == "fit-params") {
-            for (const auto& name : espressolab::calibration::tunable_parameter_names()) {
-                const auto parameter = espressolab::calibration::tunable_parameter(name);
-                std::cout << name << "  [" << parameter->low << ", " << parameter->high << "]"
-                          << (parameter->logarithmic ? "  (log scale)" : "") << '\n';
-            }
-            return kOk;
-        }
-        if (command == "params") {
-            for (const auto& path : espressolab::supported_parameter_paths()) {
-                std::cout << path << '\n';
-            }
-            return kOk;
-        }
-        if (command == "version") {
-            std::cout << espressolab::version::kSolver
-                      << " recipe-schema=" << espressolab::version::kRecipeSchema
-                      << " result-schema=" << espressolab::version::kResultSchema << '\n';
-            return kOk;
-        }
+        const auto& table = command_table();
+        const auto it = table.find(command);
+        if (it != table.end()) return it->second(argc, argv);
         if (command == "tui") return run_tui();
         if (command == "--help" || command == "-h" || command == "help") {
             print_usage();

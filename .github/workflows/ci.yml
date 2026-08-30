@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Nightly cross-browser + mobile matrix (section 8's "Browser policy"):
+  # pull requests only run Chromium desktop and mobile in the web-e2e job
+  # below; this schedule additionally exercises Firefox and WebKit.
+  schedule:
+    - cron: "0 7 * * *"
 
 jobs:
   native:
@@ -56,5 +61,76 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: npm ci
         working-directory: web
+      - run: npm run typecheck
+        working-directory: web
+      # Runs the Vitest unit/component/accessibility layer and enforces the
+      # coverage thresholds in web/vitest.config.ts (docs/testing.md).
+      - run: npm run test:coverage
+        working-directory: web
       - run: npm run build
         working-directory: web
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-coverage
+          path: web/coverage/
+          retention-days: 14
+
+  # Separate from `web` per the delivery plan: builds the real native server
+  # and runs Playwright against it (web/playwright.config.ts's webServer
+  # array), rather than the mocked jsdom layer above. Chromium desktop and
+  # mobile on every push/PR; the nightly schedule additionally runs Firefox,
+  # WebKit and a mobile WebKit viewport.
+  web-e2e:
+    name: dashboard (browser)
+    runs-on: ubuntu-latest
+    needs: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure native server
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build native server
+        run: cmake --build build -j 4 --target espressolab_server
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+
+      - name: Install Playwright browsers
+        working-directory: web
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            npx playwright install --with-deps chromium firefox webkit
+          else
+            npx playwright install --with-deps chromium
+          fi
+
+      - name: Run Playwright (chromium + mobile)
+        if: github.event_name != 'schedule'
+        working-directory: web
+        run: npm run test:e2e
+
+      - name: Run Playwright (nightly full matrix)
+        if: github.event_name == 'schedule'
+        working-directory: web
+        run: npm run test:e2e:all
+
+      # Traces, screenshots and the HTML report for every failing test
+      # (playwright.config.ts: screenshot/video/trace all default to
+      # failure-only), kept regardless of which step above failed.
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            web/playwright-report/
+            web/test-results/
+          retention-days: 14

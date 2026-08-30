@@ -21,8 +21,8 @@ function renderRail(overrides: Partial<ComponentProps<typeof ControlRail>> = {})
     onRun,
     ...overrides,
   };
-  render(<ControlRail {...props} />);
-  return { onChange, onSelectRecipe, onRun, props };
+  const view = render(<ControlRail {...props} />);
+  return { onChange, onSelectRecipe, onRun, props, ...view };
 }
 
 describe("ControlRail: number field editing", () => {
@@ -74,6 +74,41 @@ describe("ControlRail: scalar vs. PSD grind mode", () => {
 });
 
 describe("ControlRail: recipe selection and run button", () => {
+  it("preserves a time-only recipe and can enable or disable the target-mass stop", async () => {
+    const user = userEvent.setup();
+    const timeOnly = makeRecipe();
+    timeOnly.stop.target_beverage_g = null;
+    const { onChange } = renderRail({ recipe: timeOnly });
+
+    const toggle = screen.getByRole("checkbox", { name: /stop at target mass/i });
+    expect(toggle).not.toBeChecked();
+    expect(screen.queryByRole("spinbutton", { name: /target mass/i })).not.toBeInTheDocument();
+
+    await user.click(toggle);
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
+      stop: expect.objectContaining({ target_beverage_g: 36 }),
+    }));
+  });
+
+  it("restores a custom target mass after temporarily disabling the condition", async () => {
+    const user = userEvent.setup();
+    const recipe = makeRecipe();
+    recipe.stop.target_beverage_g = 42;
+    const { onChange, props, rerender } = renderRail({ recipe });
+
+    await user.click(screen.getByRole("checkbox", { name: /stop at target mass/i }));
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({
+      stop: expect.objectContaining({ target_beverage_g: null }),
+    }));
+
+    const timeOnly = { ...recipe, stop: { ...recipe.stop, target_beverage_g: null } };
+    rerender(<ControlRail {...props} recipe={timeOnly} />);
+    await user.click(screen.getByRole("checkbox", { name: /stop at target mass/i }));
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({
+      stop: expect.objectContaining({ target_beverage_g: 42 }),
+    }));
+  });
+
   it("disables the run button while running", () => {
     renderRail({ running: true });
     const button = screen.getByRole("button", { name: /simulating/i });

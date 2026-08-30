@@ -34,6 +34,22 @@ function metricValue(label: string) {
 }
 
 describe("App: independent data loading", () => {
+  it("does not overwrite an edited fallback draft when the recipe catalogue arrives late", async () => {
+    server.use(
+      http.get("/api/v1/recipes", async () => {
+        await delay(40);
+        return HttpResponse.json({ recipes: makeCatalogue() });
+      }),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    const dose = screen.getByLabelText(/dose \(g\)/i);
+    await user.clear(dose);
+    await user.type(dose, "20");
+    await screen.findByRole("option", { name: /baseline/i });
+    expect(dose).toHaveValue(20);
+  });
+
   it("renders once health, recipes and references have each resolved, even though none of them share a request", async () => {
     render(<App />);
     await screen.findByText(/0\.1\.0-test/);
@@ -79,6 +95,43 @@ describe("App: independent data loading", () => {
     render(<App />);
     await screen.findByText(/0\.1\.0-test/);
     expect(screen.getByRole("combobox", { name: "Recipe" }).children).toHaveLength(0);
+  });
+});
+
+describe("App: workflow navigation", () => {
+  it("preserves workflow-local state while switching tabs", async () => {
+    const user = await renderApp();
+    await user.click(screen.getByRole("tab", { name: "Sweeps" }));
+    const steps = screen.getByRole("spinbutton", { name: "steps" });
+    await user.clear(steps);
+    await user.type(steps, "7");
+
+    await user.click(screen.getByRole("tab", { name: "Shot" }));
+    expect(screen.queryByRole("button", { name: /run sweep/i })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Sweeps" }));
+    expect(screen.getByRole("spinbutton", { name: "steps" })).toHaveValue(7);
+  });
+
+  it("hides shot validation alerts when another workflow is active", async () => {
+    const user = await renderApp();
+    const dose = screen.getByLabelText(/dose \(g\)/i);
+    await user.clear(dose);
+    await user.type(dose, "2");
+    expect(screen.getByRole("alert")).toHaveTextContent(/must be between 14 and 22/i);
+
+    await user.click(screen.getByRole("tab", { name: "Measured data" }));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("keeps recipe-catalogue failures in the Shot workflow", async () => {
+    server.use(http.get("/api/v1/recipes", () => HttpResponse.error()));
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("alert");
+    expect(screen.getByRole("alert")).toHaveTextContent(/recipe catalogue unavailable/i);
+
+    await user.click(screen.getByRole("tab", { name: "References" }));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });
 
@@ -145,6 +198,7 @@ describe("App: running a simulation", () => {
     // The reference panel's "current model" column must reflect the recipe
     // that was *submitted* (18 g), never the draft as it stands once the
     // response lands (20 g) -- App.tsx's activeRecipe contract.
+    await user.click(screen.getByRole("tab", { name: "References" }));
     const referenceTable = screen.getByRole("table");
     const doseRow = within(referenceTable).getAllByRole("row").find((row) => /dose/i.test(row.textContent ?? ""));
     expect(doseRow).toBeDefined();
@@ -258,6 +312,7 @@ describe("App: reference panel association (regression, Audit P7 issue #22 patte
     await user.clear(doseField);
     await user.type(doseField, "14");
 
+    await user.click(screen.getByRole("tab", { name: "References" }));
     const referenceTable = screen.getByRole("table");
     const doseRow = within(referenceTable).getAllByRole("row").find((row) => /dose/i.test(row.textContent ?? ""));
     // Must still read 18.0 g (the submitted recipe), not 14 (the live draft).

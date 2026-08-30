@@ -1,81 +1,48 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
-import { ApiFailure, api, type HealthResponse } from "./api/client";
-import type { Recipe, RecipeCatalogueEntry, ReferenceCatalogue, ShotResult } from "./api/types";
+import { ApiFailure, api } from "./api/client";
+import type { Recipe, ShotResult } from "./api/types";
+import { type WorkflowId, WorkflowTabs } from "./app/WorkflowTabs";
+import { hasRecipe, useBootstrap } from "./app/useBootstrap";
 import { MeasuredShotComparison } from "./features/calibration/MeasuredShotComparison";
-import { ComparisonTray } from "./features/comparison/ComparisonTray";
 import { ReferenceShotsPanel } from "./features/references/ReferenceShotsPanel";
-import { ChartStack } from "./features/shot/ChartStack";
-import { ControlRail } from "./features/shot/ControlRail";
-import { DiagnosticsDrawer } from "./features/shot/DiagnosticsDrawer";
-import { FlavorPanel } from "./features/shot/FlavorPanel";
-import { MetricStrip } from "./features/shot/MetricStrip";
-import { PuckView } from "./features/shot/PuckView";
+import { ShotWorkspace } from "./features/shot/ShotWorkspace";
 import { SweepPanel } from "./features/sweeps/SweepPanel";
 import {
   fallbackRecipe,
   localValidation,
-  preInfusionEnd,
-  type ShotWorkspace,
+  type ShotWorkspace as ShotWorkspaceState,
 } from "./state/workspace";
 
-// Audit P4, issue #18: narrows a RecipeCatalogueEntry so callers can filter
-// out {id, error} entries and still have TypeScript know `.recipe` exists on
-// what's left, instead of the plain `"recipe" in entry` check widening back
-// to the union.
-function hasRecipe(
-  entry: RecipeCatalogueEntry,
-): entry is Extract<RecipeCatalogueEntry, { recipe: Recipe }> {
-  return "recipe" in entry;
-}
-
 export function App() {
-  const [health, setHealth] = useState<HealthResponse>();
-  const [catalogue, setCatalogue] = useState<RecipeCatalogueEntry[]>([]);
   const [selectedId, setSelectedId] = useState("baseline");
-  const [error, setError] = useState<string>();
-  const [referenceError, setReferenceError] = useState<string>();
-  const [referenceCatalogue, setReferenceCatalogue] = useState<ReferenceCatalogue>();
+  const [shotError, setShotError] = useState<string>();
+  const [sweepError, setSweepError] = useState<string>();
   const [pinned, setPinned] = useState<ShotResult[]>([]);
+  const [activeWorkflow, setActiveWorkflow] = useState<WorkflowId>("shot");
+  const draftTouched = useRef(false);
 
-  const [workspace, setWorkspace] = useState<ShotWorkspace>({
+  const [workspace, setWorkspace] = useState<ShotWorkspaceState>({
     draftRecipe: fallbackRecipe,
     validation: [],
-    comparisonRunIds: [],
     requestState: "idle",
   });
 
-  useEffect(() => {
-    api.health().then(setHealth).catch(() =>
-      setError(
-        "Cannot reach the tool server. Start it with " +
-          "`./build/apps/espressolab_server/espressolab_server --assets assets`.",
-      ),
-    );
-    api
-      .recipes()
-      .then((body) => {
-        setCatalogue(body.recipes);
-        // Audit P4, issue #18: a malformed asset's {id, error} entry has no
-        // `recipe`, so the initial selection must skip it rather than seed
-        // the workspace with an undefined draft recipe.
-        const loaded = body.recipes.filter(hasRecipe);
-        const first = loaded.find((entry) => entry.id === "baseline") ?? loaded[0];
-        if (first) {
-          setSelectedId(first.id);
-          setWorkspace((current) => ({ ...current, draftRecipe: first.recipe }));
-        }
-      })
-      .catch(() => undefined);
-    api
-      .referenceShots()
-      .then(setReferenceCatalogue)
-      .catch((failure) =>
-        setReferenceError(failure instanceof Error ? failure.message : String(failure)),
-      );
-  }, []);
+  const {
+    health,
+    catalogue,
+    referenceCatalogue,
+    healthError,
+    recipeError,
+    referenceError,
+  } = useBootstrap((id, recipe) => {
+    if (draftTouched.current) return;
+    setSelectedId(id);
+    setWorkspace((current) => ({ ...current, draftRecipe: recipe }));
+  });
 
   const setRecipe = useCallback((recipe: Recipe) => {
+    draftTouched.current = true;
     setWorkspace((current) => ({
       ...current,
       draftRecipe: recipe,
@@ -94,7 +61,7 @@ export function App() {
   };
 
   const run = async () => {
-    setError(undefined);
+    setShotError(undefined);
     // Audit P7, issue #22: snapshot the recipe actually submitted, not
     // workspace.draftRecipe read again after the request resolves -- the
     // user can keep editing the draft while the request is in flight, and
@@ -119,17 +86,15 @@ export function App() {
           validation: failure.issues,
           requestState: "failed",
         }));
-        setError(`${failure.code}: ${failure.message}`);
+        setShotError(`${failure.code}: ${failure.message}`);
       } else {
-        setError(failure instanceof Error ? failure.message : String(failure));
+        setShotError(failure instanceof Error ? failure.message : String(failure));
         setWorkspace((current) => ({ ...current, requestState: "failed" }));
       }
     }
   };
 
   const active = workspace.activeRun;
-  const comparisons = pinned.filter((run_) => run_.manifest.run_id !== active?.manifest.run_id);
-
   return (
     <div className="app">
       <header className="topbar">
@@ -137,7 +102,9 @@ export function App() {
         <span className="sub">
           {health
             ? `${health.solver_version} · recipe schema ${health.recipe_schema_version}`
-            : "connecting to the tool server…"}
+            : healthError
+              ? "tool server unavailable"
+              : "connecting to the tool server…"}
         </span>
         <span className="spacer" />
         {active && (
@@ -165,90 +132,101 @@ export function App() {
           </>
         )}
       </header>
+      <WorkflowTabs active={activeWorkflow} onChange={setActiveWorkflow} />
 
-      <ControlRail
-        recipes={catalogue}
-        selectedId={selectedId}
-        onSelectRecipe={selectRecipe}
-        recipe={workspace.draftRecipe}
-        onChange={setRecipe}
-        issues={workspace.validation}
-        running={workspace.requestState === "running"}
-        onRun={run}
-      />
+      <main className="main" id="main-content">
+        {healthError && <div className="error" role="alert">{healthError}</div>}
 
-      <main className="main">
-        {error && <div className="error">{error}</div>}
+        <section
+          id="workflow-panel-shot"
+          role="tabpanel"
+          aria-labelledby="workflow-tab-shot"
+          hidden={activeWorkflow !== "shot"}
+        >
+          {recipeError && <div className="error" role="alert">Recipe catalogue unavailable: {recipeError}</div>}
+          {shotError && <div className="error" role="alert">{shotError}</div>}
+          {workspace.validation.length > 0 && (
+            <div className="error" role="alert">
+              {workspace.validation.map((issue) => (
+                <div key={issue.path}>
+                  <code>{issue.code}</code> {issue.path}: {issue.message}
+                </div>
+              ))}
+            </div>
+          )}
+          <ShotWorkspace
+            recipes={catalogue}
+            selectedId={selectedId}
+            onSelectRecipe={selectRecipe}
+            draftRecipe={workspace.draftRecipe}
+            onRecipeChange={setRecipe}
+            issues={workspace.validation}
+            running={workspace.requestState === "running"}
+            onRun={run}
+            active={active}
+            activeRecipe={workspace.activeRecipe}
+            pinned={pinned}
+            onPin={() => active && setPinned((current) => [...current, active])}
+            onRemovePin={(runId) =>
+              setPinned((current) => current.filter((run_) => run_.manifest.run_id !== runId))
+            }
+          />
+        </section>
 
-        {workspace.validation.length > 0 && (
-          <div className="error">
-            {workspace.validation.map((issue) => (
-              <div key={issue.path}>
-                <code>{issue.code}</code> {issue.path}: {issue.message}
-              </div>
-            ))}
-          </div>
-        )}
+        <section
+          id="workflow-panel-measured"
+          className="workflow-panel"
+          role="tabpanel"
+          aria-labelledby="workflow-tab-measured"
+          hidden={activeWorkflow !== "measured"}
+        >
+          <header className="workflow-heading">
+            <p className="eyebrow">Fixed-coefficient evaluation</p>
+            <h2>Measured data</h2>
+            <p>Compare one stored shot with one native simulation. This workflow never fits coefficients.</p>
+          </header>
+          <MeasuredShotComparison />
+        </section>
 
-        {active ? (
-          <>
-            <MetricStrip result={active} />
-            {/* Only when the run named a bean; absent otherwise, exactly as the
-                result JSON is. */}
-            {active.flavor && <FlavorPanel flavor={active.flavor} />}
-            <PuckView
-              result={active}
-              // Audit P7, issue #22: use the recipe that produced `active`,
-              // not the possibly-since-edited draft -- see
-              // ShotWorkspace.activeRecipe.
-              targetBeverageG={workspace.activeRecipe?.stop.target_beverage_g ?? null}
-              cursorTimeSeconds={workspace.cursorTimeSeconds}
-            />
-            <ChartStack
-              result={active}
-              comparisons={comparisons}
-              preInfusionEnd={workspace.activeRecipe ? preInfusionEnd(workspace.activeRecipe) : undefined}
-              onCursorChange={(time) =>
-                setWorkspace((current) => ({ ...current, cursorTimeSeconds: time }))
-              }
-            />
-            <ComparisonTray
-              runs={pinned}
-              activeId={active.manifest.run_id}
-              canPin={!pinned.some((run_) => run_.manifest.run_id === active.manifest.run_id)}
-              onPin={() => setPinned((current) => [...current, active])}
-              onRemove={(runId) =>
-                setPinned((current) => current.filter((run_) => run_.manifest.run_id !== runId))
-              }
-            />
-            <DiagnosticsDrawer result={active} />
-          </>
-        ) : (
-          <p className="note" style={{ maxWidth: 620 }}>
-            Choose a recipe, adjust the controls, and run the simulation. Every result is produced
-            by the native solver and carries its own reproducibility hash — the dashboard performs
-            no calculations of its own.
-          </p>
-        )}
+        <section
+          id="workflow-panel-references"
+          className="workflow-panel"
+          role="tabpanel"
+          aria-labelledby="workflow-tab-references"
+          hidden={activeWorkflow !== "references"}
+        >
+          <header className="workflow-heading">
+            <p className="eyebrow">Context, not validation</p>
+            <h2>Reference catalogue</h2>
+            <p>Inspect published metadata and synthetic fixtures alongside the active model result.</p>
+          </header>
+          <ReferenceShotsPanel
+            catalogue={referenceCatalogue}
+            error={referenceError}
+            active={active}
+            recipe={workspace.activeRecipe}
+          />
+        </section>
 
-        <MeasuredShotComparison />
-
-        <ReferenceShotsPanel
-          catalogue={referenceCatalogue}
-          error={referenceError}
-          active={active}
-          // Audit P7, issue #22 (same contract as PuckView/ChartStack above):
-          // the "current model" column must read the recipe that produced
-          // `active`, not draftRecipe, or editing the draft after a run
-          // silently relabels what the result actually shows.
-          recipe={workspace.activeRecipe}
-        />
-
-        <SweepPanel
-          baseline={workspace.draftRecipe}
-          parameters={health?.sweepable_parameters ?? ["puck.particle_diameter_um"]}
-          onError={setError}
-        />
+        <section
+          id="workflow-panel-sweeps"
+          className="workflow-panel"
+          role="tabpanel"
+          aria-labelledby="workflow-tab-sweeps"
+          hidden={activeWorkflow !== "sweeps"}
+        >
+          <header className="workflow-heading">
+            <p className="eyebrow">Parameter sensitivity</p>
+            <h2>Sweep laboratory</h2>
+            <p>Run one- or two-axis experiments from the current draft recipe.</p>
+          </header>
+          {sweepError && <div className="error" role="alert">{sweepError}</div>}
+          <SweepPanel
+            baseline={workspace.draftRecipe}
+            parameters={health?.sweepable_parameters ?? ["puck.particle_diameter_um"]}
+            onError={setSweepError}
+          />
+        </section>
       </main>
     </div>
   );

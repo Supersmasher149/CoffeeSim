@@ -64,11 +64,16 @@ Finer grind, more resistance, longer shot, stronger and more extracted — until
 
 *Baseline shot run to completion, then a 1600-point grind x temperature sweep (`puck.particle_diameter_um` x `temperature_profile_c.constant`, 40 steps each) rendered as a heat map — captured against `./scripts/dev.sh` at commit `4f6e51c`, not staged or narrated.*
 
-Recipes are edited through draggable pressure and inlet-temperature curves with
-the numeric point list underneath, charts share one time cursor, and sweeps run
-in the background with live progress and a cancel button — a 1600-run
-grind x temperature grid finishes in about four seconds and renders as a heat
-map.
+The workbench separates Shot, Measured Data, References, and Sweeps into
+keyboard-accessible tabs while preserving each workflow's state. Recipes are
+edited through draggable pressure and inlet-temperature curves with a numeric
+point list underneath. On narrow screens the recipe editor collapses so an
+existing result stays immediately accessible.
+
+Shot signals share one selectable analysis timeline and event lane, with an
+expandable raw-data table. Sweeps run in the background with live progress and
+a cancel button — a 1600-run grind x temperature grid finishes in about four
+seconds and renders as a keyboard-inspectable heat map.
 
 A cross-section panel replays the shot beside the charts: water entering the
 bed, the saturation level rising while nothing reaches the cup, then the stream

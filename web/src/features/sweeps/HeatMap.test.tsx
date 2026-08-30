@@ -93,20 +93,28 @@ describe("HeatMap: invalid runs", () => {
     const missing = within(group).getByRole("button", { name: /no run/i });
     expect(missing).toBeDisabled();
   });
+
+  it("distinguishes cells skipped by cancellation from invalid solver runs", () => {
+    const rows = makeGrid().slice(1);
+    renderHeatMap({ rows, partial: true });
+    expect(screen.getByRole("button", { name: /not run before cancellation/i })).toBeDisabled();
+    expect(screen.getByText("not run before cancellation")).toBeInTheDocument();
+    expect(screen.getByText("outside the supported input range")).toBeInTheDocument();
+  });
 });
 
 describe("HeatMap: hover and keyboard detail", () => {
   it("shows the hovered cell's detail and clears it on mouse leave", async () => {
     const user = userEvent.setup();
     renderHeatMap();
-    expect(screen.getByText(/hover a cell for its run/i)).toBeInTheDocument();
+    expect(screen.getByText(/hover or focus a cell for its run/i)).toBeInTheDocument();
 
     const cell = screen.getByRole("button", { name: /temperature_profile_c\.constant 88, puck\.particle_diameter_um 250/i });
     await user.hover(cell);
     expect(screen.getByText(/target mass reached/i)).toBeInTheDocument();
 
     await user.unhover(cell);
-    expect(screen.getByText(/hover a cell for its run/i)).toBeInTheDocument();
+    expect(screen.getByText(/hover or focus a cell for its run/i)).toBeInTheDocument();
   });
 
   it("shows the same detail on keyboard focus, so Tab reaches every cell's data", () => {
@@ -116,7 +124,7 @@ describe("HeatMap: hover and keyboard detail", () => {
     expect(screen.getByText(/target mass reached/i)).toBeInTheDocument();
 
     fireEvent.blur(cell);
-    expect(screen.getByText(/hover a cell for its run/i)).toBeInTheDocument();
+    expect(screen.getByText(/hover or focus a cell for its run/i)).toBeInTheDocument();
   });
 
   it("carries the metric value and unit in every cell's aria-label as a non-color alternative", () => {

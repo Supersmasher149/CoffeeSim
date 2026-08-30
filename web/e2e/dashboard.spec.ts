@@ -1,6 +1,8 @@
 import { expect, test } from "@playwright/test";
 import * as fs from "node:fs/promises";
 
+import { openRecipeEditor } from "./helpers";
+
 // Critical workflows 1-5 of the frontend test plan, against the real
 // built native server (playwright.config.ts's webServer array) -- not
 // mocks. Component tests already cover every branch of this logic in
@@ -9,6 +11,7 @@ import * as fs from "node:fs/promises";
 
 test("loads the dashboard and the baseline catalogue", async ({ page }) => {
   await page.goto("/");
+  await openRecipeEditor(page);
   await expect(page.getByRole("heading", { name: "EspressoLab" })).toBeVisible();
   const recipeSelect = page.getByRole("combobox", { name: "Recipe" });
   // Several catalogue entries have "baseline" in their id (per-machine
@@ -20,6 +23,7 @@ test("loads the dashboard and the baseline catalogue", async ({ page }) => {
 
 test("edits a recipe and runs a simulation, showing metrics and diagnostics", async ({ page }) => {
   await page.goto("/");
+  await openRecipeEditor(page);
   const doseField = page.getByLabel("Dose (g)");
   await expect(doseField).toHaveValue("18");
   await doseField.fill("20");
@@ -39,12 +43,14 @@ test("edits a recipe and runs a simulation, showing metrics and diagnostics", as
 
 test("two runs of the identical recipe produce the identical result hash (determinism)", async ({ page }) => {
   await page.goto("/");
+  await openRecipeEditor(page);
   await page.getByRole("button", { name: "Run simulation" }).click();
   await expect(page.getByRole("link", { name: "Download CSV" })).toBeVisible({ timeout: 15000 });
   await page.getByText(/^Diagnostics —/).click();
   const firstHash = await page.locator(".kv", { hasText: "result hash" }).locator("span").last().textContent();
 
   await page.reload();
+  await openRecipeEditor(page);
   await page.getByRole("button", { name: "Run simulation" }).click();
   await expect(page.getByRole("link", { name: "Download CSV" })).toBeVisible({ timeout: 15000 });
   await page.getByText(/^Diagnostics —/).click();
@@ -56,6 +62,7 @@ test("two runs of the identical recipe produce the identical result hash (determ
 
 test("downloads JSON and CSV artifacts for a completed run", async ({ page }) => {
   await page.goto("/");
+  await openRecipeEditor(page);
   await page.getByRole("button", { name: "Run simulation" }).click();
   await expect(page.getByRole("link", { name: "Download CSV" })).toBeVisible({ timeout: 15000 });
 
@@ -81,6 +88,7 @@ test("downloads JSON and CSV artifacts for a completed run", async ({ page }) =>
 
 test("pinning a run keeps its label correct after the draft is edited (Audit P7 issue #22)", async ({ page }) => {
   await page.goto("/");
+  await openRecipeEditor(page);
   await page.getByRole("button", { name: "Run simulation" }).click();
   await expect(page.getByRole("link", { name: "Download CSV" })).toBeVisible({ timeout: 15000 });
 
@@ -91,6 +99,7 @@ test("pinning a run keeps its label correct after the draft is edited (Audit P7 
   // column must still show the submitted dose (18g), not the new draft.
   await page.getByLabel("Dose (g)").fill("14");
 
+  await page.getByRole("tab", { name: "References" }).click();
   const referenceTable = page.getByRole("table");
   const doseRow = referenceTable.getByRole("row").filter({ hasText: "Dose" });
   await expect(doseRow.locator(".current-model")).toHaveText("18.0 g");

@@ -81,9 +81,12 @@ development server on `http://localhost:5173`. Open the Vite URL in a browser.
 Stopping the script with `Ctrl-C` also stops the server process it launched.
 
 The dashboard posts recipes to the native solver and renders its response. It
-does not reimplement the espresso model in TypeScript. The reference-shot panel
-is contextual metadata only: its records are not calibration data and do not
-add telemetry to a simulated result.
+does not reimplement the espresso model in TypeScript. Use the Shot, Measured
+Data, References, and Sweeps tabs to move between workflows; tab state remains
+available when you switch away and back. On mobile, open the recipe editor from
+the Shot tab before changing inputs. The reference-shot panel is contextual
+metadata only: its records are not calibration data and do not add telemetry to
+a simulated result.
 
 If the dashboard reports that the tool server is unreachable, confirm that the
 native build succeeded and run `./scripts/dev.sh` from the repository root. For

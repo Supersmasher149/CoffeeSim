@@ -5,14 +5,18 @@ import { makeShotResult } from "../../test/fixtures/shotResult";
 import { ChartStack } from "./ChartStack";
 
 describe("ChartStack: series and chart summaries", () => {
-  it("renders one chart per tracked quantity with an accessible summary naming its series", () => {
+  it("switches the coordinated chart between tracked quantities with accessible summaries", () => {
     const result = makeShotResult();
     render(<ChartStack result={result} comparisons={[]} onCursorChange={vi.fn()} />);
 
     expect(screen.getByRole("img", { name: /^Commanded pressure \(bar\): commanded pressure/i })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Signal"), { target: { value: "flow" } });
     expect(screen.getByRole("img", { name: /^Computed flow \(ml\/s\): flow/i })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Signal"), { target: { value: "temperature" } });
     expect(screen.getByRole("img", { name: /^Temperatures.*inlet, puck/i })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Signal"), { target: { value: "mass" } });
     expect(screen.getByRole("img", { name: /^Beverage mass \(g\): beverage mass/i })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Signal"), { target: { value: "strength" } });
     expect(screen.getByRole("img", { name: /^Strength and extraction.*TDS, extraction yield/i })).toBeInTheDocument();
   });
 
@@ -21,6 +25,7 @@ describe("ChartStack: series and chart summaries", () => {
     const comparisons = [makeShotResult(), makeShotResult(), makeShotResult()];
     render(<ChartStack result={result} comparisons={comparisons} onCursorChange={vi.fn()} />);
 
+    fireEvent.change(screen.getByLabelText("Signal"), { target: { value: "mass" } });
     const massChart = screen.getByRole("img", { name: /^Beverage mass/i });
     // Only the first 2 comparisons are drawn (3 total runs including the
     // primary), each named by a slice of its own run id.
@@ -80,5 +85,30 @@ describe("ChartStack: differing sample intervals between overlay runs", () => {
     expect(() =>
       render(<ChartStack result={result} comparisons={[shortComparison]} onCursorChange={vi.fn()} />),
     ).not.toThrow();
+  });
+
+  it("connects a comparison series whose timestamps do not match the primary run", () => {
+    const result = makeShotResult();
+    const comparison = makeShotResult();
+    comparison.samples = comparison.samples.map((sample) => ({
+      ...sample,
+      time_s: sample.time_s + 0.25,
+    }));
+    const { container } = render(
+      <ChartStack result={result} comparisons={[comparison]} onCursorChange={vi.fn()} />,
+    );
+    fireEvent.change(screen.getByLabelText("Signal"), { target: { value: "mass" } });
+
+    const lines = container.querySelectorAll(".recharts-line-curve");
+    expect(lines).toHaveLength(2);
+    expect(Array.from(lines).every((line) => line.getAttribute("d"))).toBe(true);
+  });
+
+  it("renders a current-run data table on demand", () => {
+    const result = makeShotResult();
+    render(<ChartStack result={result} comparisons={[]} onCursorChange={vi.fn()} />);
+    fireEvent.click(screen.getByText(/view current-run data table/i));
+    expect(screen.getByRole("table")).toBeInTheDocument();
+    expect(screen.getAllByRole("row")).toHaveLength(result.samples.length + 1);
   });
 });

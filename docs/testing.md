@@ -228,7 +228,7 @@ body, network rejection). These two files carry their own, higher coverage
 thresholds in `web/vitest.config.ts`.
 
 **Component tests** (React Testing Library, one file per component under
-`web/src/features/`, plus `web/src/App.test.tsx`) run against a mock server
+`web/src/features/`, `web/src/app/`, plus `web/src/App.test.tsx`) run against a mock server
 (`msw`, `web/src/test/fixtures/server.ts`) so they exercise the same
 `fetch()` path production code takes rather than a mocked API client. They
 cover loading/empty/error states, request races (measured-shot comparison's
@@ -244,6 +244,9 @@ already guarded against for `PuckView`/`ChartStack` -- see the `Audit P7,
 issue #22` comments), and several controls (`ControlRail`'s number fields,
 `ComparisonTray`'s remove buttons, `SweepPanel`'s axis fields and progress
 bar, `HeatMap`'s cells) had no accessible name or label association at all.
+The workbench-shell tests also pin semantic tab selection and arrow/Home/End
+keyboard navigation, while App tests cross tabs before asserting workflow-local
+content so hidden panels cannot accidentally leak into the accessibility tree.
 `web/src/test/setup.ts` centralises the jsdom gaps every one of these files
 would otherwise hit individually: `ResizeObserver`, `matchMedia`,
 `requestAnimationFrame`, Blob URLs, and the SVG measurement/coordinate APIs

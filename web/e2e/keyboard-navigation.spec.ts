@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import { openRecipeEditor } from "./helpers";
+
 // Critical workflow 11: the core recipe -> run -> inspect path stays
 // reachable by keyboard alone. This does not walk every control (that is
 // what the per-component RTL tests are for); it proves the specific chain
@@ -8,6 +10,7 @@ import { expect, test } from "@playwright/test";
 
 test("runs a simulation and opens diagnostics using only the keyboard", async ({ page }) => {
   await page.goto("/");
+  await openRecipeEditor(page);
   await page.getByRole("button", { name: "Run simulation" }).focus();
   await page.keyboard.press("Enter");
 
@@ -21,6 +24,7 @@ test("runs a simulation and opens diagnostics using only the keyboard", async ({
 
 test("every profile point is reachable by Tab", async ({ page }) => {
   await page.goto("/");
+  await openRecipeEditor(page);
   const pressureEditor = page.getByRole("group", { name: "bar profile editor" });
   const firstPoint = pressureEditor.getByRole("slider", { name: "Profile point 1" });
   await firstPoint.focus();

@@ -7,6 +7,7 @@ import { expect, test } from "@playwright/test";
 
 test("runs a small sweep to completion and shows its results table", async ({ page }) => {
   await page.goto("/");
+  await page.getByRole("tab", { name: "Sweeps" }).click();
   const stepsInputs = page.getByLabel("steps");
   await stepsInputs.first().fill("3");
 
@@ -19,6 +20,7 @@ test("runs a small sweep to completion and shows its results table", async ({ pa
 
 test("cancelling a running sweep keeps partial results, labelled as partial", async ({ page }) => {
   await page.goto("/");
+  await page.getByRole("tab", { name: "Sweeps" }).click();
   const stepsInputs = page.getByLabel("steps");
   await stepsInputs.first().fill("40");
 

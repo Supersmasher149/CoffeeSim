@@ -7,6 +7,7 @@ import { expect, test } from "@playwright/test";
 
 test("comparing a measured shot issues exactly one compare request", async ({ page }) => {
   await page.goto("/");
+  await page.getByRole("tab", { name: "Measured data" }).click();
   await expect(page.getByLabel(/measured shot/i)).toBeVisible();
 
   let compareRequests = 0;

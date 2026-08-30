@@ -13,8 +13,6 @@ export interface ShotWorkspace {
   // draftRecipe, or editing the draft after a run silently relabels what
   // the result actually shows.
   activeRecipe?: Recipe;
-  comparisonRunIds: string[];
-  cursorTimeSeconds?: number;
   requestState: "idle" | "running" | "failed";
 }
 

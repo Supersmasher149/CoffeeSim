@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import type { RegionSummary, ShotResult, ShotSample } from "../../api/types";
 
@@ -158,17 +158,28 @@ export function PuckView({ result, targetBeverageG, cursorTimeSeconds }: Props) 
   const [playhead, setPlayhead] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
-  const reducedMotion = useRef(
+  const [reducedMotion, setReducedMotion] = useState(
     typeof window !== "undefined" &&
       window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true,
   );
+
+  useEffect(() => {
+    const query = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+    if (!query) return undefined;
+    const update = (event: MediaQueryListEvent) => {
+      setReducedMotion(event.matches);
+      if (event.matches) setPlaying(false);
+    };
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
 
   // A fresh run rewinds and plays itself, which is the whole point of the
   // panel; a reader who has asked for less motion gets the first frame and the
   // scrubber instead.
   useEffect(() => {
     setPlayhead(0);
-    setPlaying(!reducedMotion.current);
+    setPlaying(!reducedMotion);
   }, [runId]);
 
   useEffect(() => {
@@ -199,7 +210,12 @@ export function PuckView({ result, targetBeverageG, cursorTimeSeconds }: Props) 
   const [detachedAt, setDetachedAt] = useState<number>();
   const following = cursorTimeSeconds !== undefined && cursorTimeSeconds !== detachedAt;
   const time = following ? Math.min(cursorTimeSeconds, duration) : playhead;
-  const takeControl = () => setDetachedAt(cursorTimeSeconds);
+  const takeControl = () => {
+    if (cursorTimeSeconds !== undefined) {
+      setPlayhead(Math.min(cursorTimeSeconds, duration));
+    }
+    setDetachedAt(cursorTimeSeconds);
+  };
 
   const columns = useMemo<Column[]>(() => {
     const regions = result.regions?.length ? result.regions : [SINGLE_REGION];

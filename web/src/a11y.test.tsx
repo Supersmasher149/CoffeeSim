@@ -41,6 +41,7 @@ describe("Accessibility: stable application states", () => {
     const user = userEvent.setup();
     const { container } = render(<App />);
     await screen.findByLabelText(/measured shot/i);
+    await user.click(screen.getByRole("tab", { name: /measured data/i }));
     await user.click(screen.getByRole("button", { name: /compare with default-v1/i }));
     await screen.findByText(/mass rmse/i);
     await expectNoSeriousViolations(container);
@@ -60,6 +61,7 @@ describe("Accessibility: stable application states", () => {
     const user = userEvent.setup();
     const { container } = render(<App />);
     await screen.findByRole("option", { name: /baseline/i });
+    await user.click(screen.getByRole("tab", { name: /sweeps/i }));
     await user.click(screen.getByLabelText(/second axis \(heat map\)/i));
     await user.click(screen.getByRole("button", { name: /run sweep/i }));
     await screen.findByRole("group", { name: /heat map of/i });

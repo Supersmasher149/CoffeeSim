@@ -1,4 +1,4 @@
-import { useId } from "react";
+import { useId, useRef } from "react";
 
 import { SOLUTE_CLASSES } from "../../api/types";
 import type {
@@ -117,6 +117,12 @@ function BeanReadout({ bean }: { bean: BeanProfile }) {
 
 export function ControlRail(props: Props) {
   const { recipe, onChange, issues } = props;
+  const targetMass = useRef({ recipeId: props.selectedId, value: recipe.stop.target_beverage_g ?? 36 });
+  if (targetMass.current.recipeId !== props.selectedId) {
+    targetMass.current = { recipeId: props.selectedId, value: recipe.stop.target_beverage_g ?? 36 };
+  } else if (recipe.stop.target_beverage_g !== null) {
+    targetMass.current.value = recipe.stop.target_beverage_g;
+  }
   const puck = (patch: Partial<Recipe["puck"]>) =>
     onChange({ ...recipe, puck: { ...recipe.puck, ...patch } });
   const stop = (patch: Partial<Recipe["stop"]>) =>
@@ -196,11 +202,23 @@ export function ControlRail(props: Props) {
 
       <div className="section">
         <h2>Stop conditions</h2>
-        <NumberField
-          label="Target mass (g)" value={recipe.stop.target_beverage_g ?? 36}
-          range={inputRanges.target_beverage_g} step={1}
-          path="recipe.stop.target_beverage_g" issues={issues}
-          onChange={(v) => stop({ target_beverage_g: v })} />
+        <label className="toggle-field">
+          <input
+            type="checkbox"
+            checked={recipe.stop.target_beverage_g !== null}
+            onChange={(event) =>
+              stop({ target_beverage_g: event.target.checked ? targetMass.current.value : null })
+            }
+          />
+          Stop at target mass
+        </label>
+        {recipe.stop.target_beverage_g !== null && (
+          <NumberField
+            label="Target mass (g)" value={recipe.stop.target_beverage_g}
+            range={inputRanges.target_beverage_g} step={1}
+            path="recipe.stop.target_beverage_g" issues={issues}
+            onChange={(v) => stop({ target_beverage_g: v })} />
+        )}
         <NumberField
           label="Max time (s)" value={recipe.stop.maximum_time_s}
           range={inputRanges.maximum_time_s} step={1}

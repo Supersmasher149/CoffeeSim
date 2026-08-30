@@ -1,4 +1,4 @@
-import { http, HttpResponse } from "msw";
+import { delay, http, HttpResponse } from "msw";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -84,6 +84,23 @@ describe("SweepPanel: starting a sweep", () => {
     const { user, onError } = setup();
     await user.click(screen.getByRole("button", { name: /run sweep/i }));
     await waitFor(() => expect(onError).toHaveBeenCalled());
+  });
+
+  it("locks submission before the acceptance response to prevent duplicate jobs", async () => {
+    let starts = 0;
+    server.use(
+      http.post("/api/v1/sweeps", async () => {
+        starts += 1;
+        await delay(30);
+        return HttpResponse.json(makeSweepAccepted({ total: 9 }));
+      }),
+      http.get("/api/v1/sweeps/:id", () => HttpResponse.json(makeCompletedSweep())),
+    );
+    const { user } = setup();
+    const runButton = screen.getByRole("button", { name: /run sweep/i });
+    await user.dblClick(runButton);
+    expect(screen.getByRole("button", { name: /starting/i })).toBeDisabled();
+    await waitFor(() => expect(starts).toBe(1));
   });
 });
 

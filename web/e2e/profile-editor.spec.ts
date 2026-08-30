@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import { openRecipeEditor } from "./helpers";
+
 // Critical workflow 6: modifying a profile with the keyboard and pointer,
 // against real SVG layout -- ProfileCanvas.test.tsx already covers this
 // logic in jsdom with an identity coordinate stub; here the actual
@@ -12,6 +14,7 @@ import { expect, test } from "@playwright/test";
 
 test("adjusts a pressure-profile point with the keyboard", async ({ page }) => {
   await page.goto("/");
+  await openRecipeEditor(page);
   const pressureEditor = page.getByRole("group", { name: "bar profile editor" });
   const firstPoint = pressureEditor.getByRole("slider", { name: "Profile point 1" });
   await expect(firstPoint).toHaveAttribute("aria-valuetext", "0 seconds, 2 bar");
@@ -27,10 +30,12 @@ test("adjusts a pressure-profile point with the keyboard", async ({ page }) => {
 
 test("drags a pressure-profile point with the pointer", async ({ page }) => {
   await page.goto("/");
+  await openRecipeEditor(page);
   const pressureEditor = page.getByRole("group", { name: "bar profile editor" });
   const secondPoint = pressureEditor.getByRole("slider", { name: "Profile point 2" });
   const before = await secondPoint.getAttribute("aria-valuetext");
 
+  await secondPoint.scrollIntoViewIfNeeded();
   const box = await secondPoint.boundingBox();
   if (!box) throw new Error("profile point has no bounding box");
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
@@ -44,6 +49,7 @@ test("drags a pressure-profile point with the pointer", async ({ page }) => {
 
 test("edits a profile point through the numeric disclosure and it stays in sync with the graphical control", async ({ page }) => {
   await page.goto("/");
+  await openRecipeEditor(page);
   // The pressure profile's disclosure is the first "Edit numeric points"
   // button on the page (ControlRail renders the pressure section first).
   await page.getByRole("button", { name: /edit numeric points/i }).first().click();

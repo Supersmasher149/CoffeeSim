@@ -13,6 +13,7 @@ interface Props {
   metric: HeatMetric;
   metricLabel: string;
   metricUnit: string;
+  partial?: boolean;
 }
 
 // Sequential, one hue, light to dark - the color job for magnitude on a grid.
@@ -59,7 +60,7 @@ function rampColor(t: number): string {
 // per-bean sensory overlay exists: the overlay is bean-relative and lives on the
 // shot view, and no sweep metric encodes a taste judgement.
 export function HeatMap({
-  rows, xValues, yValues, xLabel, yLabel, metric, metricLabel, metricUnit,
+  rows, xValues, yValues, xLabel, yLabel, metric, metricLabel, metricUnit, partial = false,
 }: Props) {
   const [hovered, setHovered] = useState<SweepRunRow>();
 
@@ -138,7 +139,8 @@ export function HeatMap({
                   // Tab reaches the same detail panel a mouse does, and the
                   // aria-label is the non-color alternative to the ramp.
                   const label = !row
-                    ? `${yLabel} ${formatTick(y)}, ${xLabel} ${formatTick(x)}: no run`
+                    ? `${yLabel} ${formatTick(y)}, ${xLabel} ${formatTick(x)}: ` +
+                      (partial ? "not run before cancellation" : "no run")
                     : invalid
                       ? `${yLabel} ${formatTick(y)}, ${xLabel} ${formatTick(x)}: outside the supported input range`
                       : `${yLabel} ${formatTick(y)}, ${xLabel} ${formatTick(x)}: ` +
@@ -161,8 +163,10 @@ export function HeatMap({
                         cursor: row ? "pointer" : "default",
                         // Invalid corners are a state, not a magnitude, so they
                         // leave the ramp entirely and carry a texture.
-                        background: invalid
-                          ? "repeating-linear-gradient(45deg, #2b2320 0 4px, #1e1917 4px 8px)"
+                         background: !row && partial
+                           ? "repeating-linear-gradient(135deg, #273137 0 4px, #182126 4px 8px)"
+                           : invalid
+                           ? "repeating-linear-gradient(45deg, #2b2320 0 4px, #1e1917 4px 8px)"
                           : rampColor(t),
                         outline:
                           hovered && row && hovered.index === row.index
@@ -231,6 +235,19 @@ export function HeatMap({
           />
           <span className="note">outside the supported input range</span>
         </div>
+        {partial && (
+          <div className="row" style={{ gap: 6 }}>
+            <div
+              style={{
+                width: 16,
+                height: 10,
+                borderRadius: 2,
+                background: "repeating-linear-gradient(135deg, #273137 0 4px, #182126 4px 8px)",
+              }}
+            />
+            <span className="note">not run before cancellation</span>
+          </div>
+        )}
       </div>
 
       {/* Per-cell hover rather than a number in every cell: mid-ramp steps
@@ -252,7 +269,7 @@ export function HeatMap({
             </div>
           </>
         ) : (
-          <div className="t">Hover a cell for its run.</div>
+          <div className="t">Hover or focus a cell for its run.</div>
         )}
       </div>
     </div>

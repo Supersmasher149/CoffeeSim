@@ -25,6 +25,7 @@ const MIN_GAP_S = 0.5;
 
 export function ProfileCanvas({ points, range, maxTimeSeconds, unit, color, onChange }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
+  const dragIndexRef = useRef<number>();
   const instructionsId = useId();
   const [dragIndex, setDragIndex] = useState<number>();
   const [hoverIndex, setHoverIndex] = useState<number>();
@@ -56,26 +57,29 @@ export function ProfileCanvas({ points, range, maxTimeSeconds, unit, color, onCh
     Math.min(high, Math.max(low, Math.round(value * 10) / 10));
 
   const handleMove = (event: React.PointerEvent) => {
-    if (dragIndex === undefined) return;
+    const activeDrag = dragIndexRef.current;
+    if (activeDrag === undefined) return;
     const position = fromEvent(event);
     if (!position) return;
 
     // Times must stay strictly increasing, so a dragged point is fenced in by
     // its neighbours rather than allowed to cross them.
-    const previous = dragIndex > 0 ? points[dragIndex - 1][0] + MIN_GAP_S : 0;
+    const previous = activeDrag > 0 ? points[activeDrag - 1][0] + MIN_GAP_S : 0;
     const next =
-      dragIndex < points.length - 1 ? points[dragIndex + 1][0] - MIN_GAP_S : Number.POSITIVE_INFINITY;
+      activeDrag < points.length - 1
+        ? points[activeDrag + 1][0] - MIN_GAP_S
+        : Number.POSITIVE_INFINITY;
 
     const time = Math.min(Math.max(snapTime(position.time), previous), Math.min(next, span));
     onChange(
       points.map((point, index) =>
-        index === dragIndex ? ([time, snapValue(position.value)] as ProfilePoint) : point,
+        index === activeDrag ? ([time, snapValue(position.value)] as ProfilePoint) : point,
       ),
     );
   };
 
   const addPointAt = (event: React.MouseEvent) => {
-    if (dragIndex !== undefined) return;
+    if (dragIndexRef.current !== undefined) return;
     const position = fromEvent(event);
     if (!position) return;
     const time = snapTime(position.time);
@@ -135,6 +139,11 @@ export function ProfileCanvas({ points, range, maxTimeSeconds, unit, color, onCh
       ].join(" ")
     : "";
 
+  const endDrag = () => {
+    dragIndexRef.current = undefined;
+    setDragIndex(undefined);
+  };
+
   const ticks = [low, low + (high - low) / 2, high];
 
   return (
@@ -147,8 +156,8 @@ export function ProfileCanvas({ points, range, maxTimeSeconds, unit, color, onCh
         aria-label={`${unit} profile editor`}
         aria-describedby={instructionsId}
         onPointerMove={handleMove}
-        onPointerUp={() => setDragIndex(undefined)}
-        onPointerLeave={() => setDragIndex(undefined)}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
         onDoubleClick={addPointAt}
       >
         <rect
@@ -202,8 +211,13 @@ export function ProfileCanvas({ points, range, maxTimeSeconds, unit, color, onCh
             aria-valuetext={`${point[0]} seconds, ${point[1]} ${unit}`}
             onPointerDown={(event) => {
               event.stopPropagation();
-              (event.target as Element).setPointerCapture?.(event.pointerId);
+              dragIndexRef.current = index;
               setDragIndex(index);
+              try {
+                event.currentTarget.setPointerCapture(event.pointerId);
+              } catch {
+                // Pointer capture is an enhancement; SVG dragging still works while inside the plot.
+              }
             }}
             onPointerEnter={() => setHoverIndex(index)}
             onPointerLeave={() => setHoverIndex(undefined)}

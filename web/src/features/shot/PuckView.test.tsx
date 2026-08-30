@@ -52,6 +52,7 @@ describe("PuckView: transport controls", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /play the shot/i }));
     expect(screen.getByRole("button", { name: /pause playback/i })).toBeInTheDocument();
+    expect(screen.getByText(/5\.0 \/ 28\.0 s/)).toBeInTheDocument();
   });
 
   it("exposes a speed selector with the documented options and updates on change", () => {

@@ -101,6 +101,7 @@ export function SweepPanel({ baseline, parameters, onError }: Props) {
   const [metric, setMetric] = useState<HeatMetric>("shot_time_s");
   const [result, setResult] = useState<SweepResult>();
   const [activeId, setActiveId] = useState<string>();
+  const [submitting, setSubmitting] = useState(false);
   const pollTimer = useRef<number>();
 
   // The second axis is the outer one, so the primary axis varies fastest and
@@ -109,6 +110,7 @@ export function SweepPanel({ baseline, parameters, onError }: Props) {
   const runCount = axes.reduce((total, axis) => total * Math.max(axis.steps, 1), 1);
   const selected = METRICS.find((entry) => entry.key === metric)!;
   const running = result?.status === "running" || result?.status === "queued";
+  const busy = submitting || running;
 
   // Sweeps run in the background on the server, so the dashboard polls for
   // progress instead of holding a request open (15.2).
@@ -144,6 +146,8 @@ export function SweepPanel({ baseline, parameters, onError }: Props) {
   }, [activeId, onError]);
 
   const run = async () => {
+    if (busy) return;
+    setSubmitting(true);
     try {
       const accepted = await api.startSweep(
         twoDimensional ? "dashboard-2d" : "dashboard",
@@ -160,6 +164,8 @@ export function SweepPanel({ baseline, parameters, onError }: Props) {
       setActiveId(accepted.sweep_id);
     } catch (error) {
       onError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -194,8 +200,8 @@ export function SweepPanel({ baseline, parameters, onError }: Props) {
                    onChange={(e) => setTwoDimensional(e.target.checked)} />
             second axis (heat map)
           </label>
-          <button onClick={run} disabled={running || runCount > 20000}>
-            {running ? "Running…" : `Run sweep (${runCount})`}
+          <button onClick={run} disabled={busy || runCount > 20000}>
+            {submitting ? "Starting…" : running ? "Running…" : `Run sweep (${runCount})`}
           </button>
           {runCount > 20000 && (
             <span className="note">A single sweep is limited to 20000 runs.</span>
@@ -271,6 +277,7 @@ export function SweepPanel({ baseline, parameters, onError }: Props) {
               metric={metric}
               metricLabel={selected.label}
               metricUnit={selected.unit}
+              partial={result.cancelled === true}
             />
           ) : (
             <div
@@ -303,6 +310,7 @@ export function SweepPanel({ baseline, parameters, onError }: Props) {
             </div>
           )}
 
+          <div className="table-scroll">
           <table style={{ marginTop: 12 }}>
             <thead>
               <tr>
@@ -331,6 +339,7 @@ export function SweepPanel({ baseline, parameters, onError }: Props) {
               ))}
             </tbody>
           </table>
+          </div>
         </>
       )}
     </div>

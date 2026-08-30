@@ -37,6 +37,7 @@ enum class Command {
     bench,
     cfd,
     cfd3d,
+    grind,
     params,
     fit_params,
     version,

@@ -235,8 +235,8 @@ def run(binary):
 
     # -- run a representative guided command (`version`: no fields, instant).
     for _ in range(
-        9
-    ):  # simulate, sweep, calibrate, synthesize, bench, cfd, cfd3d, params, fit-params -> version
+        10
+    ):  # simulate, sweep, calibrate, synthesize, bench, cfd, cfd3d, grind, params, fit-params -> version
         session.send(b"\x1b[B")
         time.sleep(0.05)
     session.send(b"\r")

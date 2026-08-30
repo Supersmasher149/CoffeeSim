@@ -281,22 +281,70 @@ JobResult run_cfd3d(const std::vector<Field>& fields, const CancellationCallback
     return output;
 }
 
+void append_grind_report(std::vector<std::string>& lines, const GrinderSpec& spec,
+                         const GrinderResult& result) {
+    lines.push_back("grinder       " + spec.name);
+    lines.push_back("burr gap      " + format_number(spec.burr_gap_um, 1) + " um over " +
+                    std::to_string(spec.passes) + " passes");
+    lines.push_back("d32 (Sauter)  " + format_number(result.sauter_mean_diameter_um, 2) + " um");
+    lines.push_back("spread (sigma) " + format_number(result.geometric_std_dev, 3));
+    lines.push_back("fines produced " + format_number(result.cumulative_fines_fraction * 100.0, 3) +
+                    " % of mass");
+    lines.push_back("bins          " + std::to_string(result.distribution.bins.size()));
+    lines.push_back("mass residual " + format_number(result.mass_balance_residual, 6));
+    for (const GrindBin& bin : result.distribution.bins) {
+        std::ostringstream row;
+        row << format_number(units::m_to_microns(bin.diameter_m), 1) << " um : "
+            << format_number(bin.mass_fraction, 4);
+        lines.push_back(row.str());
+    }
+    // Mirrors the legacy CLI's `command_grind` usability note (same 150-800 um
+    // range a recipe's puck.grind is validated against).
+    const ValidationResult usable = result.distribution.validate();
+    if (!usable.ok()) {
+        lines.push_back("NOTE: this distribution is not usable in a recipe: " + usable.summary());
+    } else if (result.sauter_mean_diameter_um < 150.0 || result.sauter_mean_diameter_um > 800.0) {
+        lines.push_back("NOTE: d32 is outside the 150-800 um range a recipe supports; widen the burr gap.");
+    }
+}
+
+JobResult run_grind(const std::vector<Field>& fields, const CancellationCallback&, const ProgressCallback&) {
+    cli_workflows::GrindRequest request;
+    request.spec_path = field_value(fields, "spec");
+    request.out_path = field_value(fields, "out");
+
+    const cli_workflows::GrindOutcome outcome = cli_workflows::run_grind(request);
+
+    JobResult output;
+    output.lines.push_back("grinder: " + outcome.spec.name +
+                           (request.spec_path.empty() ? " (built-in default spec)" : ""));
+    output.lines.push_back("wall time: " + format_number(outcome.wall_time_ms, 1) + " ms");
+    append_grind_report(output.lines, outcome.spec, outcome.result);
+    if (!outcome.result_path.empty()) {
+        output.lines.push_back("artifacts: " + outcome.result_path.parent_path().string());
+        output.lines.push_back("  " + outcome.result_path.filename().string() + " (full run)");
+        output.lines.push_back("  " + outcome.grind_path.filename().string() +
+                               " (paste into a recipe's puck.grind)");
+    }
+    return output;
+}
+
 JobResult run_info(Command command, const CancellationCallback&, const ProgressCallback&) {
     JobResult output;
     if (command == Command::params) {
         output.lines = {"sweepable recipe parameters:"};
-        for (const auto& path : supported_parameter_paths()) output.lines.push_back(path);
+        for (const auto& path : cli_workflows::run_params()) output.lines.push_back(path);
     } else if (command == Command::fit_params) {
         output.lines = {"fittable coefficients:"};
-        for (const auto& name : calibration::tunable_parameter_names()) {
-            const auto parameter = calibration::tunable_parameter(name);
-            output.lines.push_back(name + " [" + format_number(parameter->low, 6) + ", " +
-                                   format_number(parameter->high, 6) + "]" +
-                                   (parameter->logarithmic ? " (log scale)" : ""));
+        for (const auto& parameter : cli_workflows::run_fit_params()) {
+            output.lines.push_back(parameter.name + " [" + format_number(parameter.low, 6) + ", " +
+                                   format_number(parameter.high, 6) + "]" +
+                                   (parameter.logarithmic ? " (log scale)" : ""));
         }
     } else {
-        output.lines = {std::string(version::kSolver) + " recipe-schema=" + std::string(version::kRecipeSchema) +
-                        " result-schema=" + std::string(version::kResultSchema)};
+        const auto info = cli_workflows::run_version();
+        output.lines = {info.solver + " recipe-schema=" + info.recipe_schema +
+                        " result-schema=" + info.result_schema};
     }
     return output;
 }
@@ -312,6 +360,7 @@ const std::vector<CommandSpec>& commands() {
         {Command::bench, "bench", "Benchmark repeated standard simulations"},
         {Command::cfd, "cfd", "Run the experimental 2D axisymmetric CFD solver"},
         {Command::cfd3d, "cfd3d", "Run the experimental 3D Cartesian CFD solver"},
+        {Command::grind, "grind", "Model burr geometry as a particle size distribution"},
         {Command::params, "params", "List sweepable recipe parameter paths"},
         {Command::fit_params, "fit-params", "List fittable coefficients and bounds"},
         {Command::version, "version", "Show solver and schema versions"},
@@ -429,6 +478,8 @@ std::vector<Field> default_fields(Command command) {
                     {"snapshot interval", "1.0"},
                     {"material", ""},
                     {"out", ""}};
+        case Command::grind:
+            return {{"spec", ""}, {"out", ""}};
         case Command::params:
         case Command::fit_params:
         case Command::version:
@@ -447,6 +498,7 @@ JobFunction make_job(Command command, std::vector<Field> fields) {
             case Command::bench: return run_bench(fields, cancel, progress);
             case Command::cfd: return run_cfd(fields, cancel, progress);
             case Command::cfd3d: return run_cfd3d(fields, cancel, progress);
+            case Command::grind: return run_grind(fields, cancel, progress);
             case Command::params:
             case Command::fit_params:
             case Command::version: return run_info(command, cancel, progress);

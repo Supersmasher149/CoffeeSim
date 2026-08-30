@@ -34,6 +34,7 @@ export function ComparisonTray({ runs, activeId, onRemove, onPin, canPin }: Prop
             <button
               className="x" style={{ marginLeft: 6, background: "none", border: "none",
                                      color: "var(--muted)", cursor: "pointer" }}
+              aria-label={`Remove pinned run ${run.manifest.run_id} from comparison`}
               onClick={() => onRemove(run.manifest.run_id)}
             >
               ×

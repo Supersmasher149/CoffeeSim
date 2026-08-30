@@ -61,8 +61,17 @@ function Chart({
   markers: { time: number; label: string; color: string }[];
   onCursorChange: (time?: number) => void;
 }) {
+  // Recharts renders an SVG with no text alternative of its own, so a screen
+  // reader sees the chart card's heading and then nothing about what the
+  // lines actually show. A one-sentence summary -- the series names and
+  // however many timeline markers this chart carries -- fills that gap
+  // without trying to narrate every data point.
+  const summary =
+    `${title}: ${series.map((line) => line.label).join(", ")} over the shot's timeline` +
+    (markers.length > 0 ? `, with ${markers.length} marked event${markers.length === 1 ? "" : "s"}.` : ".");
+
   return (
-    <div className="chart-card">
+    <div className="chart-card" role="img" aria-label={summary}>
       <h3>{title}</h3>
       <ResponsiveContainer width="100%" height={170}>
         <LineChart

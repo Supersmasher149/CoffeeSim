@@ -237,7 +237,11 @@ export function App() {
           catalogue={referenceCatalogue}
           error={referenceError}
           active={active}
-          recipe={workspace.draftRecipe}
+          // Audit P7, issue #22 (same contract as PuckView/ChartStack above):
+          // the "current model" column must read the recipe that produced
+          // `active`, not draftRecipe, or editing the draft after a run
+          // silently relabels what the result actually shows.
+          recipe={workspace.activeRecipe}
         />
 
         <SweepPanel

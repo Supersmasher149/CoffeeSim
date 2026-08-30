@@ -81,7 +81,14 @@ export function HeatMap({
   const reversedY = [...yValues].reverse();
 
   return (
-    <div>
+    <div
+      role="group"
+      aria-label={
+        `Heat map of ${metricLabel} across ${xLabel} and ${yLabel}, ` +
+        `ranging ${format(min)} to ${format(max)} ${metricUnit}. ` +
+        "Tab through cells for each run's detail."
+      }
+    >
       <div style={{ display: "flex", gap: 10 }}>
         <div
           style={{
@@ -125,15 +132,32 @@ export function HeatMap({
                   const row = byCoordinate.get(`${y}|${x}`);
                   const invalid = !row || row.termination === "invalid_state";
                   const t = row ? (row[metric] - min) / span : 0;
+                  // A hover-only tooltip leaves color as the only carrier of
+                  // the value and is unreachable from the keyboard. Each cell
+                  // is a real button: focus/blur mirror the hover handlers so
+                  // Tab reaches the same detail panel a mouse does, and the
+                  // aria-label is the non-color alternative to the ramp.
+                  const label = !row
+                    ? `${yLabel} ${formatTick(y)}, ${xLabel} ${formatTick(x)}: no run`
+                    : invalid
+                      ? `${yLabel} ${formatTick(y)}, ${xLabel} ${formatTick(x)}: outside the supported input range`
+                      : `${yLabel} ${formatTick(y)}, ${xLabel} ${formatTick(x)}: ` +
+                        `${metricLabel} ${format(row[metric])} ${metricUnit}, ${row.termination.replace(/_/g, " ")}`;
                   return (
-                    <div
+                    <button
                       key={`${y}-${x}`}
+                      type="button"
+                      disabled={!row}
+                      aria-label={label}
                       onMouseEnter={() => setHovered(row)}
                       onMouseLeave={() => setHovered(undefined)}
-                      title={undefined}
+                      onFocus={() => setHovered(row)}
+                      onBlur={() => setHovered(undefined)}
                       style={{
                         height: cellHeight,
                         borderRadius: 2,
+                        border: "none",
+                        padding: 0,
                         cursor: row ? "pointer" : "default",
                         // Invalid corners are a state, not a magnitude, so they
                         // leave the ramp entirely and carry a texture.

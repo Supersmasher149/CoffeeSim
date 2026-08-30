@@ -1,3 +1,5 @@
+import { useId } from "react";
+
 import { SOLUTE_CLASSES } from "../../api/types";
 import type {
   BeanProfile,
@@ -63,12 +65,18 @@ function GrindDistributionReadout({ bins }: { bins: GrindBin[] }) {
 // Units live in the label, never only in surrounding prose (12.5).
 function NumberField({ label, value, range, step = 1, path, issues, onChange }: NumberFieldProps) {
   const invalid = issues.some((issue) => issue.path === path);
+  // The label and input were siblings with no htmlFor/id link, so a screen
+  // reader (and RTL's getByLabelText) had no way to associate one with the
+  // other. useId keeps it unique across the rail's several NumberFields.
+  const inputId = useId();
   return (
     <div className="field">
-      <label title={`${range[0]} to ${range[1]}`}>{label}</label>
+      <label htmlFor={inputId} title={`${range[0]} to ${range[1]}`}>{label}</label>
       <input
+        id={inputId}
         type="number"
         className={invalid ? "invalid" : undefined}
+        aria-invalid={invalid}
         value={value}
         step={step}
         min={range[0]}
@@ -118,7 +126,11 @@ export function ControlRail(props: Props) {
     <aside className="rail">
       <div className="section">
         <h2>Recipe</h2>
-        <select value={props.selectedId} onChange={(e) => props.onSelectRecipe(e.target.value)}>
+        <select
+          aria-label="Recipe"
+          value={props.selectedId}
+          onChange={(e) => props.onSelectRecipe(e.target.value)}
+        >
           {props.recipes.map((entry) =>
             "recipe" in entry ? (
               <option key={entry.id} value={entry.id}>

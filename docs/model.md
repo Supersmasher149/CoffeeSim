@@ -209,6 +209,25 @@ free to describe a bed the shot correlations do not cover — a fine enough gap
 yields a d32 below the supported 150–800 µm band, and a recipe carrying it is
 rejected. The CLI says so rather than letting it fail later.
 
+A wide burr gap can be rejected for a second, unrelated reason even when its
+d32 lands well inside the supported band: the output grid is 24 (by default)
+bins log-spaced between `fines_diameter_um` and `bean_diameter_um` inclusive,
+so `bean_diameter_um` is always the top grid point and every bin below it
+shifts higher as the gap widens. A recipe's `puck.grind` bins are capped at
+2000 µm each (see above), and with the shipped default `bean_diameter_um =
+6000`, gaps above roughly 750–800 µm start placing a tail bin over that cap —
+even one carrying a fraction of a percent of mass fails the whole
+distribution, since bin-range validation does not treat negligible-mass bins
+differently. This eats a large share of `burr_gap_um`'s own documented 50–1500
+µm range: at default settings, most gaps from ~800 µm up are grinder-valid but
+recipe-unusable. Neither `bins` nor `bean_diameter_um` fixes this by loosening
+it — more bins only adds resolution within the same fines-to-bean span
+(usually surfacing *more* violating bins, not fewer), and a larger
+`bean_diameter_um` pushes the whole tail higher. The only lever that clears it
+is shrinking `bean_diameter_um` toward the schema's own 2000 µm floor, which
+trades a physically-accurate whole-bean size for schema compliance and is a
+workaround, not a fix. See `docs/current-state-and-gaps.md`.
+
 Compression and porosity respond to pressure through a bounded empirical curve:
 
 ```

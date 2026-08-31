@@ -6,8 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 EspressoLab is a local engineering workbench that simulates an espresso shot
 from controllable brew inputs. Deterministic C++20 simulation core, React/TypeScript
-dashboard, an interactive terminal UI (`espressolab_cli tui`), no AI, plus
-separate experimental CFD solvers and a grind model. Neither the browser nor the TUI calculates a
+dashboard, an interactive terminal UI (`espressolab_cli tui`), no AI, plus a
+separate experimental CFD solver. Neither the browser nor the TUI calculates a
 displayed quantity — both post/call into the same native workflows and render
 what the native solver returns, so the file-oriented CLI, the TUI, tests, and
 the dashboard produce byte-identical numbers for the same inputs.
@@ -41,11 +41,12 @@ A POSIX PTY smoke matrix for the TUI runs separately from `espressolab_tests`
 python3 tests/pty/tui_smoke.py [path/to/espressolab_cli]
 ```
 
-The current Catch2 suite passes 225 cases/86,840 assertions (the assertion count
+The current Catch2 suite passes 226 cases/86,773 assertions (the assertion count
 jumped with the sensory overlay's property sweep over the composition simplex).
 The PTY script's 15 checks pass. Locally verified for the overlay: full suite,
 warnings-as-errors build, `scripts/demo.sh`, `scripts/calibration_demo.sh`, the
-18-case schema contract check, the PTY matrix, and the web typecheck/build.
+18-case schema contract check, the PTY matrix, web typecheck/coverage/build, and
+Chromium desktop/mobile Playwright tests.
 Hosted macOS, Linux, and dashboard jobs passed at `736cef3`; later hardening
 through `94fbe7a` does not yet have equivalent hosted evidence.
 
@@ -66,12 +67,16 @@ cmake -S . -B build-warnings -DESPRESSOLAB_WARNINGS_AS_ERRORS=ON
 cmake --build build-warnings -j4
 ```
 
-Web checks (no browser interaction test harness exists — test dashboard
-interactions manually via `./scripts/dev.sh`):
+Web checks include the static build, Vitest unit/component/accessibility
+coverage, and Playwright browser workflows. The browser suite starts the built
+native server and Vite automatically from `web/playwright.config.ts`:
 
 ```bash
 npm --prefix web run typecheck
+npm --prefix web run test:coverage
 npm --prefix web run build
+npm --prefix web run test:e2e
+npm --prefix web run test:e2e:all  # nightly cross-browser matrix
 ```
 
 CLI surface:
@@ -136,24 +141,19 @@ espressolab_cli tui  ->  espressolab_cli_support (workflows.cpp, tui/tui_forms.c
 
 Keep a new concern in the lowest layer that can own it: physics in the model
 library/solver, serialization in `artifact_io`, request translation in the
-server, rendering-only behavior in `web/`. The CFD solvers and the grind model
-are deliberately outside the default Level 1-3 request path. CFD3D has explicit
-REST routes and independent artifacts/schemas; the grind model has neither a
-REST route nor any hash. None of the three may become a hidden dependency of
-the default pipeline or change its artifacts/hashes.
+server, rendering-only behavior in `web/`. The CFD solvers are deliberately
+outside the default Level 1-3 request path. CFD3D has explicit REST routes and
+independent artifacts/schemas; neither CFD solver may become a hidden dependency
+of the default pipeline or change its artifacts/hashes.
 
-Threads live in the applications, not the engine: `ExperimentRunner::run`
+Threads live in applications, not the engine: `ExperimentRunner::run`
 takes a `(completed, total) -> bool` progress callback and stops when it
-returns false. That's the engine's whole involvement in background sweeps.
-Exactly three places own threads — the server (for REST),
-`apps/espressolab_cli/tui` (for the interactive shell), and
-`apps/espressolab_cli/sweep_batch_runner.cpp` (the `sweep --workers` parallel
-path) — so the same runner and the same native solver/calibration APIs work
-unchanged in the CLI, the TUI, and in tests (no thread at all there).
-`sweep_batch_runner.cpp` is the only place sweep points run concurrently;
-`engine/experiment_runner/` stays single-threaded and shares the pure helpers
-in `experiment.hpp` with it, so both paths emit identical runs, order, and
-per-run hashes. Add a fourth thread owner in an application, never in `engine/`. Native execution
+returns false. That's the engine's whole involvement in background sweeps —
+the server (for REST) and `apps/espressolab_cli/tui` (for the interactive
+shell) and `sweep_batch_runner` own their application-level worker threads,
+cancellation controls, and job state, so the same runner and the same native
+solver/calibration APIs work unchanged in the CLI, the TUI, and in tests (no
+thread at all there). Native execution
 stays thread-agnostic: cancellation and coarse progress are a
 `CancellationCallback`/status-callback pair (`include/espressolab/execution.hpp`)
 checked at safe solver, pressure-iteration, calibration, and sweep boundaries,
@@ -170,11 +170,11 @@ recipe, coefficient, configuration, and result hashes.
 | `engine/cfd/` | Separate Level 4 axisymmetric porous-media solver |
 | `engine/cfd3d/` | Separate Cartesian 3D porous-media solver and field storage |
 | `engine/artifact_io/` | JSON/CSV load and dump, canonical hashes, manifests, artifact files |
-| `engine/experiment_runner/` | Sweep axes, Cartesian execution, progress, aggregate export (single-threaded) |
+| `engine/experiment_runner/` | Sweep axes, Cartesian execution, progress, aggregate export |
 | `engine/calibration/` | Measured-shot loading, loss functions, fitting, validation reports |
 | `engine/reference_io/` | Read-only reference-shot catalogue loading |
-| `include/espressolab/` | Public C++ headers shared across targets, including `execution.hpp` (the cancellation/status contract) and `ring_buffer.hpp` (the bounded queue behind parallel sweeps) |
-| `apps/espressolab_cli/` | Argv parsing, `workflows.{hpp,cpp}` (shared CLI workflow services), `sweep_batch_runner.{hpp,cpp}` (the parallel sweep path), file-oriented command output |
+| `include/espressolab/` | Public C++ headers shared across targets, including `execution.hpp` (the cancellation/status contract) and `ring_buffer.hpp` (the bounded parallel-sweep queue) |
+| `apps/espressolab_cli/` | Argv parsing, `workflows.{hpp,cpp}` (shared CLI workflow services), `sweep_batch_runner.{hpp,cpp}` (opt-in parallel sweeps), file-oriented command output |
 | `apps/espressolab_cli/tui/` | Interactive terminal UI: `tui_forms.{hpp,cpp}` (terminal-independent navigation/forms) and `tui.cpp` (FTXUI rendering) |
 | `apps/espressolab_server/` | Local REST translation, measured-shot comparison, in-memory runs, background sweep/CFD3D jobs (cpp-httplib) |
 | `web/src/features/` | shot, sweeps, run comparison, measured-shot comparison, calibration notice |
@@ -280,9 +280,9 @@ universal: `result_hash` digests the sample series at 17 significant digits, and
 the solver's last ulp follows the platform's libm (`exp` in the temperature
 factor, `pow` in the grind factor and Kozeny-Carman). The baseline shot hashes
 `ff604b48...` on Linux x86_64 and `80156b2e...` on macOS arm64 while agreeing on
-every physical quantity to ten significant figures. So a result hash identifies a
-run within one build; it is not a cross-platform checksum, and no test may pin a
-literal one. See docs/data-contracts.md.
+every physical quantity to ten significant figures. So a result hash identifies
+a run within one build; it is not a cross-platform checksum, and no test may pin
+a literal one. See docs/data-contracts.md.
 Coefficient sets are versioned separately from recipes and solver code so a
 re-fit never silently changes what a past run meant. Changing serialization
 order or the set of hashed fields is a deliberate, tested contract change.

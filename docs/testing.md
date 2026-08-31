@@ -18,10 +18,12 @@ ctest --test-dir build -L server  # black-box REST/CLI smoke scripts, registered
 ```
 
 `./scripts/test.sh` does not run the PTY script, the `server`-labeled ctest
-smoke scripts, dashboard checks, demo, or warnings-as-errors build. The
-current Catch2 run passes 204 test cases and 20,364 assertions. The PTY
-script currently defines 14 checks, but it was not rerun for this
-documentation refresh.
+smoke scripts, dashboard checks, demo, or warnings-as-errors build. The web
+checks are separate: `npm --prefix web run typecheck`,
+`npm --prefix web run test:coverage`, and `npm --prefix web run build` cover
+static, runtime, and production-build behavior. `npm --prefix web run test:e2e`
+runs the Chromium desktop/mobile browser suite against a built native server;
+`npm --prefix web run test:e2e:all` adds the nightly Firefox and WebKit matrix.
 
 ## What each layer is for
 
@@ -35,7 +37,7 @@ codes and paths from the loaders.
 the baseline stops on its mass target with no hard warnings, a coarse puck runs
 fast and weak, a choked puck stalls with a warning instead of a numerical
 failure, pre-infusion delays first drops relative to immediate pressure, and the
-same inputs reproduce the same result hash.
+  same inputs reproduce the same result hash on the same build.
 
 **Property and invariant tests** generate 200 valid recipes from a fixed seed
 and require that none produce NaN or infinity, that masses stay nonnegative,
@@ -83,15 +85,15 @@ every bin, while sweeping the spread of a distribution is refused rather than
 guessed.
 
 **Sensory overlay tests** (`[flavor]`) cover bean documents and the flavour
-layer. The load-bearing one is in `[artifacts]`: pinned hash literals, captured
-from the build *before* the overlay was written, assert that a beanless run
-still produces exactly the recipe hash, result hash and `run_id` it always did.
-Regenerating those literals from the current build would make the test compare
-the code against itself. The integration tests assert the rest bit-for-bit --
-attaching a bean must leave every sample, region and summary field equal -- and
-otherwise make only relative claims (a light natural reads fruitier than a dark
-roast), never absolute intensities, because no absolute intensity means anything
-until a tasting panel has been run.
+layer. The load-bearing one is in `[artifacts]`: recipe and coefficient hashes
+are pinned, while physical outputs are checked to tight tolerances and repeated
+result hashes are checked for determinism. A result hash is not pinned as a
+literal because its sample-series formatting includes platform-libm-sensitive
+last-ulp values. The integration tests assert the rest bit-for-bit -- attaching
+a bean must leave every sample, region and summary field equal -- and otherwise
+make only relative claims (a light natural reads fruitier than a dark roast),
+never absolute intensities, because no absolute intensity means anything until a
+tasting panel has been run.
 
 **Grinder tests** (`[grind_sim]`) cover the comminution model behind
 `espressolab_cli grind`, which is outside the shot pipeline and owns no result

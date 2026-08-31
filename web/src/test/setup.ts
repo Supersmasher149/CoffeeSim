@@ -64,6 +64,26 @@ Element.prototype.getBoundingClientRect = function getBoundingClientRect() {
   } as DOMRect;
 };
 
+// jsdom does not provide PointerEvent, so Testing Library otherwise creates a
+// plain Event for pointer helpers and drops client coordinates entirely.
+class PointerEventStub extends MouseEvent {
+  readonly pointerId: number;
+
+  constructor(type: string, init: MouseEventInit & { pointerId?: number } = {}) {
+    super(type, init);
+    this.pointerId = init.pointerId ?? 0;
+  }
+}
+function installPointerEventStub() {
+  vi.stubGlobal("PointerEvent", PointerEventStub);
+  Object.defineProperty(window, "PointerEvent", {
+    configurable: true,
+    writable: true,
+    value: PointerEventStub,
+  });
+}
+installPointerEventStub();
+
 // jsdom implements neither ResizeObserver nor the SVG measurement APIs
 // Recharts and d3 reach for. Firing the callback once, synchronously, is
 // enough for ResponsiveContainer to settle on the stubbed size above without
@@ -85,6 +105,14 @@ class ResizeObserverStub {
 }
 vi.stubGlobal("ResizeObserver", ResizeObserverStub);
 
+// axe-core probes a 2D canvas while checking text contrast. jsdom's default
+// implementation logs a not-implemented error, but axe only needs text width.
+Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
+  configurable: true,
+  writable: true,
+  value: (kind: string) => kind === "2d" ? { measureText: () => ({ width: 0 }) } : null,
+});
+
 type SvgMeasurement = { getBBox?: () => DOMRect; getComputedTextLength?: () => number };
 const svgProto = SVGElement.prototype as unknown as SvgMeasurement;
 svgProto.getBBox ??= () => ({ x: 0, y: 0, width: 0, height: 0 }) as DOMRect;
@@ -102,14 +130,22 @@ type SvgCoordinates = {
   getScreenCTM?: () => { inverse: () => unknown } | null;
 };
 const svgSvgProto = SVGSVGElement.prototype as unknown as SvgCoordinates;
-svgSvgProto.createSVGPoint ??= () => ({
-  x: 0,
-  y: 0,
-  matrixTransform(this: SvgPoint) {
-    return { x: this.x, y: this.y };
-  },
+Object.defineProperty(svgSvgProto, "createSVGPoint", {
+  configurable: true,
+  writable: true,
+  value: () => ({
+    x: 0,
+    y: 0,
+    matrixTransform(this: SvgPoint) {
+      return { x: this.x, y: this.y };
+    },
+  }),
 });
-svgSvgProto.getScreenCTM ??= () => ({ inverse: () => ({}) });
+Object.defineProperty(svgSvgProto, "getScreenCTM", {
+  configurable: true,
+  writable: true,
+  value: () => ({ inverse: () => ({}) }),
+});
 
 // jsdom has no requestAnimationFrame loop; drive it off a macrotask so
 // playback/scrub code still advances when a test flushes timers (real or
@@ -128,6 +164,7 @@ vi.stubGlobal("cancelAnimationFrame", (id: number) => clearTimeout(id));
 let objectUrlSequence = 0;
 
 beforeEach(() => {
+  installPointerEventStub();
   objectUrlSequence = 0;
   URL.createObjectURL = vi.fn(() => `blob:mock-${++objectUrlSequence}`);
   URL.revokeObjectURL = vi.fn();

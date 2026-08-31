@@ -624,12 +624,11 @@ int command_grind(int argc, char** argv) {
 
     // A grinder spec is free to describe a bed the shot correlations do not
     // cover, so say plainly whether this distribution can be used as-is.
-    const ValidationResult usable = result.distribution.validate();
-    if (!usable.ok()) {
-        std::cout << "\n  NOTE: this distribution is not usable in a recipe: " << usable.summary()
+    const auto usability = cli_workflows::assess_grind_usability(result);
+    if (usability.status == cli_workflows::GrindUsabilityStatus::invalid_distribution) {
+        std::cout << "\n  NOTE: this distribution is not usable in a recipe: " << usability.detail
                   << '\n';
-    } else if (result.sauter_mean_diameter_um < 150.0 ||
-               result.sauter_mean_diameter_um > 800.0) {
+    } else if (usability.status == cli_workflows::GrindUsabilityStatus::d32_out_of_range) {
         std::cout << "\n  NOTE: d32 is outside the 150-800 um range a recipe supports, so a "
                      "recipe carrying this distribution will be rejected. Widen the burr gap.\n";
     }

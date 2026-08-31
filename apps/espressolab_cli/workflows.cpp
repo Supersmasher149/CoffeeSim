@@ -394,6 +394,17 @@ GrindOutcome run_grind(const GrindRequest& request) {
     return outcome;
 }
 
+GrindUsabilityReport assess_grind_usability(const GrinderResult& result) {
+    const ValidationResult validation = result.distribution.validate();
+    if (!validation.ok()) {
+        return {GrindUsabilityStatus::invalid_distribution, validation.summary()};
+    }
+    if (result.sauter_mean_diameter_um < 150.0 || result.sauter_mean_diameter_um > 800.0) {
+        return {GrindUsabilityStatus::d32_out_of_range, {}};
+    }
+    return {};
+}
+
 // ------------------------------------------------------------ info commands --
 std::vector<std::string> run_params() { return supported_parameter_paths(); }
 

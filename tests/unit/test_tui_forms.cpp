@@ -26,6 +26,7 @@ TEST_CASE("every command has a discoverable navigator entry", "[tui][unit]") {
         INFO("missing navigator entry: " << title);
         REQUIRE(found);
     }
+    for (const auto& spec : commands()) REQUIRE(spec.runner != nullptr);
 }
 
 TEST_CASE("default_fields preserves existing command defaults and units", "[tui][unit]") {

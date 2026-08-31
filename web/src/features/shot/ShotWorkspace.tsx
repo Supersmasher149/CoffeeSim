@@ -6,6 +6,7 @@ import { ComparisonTray } from "../comparison/ComparisonTray";
 import { ChartStack } from "./ChartStack";
 import { ControlRail } from "./ControlRail";
 import { DiagnosticsDrawer } from "./DiagnosticsDrawer";
+import { FlavorPanel } from "./FlavorPanel";
 import { MetricStrip } from "./MetricStrip";
 import { PuckView } from "./PuckView";
 
@@ -72,6 +73,7 @@ export function ShotWorkspace({
         {active ? (
           <>
             <MetricStrip result={active} />
+            {active.flavor && <FlavorPanel flavor={active.flavor} />}
             <PuckView
               result={active}
               targetBeverageG={activeRecipe?.stop.target_beverage_g ?? null}

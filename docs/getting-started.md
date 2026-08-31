@@ -56,8 +56,9 @@ outputs/shots/first-run/
 ```
 
 `manifest.json` records the input hashes, solver version, step settings, and
-result hash. The hash is a reproducibility signal: matching inputs and solver
-version should produce the same output hash. It is not a security feature.
+    result hash. The hash is a reproducibility signal: matching inputs and solver
+    version on the same build should produce the same output hash. It is not a
+    security feature or a universal cross-platform checksum.
 
 Run the acceptance demonstration when you want to exercise a baseline shot, a
 grind sweep, artifact writing, and the deterministic hash check together:

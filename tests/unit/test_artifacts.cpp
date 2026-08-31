@@ -523,9 +523,6 @@ TEST_CASE("beanless runs are unchanged by the flavour overlay", "[artifacts][fla
 
         ShotResult result = Simulator().run(recipe, coefficients);
         artifact_io::stamp_manifest(result, recipe, coefficients, {});
-
-        // Tight enough that any real change to the solver's arithmetic fails it,
-        // loose enough to survive a different libm's last ulp.
         REQUIRE(result.summary.termination == TerminationReason::target_mass_reached);
         REQUIRE(result.summary.elapsed_time_s == Catch::Approx(expected.elapsed_time_s).epsilon(1e-12));
         REQUIRE(units::kg_to_grams(result.summary.beverage_mass_kg) ==
@@ -536,13 +533,12 @@ TEST_CASE("beanless runs are unchanged by the flavour overlay", "[artifacts][fla
                 Catch::Approx(expected.extraction_yield_percent).epsilon(1e-9));
         REQUIRE(result.samples.size() == expected.sample_count);
 
-        // The portable half of the hash contract: identical inputs, identical
-        // hash, within one build. scripts/demo.sh asserts the same thing across
-        // two processes.
+        // Tight enough that any real change to the solver's arithmetic fails it,
+        // loose enough to survive a different libm's last ulp.
         ShotResult again = Simulator().run(recipe, coefficients);
         artifact_io::stamp_manifest(again, recipe, coefficients, {});
-        REQUIRE(again.manifest.result_hash == result.manifest.result_hash);
-        REQUIRE(again.manifest.run_id == result.manifest.run_id);
+        REQUIRE(result.manifest.result_hash == again.manifest.result_hash);
+        REQUIRE(result.manifest.run_id == again.manifest.run_id);
         REQUIRE(result.manifest.result_hash.size() == 64);
         REQUIRE(result.manifest.solver_version == "solver-0.4.0");
 

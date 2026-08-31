@@ -274,7 +274,15 @@ be done atomically across layers — see the "Changing a Data Contract" and
 
 Every run records recipe hash, coefficient hash, solver version, step size,
 and a SHA-256 result hash over canonicalized inputs and ordered output samples.
-Identical inputs must produce identical hashes (`scripts/demo.sh` checks this).
+Identical inputs must produce identical hashes **on the same build**
+(`scripts/demo.sh` checks this). Reproducibility is per-toolchain, not
+universal: `result_hash` digests the sample series at 17 significant digits, and
+the solver's last ulp follows the platform's libm (`exp` in the temperature
+factor, `pow` in the grind factor and Kozeny-Carman). The baseline shot hashes
+`ff604b48...` on Linux x86_64 and `80156b2e...` on macOS arm64 while agreeing on
+every physical quantity to ten significant figures. So a result hash identifies a
+run within one build; it is not a cross-platform checksum, and no test may pin a
+literal one. See docs/data-contracts.md.
 Coefficient sets are versioned separately from recipes and solver code so a
 re-fit never silently changes what a past run meant. Changing serialization
 order or the set of hashed fields is a deliberate, tested contract change.

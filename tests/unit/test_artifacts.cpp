@@ -10,6 +10,7 @@
 #include "../fixtures/test_fixtures.hpp"
 #include "espressolab/artifact_io.hpp"
 #include "espressolab/simulator.hpp"
+#include "espressolab/units.hpp"
 
 using namespace espressolab;
 
@@ -463,37 +464,51 @@ TEST_CASE("the samples CSV has a stable column header", "[artifacts]") {
 }
 
 // Audit: the flavour overlay (bean profiles, sensory axes) is additive and must
-// leave every pre-existing run untouched. These literals were captured from the
-// build immediately BEFORE the overlay was written -- that ordering is the whole
-// point. Regenerating them from the current build would make this test compare
-// the code against itself and pass no matter what moved.
-TEST_CASE("beanless runs still hash exactly as they did before the flavour overlay",
-          "[artifacts][flavor]") {
+// leave every pre-existing run untouched. These expectations were captured from
+// the build immediately BEFORE the overlay was written -- that ordering is the
+// whole point. Regenerating them from the current build would make this test
+// compare the code against itself and pass no matter what moved.
+//
+// What is pinned, and why it is not the result hash:
+//
+// recipe_hash and coefficient_hash ARE pinned exactly. They are digests of JSON
+// documents serialized at fixed precision, so they are identical on every
+// platform, and they are what prove the overlay did not disturb serialization.
+//
+// result_hash is deliberately NOT pinned to a literal. It digests the sample
+// series at 17 significant digits, and the solver's last ulp depends on the
+// platform's libm: `exp` in temperature_factor() and `pow` in grind_factor()
+// and the Kozeny-Carman permeability are not bit-identical across
+// implementations. The baseline shot hashes ff604b48... on Linux x86_64 and
+// 80156b2e... on macOS arm64 -- both on this commit AND on main before the
+// overlay existed, which is how we know the difference is the toolchain and not
+// this change. Pinning either literal would assert a platform, not a contract.
+// See docs/data-contracts.md, "Reproducibility is per-toolchain".
+//
+// So the physical outputs are pinned instead, to a tolerance far tighter than
+// any real change to the solver could hide inside, and the hash is checked for
+// the property that is actually portable: determinism.
+TEST_CASE("beanless runs are unchanged by the flavour overlay", "[artifacts][flavor]") {
     struct PinnedRun {
         const char* recipe_file;
         const char* recipe_hash;
-        const char* result_hash;
-        const char* run_id;
+        double elapsed_time_s;
+        double beverage_mass_g;
+        double tds_percent;
+        double extraction_yield_percent;
+        std::size_t sample_count;
     };
     // baseline, the PSD path, the multi-region path and the axially resolved
     // path: one pin per branch the solver can take.
     const PinnedRun pinned[] = {
-        {"baseline.json",
-         "f744a2ed317ba0cfca42b9bd8940aa049a79f530403923a9f31133d0b858e3ab",
-         "ff604b486f720052bfd232b2fa7f4e9d3fc7ad04c3b2d0262843c44eddbc3f1d",
-         "shot-ff604b486f72"},
-        {"psd-bimodal.json",
-         "727b5fec1b06a07a0a78f5e7098e42935ab86403cfe97ef8e46cc529660f0b60",
-         "0b63570e110fa7a8821b955ce94f0acab468afa3550305717f107431dd7c5f42",
-         "shot-0b63570e110f"},
-        {"channelled.json",
-         "f7bcc9c53d02baacbfdcfac156a358191dedd356c47c02680ce6915670b1fe60",
-         "4beea98837d06aed83e2cd3b6a4b7675531108d2a13551159ab96810c0e54fb1",
-         "shot-4beea98837d0"},
-        {"axial-resolved.json",
-         "2e9673ba2145030279b6a12fdd118b7e49bd65a855db37018c9ecdaca31edd2e",
-         "a1eff278e7f2fdb92ac694e3bbdd9687e2c53fb32550e5a3143c31130ba6aaaa",
-         "shot-a1eff278e7f2"},
+        {"baseline.json", "f744a2ed317ba0cfca42b9bd8940aa049a79f530403923a9f31133d0b858e3ab",
+         29.03, 36.014920336720756, 9.086491796595798, 18.180515455259126, 582},
+        {"psd-bimodal.json", "727b5fec1b06a07a0a78f5e7098e42935ab86403cfe97ef8e46cc529660f0b60",
+         25.27, 36.02204806836168, 7.218196393683204, 14.445234303340628, 507},
+        {"channelled.json", "f7bcc9c53d02baacbfdcfac156a358191dedd356c47c02680ce6915670b1fe60",
+         23.62, 36.00993362168562, 3.1291147137151554, 6.259956285306808, 474},
+        {"axial-resolved.json", "2e9673ba2145030279b6a12fdd118b7e49bd65a855db37018c9ecdaca31edd2e",
+         31.67, 36.02487273339713, 10.957352697530098, 21.92984646797042, 635},
     };
     const ModelCoefficients coefficients = testing::baseline_coefficients();
     REQUIRE(artifact_io::coefficient_hash(coefficients) ==
@@ -508,8 +523,27 @@ TEST_CASE("beanless runs still hash exactly as they did before the flavour overl
 
         ShotResult result = Simulator().run(recipe, coefficients);
         artifact_io::stamp_manifest(result, recipe, coefficients, {});
-        REQUIRE(result.manifest.result_hash == expected.result_hash);
-        REQUIRE(result.manifest.run_id == expected.run_id);
+
+        // Tight enough that any real change to the solver's arithmetic fails it,
+        // loose enough to survive a different libm's last ulp.
+        REQUIRE(result.summary.termination == TerminationReason::target_mass_reached);
+        REQUIRE(result.summary.elapsed_time_s == Catch::Approx(expected.elapsed_time_s).epsilon(1e-12));
+        REQUIRE(units::kg_to_grams(result.summary.beverage_mass_kg) ==
+                Catch::Approx(expected.beverage_mass_g).epsilon(1e-9));
+        REQUIRE(result.summary.tds_fraction * 100.0 ==
+                Catch::Approx(expected.tds_percent).epsilon(1e-9));
+        REQUIRE(result.summary.extraction_yield_fraction * 100.0 ==
+                Catch::Approx(expected.extraction_yield_percent).epsilon(1e-9));
+        REQUIRE(result.samples.size() == expected.sample_count);
+
+        // The portable half of the hash contract: identical inputs, identical
+        // hash, within one build. scripts/demo.sh asserts the same thing across
+        // two processes.
+        ShotResult again = Simulator().run(recipe, coefficients);
+        artifact_io::stamp_manifest(again, recipe, coefficients, {});
+        REQUIRE(again.manifest.result_hash == result.manifest.result_hash);
+        REQUIRE(again.manifest.run_id == result.manifest.run_id);
+        REQUIRE(result.manifest.result_hash.size() == 64);
         REQUIRE(result.manifest.solver_version == "solver-0.4.0");
 
         // The artifacts a beanless run emits are unchanged in shape too.
@@ -517,8 +551,8 @@ TEST_CASE("beanless runs still hash exactly as they did before the flavour overl
         const nlohmann::json document =
             nlohmann::json::parse(artifact_io::dump_result_json(result));
         REQUIRE_FALSE(document.contains("flavor"));
-        REQUIRE(artifact_io::dump_samples_csv(result).substr(
-                    0, artifact_io::dump_samples_csv(result).find('\n')) ==
+        const std::string csv = artifact_io::dump_samples_csv(result);
+        REQUIRE(csv.substr(0, csv.find('\n')) ==
                 "time_s,pressure_bar,inlet_temperature_c,puck_temperature_c,flow_ml_s,"
                 "beverage_mass_g,tds_percent,extraction_yield_percent,saturation");
     }

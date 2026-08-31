@@ -10,6 +10,18 @@ const proxyTarget = process.env.ESPRESSOLAB_SERVER_URL ?? "http://127.0.0.1:8734
 
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    alias: [
+      // recharts imports individual lodash submodules (lodash/get, lodash/isNumber,
+      // ...); lodash's CJS internals require() shared helpers that Rollup's CJS
+      // interop can't tree-shake, so the whole library rides along for ~28 used
+      // functions. lodash-es ships the same functions as real ESM, so only what's
+      // actually imported ends up in the bundle. This doesn't touch our own code --
+      // we have no direct lodash usage.
+      { find: /^lodash\/(.*)$/, replacement: "lodash-es/$1" },
+      { find: "lodash", replacement: "lodash-es" },
+    ],
+  },
   server: {
     port: 5173,
     proxy: {

@@ -1,11 +1,13 @@
 #include "espressolab/simulator.hpp"
 
+#include <array>
 #include <algorithm>
 #include <cmath>
 #include <limits>
 #include <vector>
 
 #include "espressolab/extraction.hpp"
+#include "espressolab/flavor.hpp"
 #include "espressolab/puck.hpp"
 #include "espressolab/units.hpp"
 #include "espressolab/version.hpp"
@@ -52,6 +54,12 @@ struct CellState {
     // bins each step, so aggregation, the mass balances and the sample series
     // all keep reading one number and need no knowledge of the bins.
     std::vector<double> bin_remaining_kg;
+    // Sensory overlay only (docs/model.md). One pool per solute class, tracking
+    // the same solids the two stores above already account for -- these divide
+    // that mass, they never add to it. Empty unless the recipe carries a bean,
+    // which is what makes every loop over them a no-op on the default path.
+    std::vector<double> class_remaining_kg;
+    std::vector<double> class_dissolved_kg;
 };
 
 struct RegionState {
@@ -65,6 +73,12 @@ struct RegionState {
 bool all_finite(const CellState& cell) {
     for (double bin_kg : cell.bin_remaining_kg) {
         if (!std::isfinite(bin_kg)) return false;
+    }
+    for (double class_kg : cell.class_remaining_kg) {
+        if (!std::isfinite(class_kg)) return false;
+    }
+    for (double class_kg : cell.class_dissolved_kg) {
+        if (!std::isfinite(class_kg)) return false;
     }
     return std::isfinite(cell.temperature_k) && std::isfinite(cell.liquid_saturation) &&
            std::isfinite(cell.retained_water_kg) && std::isfinite(cell.dissolved_solids_kg) &&
@@ -129,6 +143,9 @@ public:
 };
 
 bool all_finite(const ShotState& state) {
+    for (double class_kg : state.class_in_cup_kg) {
+        if (!std::isfinite(class_kg)) return false;
+    }
     return std::isfinite(state.time_s) && std::isfinite(state.puck_temperature_k) &&
            std::isfinite(state.permeability_m2) && std::isfinite(state.liquid_saturation) &&
            std::isfinite(state.remaining_extractable_solids_kg) &&
@@ -189,6 +206,13 @@ ShotState interpolate_state(const ShotState& lower, const ShotState& upper, doub
     state.retained_water_kg = interpolate(lower.retained_water_kg, upper.retained_water_kg);
     state.dissolved_solids_in_cup_kg =
         interpolate(lower.dissolved_solids_in_cup_kg, upper.dissolved_solids_in_cup_kg);
+    if (!lower.class_in_cup_kg.empty()) {
+        state.class_in_cup_kg.resize(lower.class_in_cup_kg.size());
+        for (std::size_t k = 0; k < lower.class_in_cup_kg.size(); ++k) {
+            state.class_in_cup_kg[k] =
+                interpolate(lower.class_in_cup_kg[k], upper.class_in_cup_kg[k]);
+        }
+    }
     return state;
 }
 
@@ -228,6 +252,9 @@ ShotState aggregate_state(const std::vector<RegionState>& regions, const std::ve
     double pore_capacity_sum = 0.0;
     double weighted_saturation = 0.0;
     double weighted_permeability = 0.0;
+    if (!regions.front().shot.class_in_cup_kg.empty()) {
+        aggregate.class_in_cup_kg.assign(regions.front().shot.class_in_cup_kg.size(), 0.0);
+    }
     for (std::size_t i = 0; i < regions.size(); ++i) {
         const ShotState& state = regions[i].shot;
         const Derived& region = derived[i];
@@ -237,6 +264,9 @@ ShotState aggregate_state(const std::vector<RegionState>& regions, const std::ve
         aggregate.cumulative_water_in_kg += state.cumulative_water_in_kg;
         aggregate.retained_water_kg += state.retained_water_kg;
         aggregate.dissolved_solids_in_cup_kg += state.dissolved_solids_in_cup_kg;
+        for (std::size_t k = 0; k < aggregate.class_in_cup_kg.size(); ++k) {
+            aggregate.class_in_cup_kg[k] += state.class_in_cup_kg[k];
+        }
 
         const double thermal_capacity =
             recipe.dose_kg * recipe.parallel_regions[i].area_fraction *
@@ -294,6 +324,9 @@ std::vector<RegionState> initialize_regions(const Recipe& recipe,
                                              coeff.extractable_solids_fraction;
         regions[i].shot.puck_temperature_k = coeff.initial_puck_temperature_k;
         regions[i].shot.remaining_extractable_solids_kg = region_extractable_kg;
+        if (recipe.bean.has_value()) {
+            regions[i].shot.class_in_cup_kg.assign(kSoluteClassCount, 0.0);
+        }
         regions[i].cells.assign(cell_count, CellState{});
         for (CellState& cell : regions[i].cells) {
             cell.temperature_k = coeff.initial_puck_temperature_k;
@@ -311,6 +344,19 @@ std::vector<RegionState> initialize_regions(const Recipe& recipe,
                     cell.bin_remaining_kg.push_back(cell.remaining_extractable_solids_kg *
                                                     bin.mass_fraction);
                 }
+            }
+            if (recipe.bean.has_value()) {
+                // The same split, along a second and independent axis: solute
+                // class rather than particle size. BeanProfile::validate()
+                // holds the fractions to a sum of 1, so the classes sum to the
+                // cell's share exactly and the scalar total is untouched at
+                // t = 0 -- exactly as the bins above are.
+                cell.class_remaining_kg.reserve(kSoluteClassCount);
+                for (const SoluteClassShare& share : recipe.bean->classes) {
+                    cell.class_remaining_kg.push_back(cell.remaining_extractable_solids_kg *
+                                                      share.mass_fraction);
+                }
+                cell.class_dissolved_kg.assign(kSoluteClassCount, 0.0);
             }
         }
     }
@@ -396,6 +442,7 @@ bool advance_regions(std::vector<RegionState>& regions, const std::vector<Derive
                      ShotResult& result, WarningLog& warn, ShotDiagnostics& diag,
                      TerminationReason& termination) {
     bool saturation_invalid = false;
+    int flavor_clamp_count = 0;
     for (std::size_t i = 0; i < regions.size(); ++i) {
         RegionState& region = regions[i];
         ShotState& state = region.shot;
@@ -417,11 +464,18 @@ bool advance_regions(std::vector<RegionState>& regions, const std::vector<Derive
         double inflow_mass_kg = water_in_kg;
         double inflow_solids_kg = 0.0;
         double inflow_temperature_k = boundaries.inlet_temperature_k;
+        // Sensory overlay: the class breakdown of inflow_solids_kg, carried down
+        // the column beside it. Stays empty without a bean.
+        std::vector<double> inflow_class_kg;
+        if (recipe.bean.has_value()) inflow_class_kg.assign(kSoluteClassCount, 0.0);
 
         for (std::size_t c = 0; c < region.cells.size(); ++c) {
             CellState& cell = region.cells[c];
             cell.retained_water_kg += inflow_mass_kg;
             cell.dissolved_solids_kg += inflow_solids_kg;
+            for (std::size_t k = 0; k < cell.class_dissolved_kg.size(); ++k) {
+                cell.class_dissolved_kg[k] += inflow_class_kg[k];
+            }
 
             const double thermal_capacity_j_k =
                 cell_dose_kg * coeff.coffee_heat_capacity_j_kg_k +
@@ -476,9 +530,65 @@ bool advance_regions(std::vector<RegionState>& regions, const std::vector<Derive
                 }
                 cell.remaining_extractable_solids_kg = remaining_total_kg;
             }
+            if (!cell.class_remaining_kg.empty()) {
+                // The sensory overlay. It reads extracted_kg and writes only the
+                // class pools: nothing below observes them, so the lumped
+                // arithmetic above is the authority and stays untouched.
+                //
+                // Each class takes a share of the mass the solver already
+                // extracted, in proportion to how much of it is left times how
+                // readily it leaves. The shares sum to extracted_kg by
+                // construction rather than by a corrective renormalisation, so
+                // total dissolved solids cannot drift. Deliberately no second
+                // call to extraction_rate_coefficient(): only the ratio between
+                // classes matters, which also means the scalar and PSD branches
+                // above need no separate treatment here.
+                double propensity_sum = 0.0;
+                std::array<double, kSoluteClassCount> propensity{};
+                for (std::size_t k = 0; k < kSoluteClassCount; ++k) {
+                    propensity[k] =
+                        recipe.bean->classes[k].relative_rate * cell.class_remaining_kg[k];
+                    propensity_sum += propensity[k];
+                }
+                if (propensity_sum > 0.0) {
+                    double placed_kg = 0.0;
+                    for (std::size_t k = 0; k < kSoluteClassCount; ++k) {
+                        double take_kg = extracted_kg * propensity[k] / propensity_sum;
+                        if (take_kg > cell.class_remaining_kg[k]) {
+                            take_kg = cell.class_remaining_kg[k];
+                            ++flavor_clamp_count;
+                        }
+                        cell.class_remaining_kg[k] -= take_kg;
+                        cell.class_dissolved_kg[k] += take_kg;
+                        placed_kg += take_kg;
+                    }
+                    // A class that hit its floor leaves a shortfall. Spread it
+                    // over the classes that still have mass so the overlay keeps
+                    // accounting for exactly extracted_kg; if none do, the
+                    // residual is reported rather than silently dropped.
+                    double shortfall_kg = extracted_kg - placed_kg;
+                    if (shortfall_kg > 0.0) {
+                        double available_kg = 0.0;
+                        for (double remaining_kg : cell.class_remaining_kg) {
+                            available_kg += remaining_kg;
+                        }
+                        if (available_kg > 0.0) {
+                            const double fill = std::min(shortfall_kg / available_kg, 1.0);
+                            for (std::size_t k = 0; k < kSoluteClassCount; ++k) {
+                                const double extra_kg = cell.class_remaining_kg[k] * fill;
+                                cell.class_remaining_kg[k] -= extra_kg;
+                                cell.class_dissolved_kg[k] += extra_kg;
+                            }
+                        }
+                    }
+                }
+            }
             cell.dissolved_solids_kg += extracted_kg;
             cell.retained_water_kg += extracted_kg;
 
+            // Read only, for the overlay below: which fraction of the pore
+            // solids the existing transport block is about to move.
+            const double solids_before_out_kg = cell.dissolved_solids_kg;
             const double capacity_kg = std::max(d.cell_pore_capacity_kg[c], kMassEpsilon);
             double out_kg = std::max(cell.retained_water_kg - capacity_kg, 0.0);
             out_kg = std::min(out_kg, cell.retained_water_kg);
@@ -490,6 +600,18 @@ bool advance_regions(std::vector<RegionState>& regions, const std::vector<Derive
                 solids_out_kg = std::min(out_kg * c_pore, cell.dissolved_solids_kg);
                 cell.dissolved_solids_kg -= solids_out_kg;
                 cell.retained_water_kg -= out_kg;
+            }
+            if (!cell.class_dissolved_kg.empty()) {
+                // The tracer travels with the pore liquid at exactly the
+                // fraction of solids the solver actually moved, so the overlay
+                // invents no second transport rule of its own.
+                const double moved_fraction =
+                    solids_before_out_kg > 0.0 ? solids_out_kg / solids_before_out_kg : 0.0;
+                for (std::size_t k = 0; k < cell.class_dissolved_kg.size(); ++k) {
+                    const double moved_kg = cell.class_dissolved_kg[k] * moved_fraction;
+                    cell.class_dissolved_kg[k] -= moved_kg;
+                    inflow_class_kg[k] = moved_kg;
+                }
             }
 
             cell.liquid_saturation = cell.retained_water_kg / capacity_kg;
@@ -516,6 +638,9 @@ bool advance_regions(std::vector<RegionState>& regions, const std::vector<Derive
         // Whatever the last cell released has left the puck.
         state.beverage_mass_kg += inflow_mass_kg;
         state.dissolved_solids_in_cup_kg += inflow_solids_kg;
+        for (std::size_t k = 0; k < state.class_in_cup_kg.size(); ++k) {
+            state.class_in_cup_kg[k] += inflow_class_kg[k];
+        }
         roll_up(region, d, region_dose_kg, coeff);
     }
     if (saturation_invalid) return false;
@@ -524,12 +649,40 @@ bool advance_regions(std::vector<RegionState>& regions, const std::vector<Derive
         region.shot.time_s = static_cast<double>(step + 1) * dt;
     }
     diag.step_count = step + 1;
+    if (result.flavor.has_value()) {
+        result.flavor->summary.class_clamp_count += flavor_clamp_count;
+    }
     return true;
+}
+
+// The flavour view of one cup state: what fraction of the solids in the cup
+// belongs to each solute class, and what that composition tastes like at this
+// strength. Pure post-processing -- it reads the cup and writes nothing back.
+FlavorSample make_flavor_sample(const ShotState& state, const BeanProfile& bean,
+                                double tds_fraction) {
+    FlavorSample sample;
+    sample.time_s = state.time_s;
+    double total_kg = 0.0;
+    for (double class_kg : state.class_in_cup_kg) total_kg += class_kg;
+    if (total_kg > kMassEpsilon) {
+        for (std::size_t k = 0; k < kSoluteClassCount; ++k) {
+            sample.composition[k] = state.class_in_cup_kg[k] / total_kg;
+        }
+        sample.intensity = axis_intensities(sample.composition, bean.axis_weights, tds_fraction);
+    }
+    // Before the first drops there is nothing in the cup: composition and every
+    // intensity stay zero rather than reporting the flavour of no coffee.
+    return sample;
 }
 
 void append_sample(ShotResult& result, const ShotState& state, const Boundaries& boundaries,
                    double flow_m3_s, const Recipe& recipe) {
-    result.samples.push_back(make_sample(state, boundaries, flow_m3_s, recipe));
+    const ShotSample sample = make_sample(state, boundaries, flow_m3_s, recipe);
+    if (result.flavor.has_value() && recipe.bean.has_value()) {
+        result.flavor->series.push_back(
+            make_flavor_sample(state, *recipe.bean, sample.tds_fraction));
+    }
+    result.samples.push_back(sample);
 }
 
 void finalize_result(ShotResult& result, std::vector<RegionState>& regions,
@@ -610,6 +763,22 @@ void finalize_result(ShotResult& result, std::vector<RegionState>& regions,
         summary.warning_count = static_cast<int>(result.warnings.size());
     }
 
+    if (result.flavor.has_value() && recipe.bean.has_value()) {
+        const FlavorSample final_sample =
+            make_flavor_sample(final_state, *recipe.bean, summary.tds_fraction);
+        const int clamp_count = result.flavor->summary.class_clamp_count;
+        result.flavor->summary = score_against_target(final_sample.composition,
+                                                      final_sample.intensity, recipe.bean->target);
+        result.flavor->summary.class_clamp_count = clamp_count;
+        // The overlay's own mass balance: the class pools must account for the
+        // solids in the cup and nothing else. Reported rather than asserted, in
+        // the spirit of the residuals above.
+        double class_total_kg = 0.0;
+        for (double class_kg : final_state.class_in_cup_kg) class_total_kg += class_kg;
+        result.flavor->summary.composition_residual =
+            class_total_kg - final_state.dissolved_solids_in_cup_kg;
+    }
+
     result.manifest.solver_version = std::string(version::kSolver);
     result.manifest.result_schema_version = std::string(version::kResultSchema);
     result.manifest.coefficient_id = coeff.id;
@@ -634,6 +803,16 @@ ShotResult Simulator::run(const Recipe& recipe, const ModelCoefficients& coeff,
 
     ShotResult result;
     WarningLog warn;
+    if (recipe.bean.has_value()) {
+        // Created up front so the step loop and the sample writer can fill it;
+        // stays disengaged for every recipe without a bean, which is what keeps
+        // the result JSON, the artifacts and the hashes exactly as they were.
+        FlavorResult flavor;
+        flavor.bean_id = recipe.bean->id;
+        flavor.bean_version = recipe.bean->version;
+        flavor.flavor_model_version = std::string(version::kFlavorModel);
+        result.flavor = flavor;
+    }
     std::vector<RegionState> regions = initialize_regions(recipe, coeff);
     const double initial_extractable_kg = recipe.dose_kg * coeff.extractable_solids_fraction;
 

@@ -8,7 +8,7 @@
     "limitations": [
       "No measured shot has been fitted yet: treat every value here as a placeholder.",
       "kozeny_constant and extraction_rate_ref_s are the two dominant knobs; fit them first.",
-      "Estimated TDS and extraction yield are engineering outputs, not flavor scores."
+      "Estimated TDS and extraction yield are engineering outputs, not flavor scores. The sensory overlay does not use these coefficients and is not fitted against them."
     ],
     "notes_on_kozeny_constant": [
       "The textbook Kozeny-Carman shape constant is about 180. This file uses 4.0e6.",

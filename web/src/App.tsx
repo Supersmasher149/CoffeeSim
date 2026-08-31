@@ -8,6 +8,7 @@ import { ReferenceShotsPanel } from "./features/references/ReferenceShotsPanel";
 import { ChartStack } from "./features/shot/ChartStack";
 import { ControlRail } from "./features/shot/ControlRail";
 import { DiagnosticsDrawer } from "./features/shot/DiagnosticsDrawer";
+import { FlavorPanel } from "./features/shot/FlavorPanel";
 import { MetricStrip } from "./features/shot/MetricStrip";
 import { PuckView } from "./features/shot/PuckView";
 import { SweepPanel } from "./features/sweeps/SweepPanel";
@@ -192,6 +193,9 @@ export function App() {
         {active ? (
           <>
             <MetricStrip result={active} />
+            {/* Only when the run named a bean; absent otherwise, exactly as the
+                result JSON is. */}
+            {active.flavor && <FlavorPanel flavor={active.flavor} />}
             <PuckView
               result={active}
               // Audit P7, issue #22: use the recipe that produced `active`,

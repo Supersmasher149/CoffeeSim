@@ -45,6 +45,10 @@ namespace espressolab::cli_workflows {
 struct SimulateRequest {
     std::string recipe_path;
     std::string coefficients_path;  // empty => default coefficients
+    // empty => whatever bean the recipe itself carries, if any. A supplied path
+    // replaces it, so one recipe can be pulled against the whole catalogue
+    // without editing the document.
+    std::string bean_path;
     std::optional<double> dt_s;
     std::optional<double> sample_interval_s;
     std::string out_dir;  // empty => artifacts are not written

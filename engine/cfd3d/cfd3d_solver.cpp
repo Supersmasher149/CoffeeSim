@@ -1605,7 +1605,7 @@ Cfd3dResult Cfd3dSolver::run(const Recipe& recipe, const ModelCoefficients& coef
                 extraction_rate_coefficient(
                     ShotState{time_s, updated_temperature, 0.0, state.saturation[node],
                               state.extractable_solids_kg[node], state.dissolved_solids_kg[node], 0.0,
-                              0.0, state.retained_water_kg[node], 0.0},
+                              0.0, state.retained_water_kg[node], 0.0, {}},
                     recipe, coeff,
                     std::max(downward_flux[node], 0.0) /
                         std::max(geometry.aggregate_area_xy_m2[node % active_count], kMassEpsilon) *

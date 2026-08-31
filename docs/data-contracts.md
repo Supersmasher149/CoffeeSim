@@ -228,6 +228,67 @@ recipe requires a derived d32 in 150–800 µm, and a fine enough burr gap falls
 below it. That is intended — the shot correlations do not cover that bed — and
 the CLI reports it rather than deferring the failure.
 
+## Reproducibility is per-toolchain
+
+`recipe_hash` and `coefficient_hash` are digests of JSON documents serialized at
+fixed precision, so they are identical everywhere. `result_hash` is not: it
+covers the ordered sample series at 17 significant digits, and the last ulp of
+the solver's output depends on the platform's libm — `std::exp` in
+`temperature_factor()`, `std::pow` in `grind_factor()` and the Kozeny-Carman
+permeability are not bit-identical across implementations.
+
+Measured on the same commit, the baseline shot hashes
+`ff604b486f72...` on Linux x86_64 and `80156b2ee118...` on macOS arm64, while
+agreeing on beverage mass, TDS and extraction yield to ten significant figures
+and on shot time and sample count exactly. (Termination is robust because the
+mass-target crossing clears its threshold by ~2e-5 relative, some ten orders
+above floating-point noise.)
+
+What this means in practice:
+
+- A `result_hash` identifies a run **within one build**. It is what
+  `scripts/demo.sh` checks, and what makes a rerun on your machine comparable
+  with your earlier run.
+- It is **not** a cross-platform checksum, and a test must never pin a literal
+  one — that asserts a toolchain, not a contract. Pin the physical outputs to a
+  tight tolerance instead, and assert the hash only for determinism.
+- Comparing runs across machines means comparing the physical quantities, or
+  rebuilding both on the same toolchain.
+
+Making the hash portable would mean giving up the platform libm for the
+transcendentals. That is a deliberate, separate change nobody has asked for.
+
+## Beans and the sensory overlay
+
+A recipe may carry an optional `bean` object (`schemas/bean.schema.json`), the
+same shape as the standalone documents in `assets/beans/`. `espressolab_core_types`
+owns `BeanProfile`; `espressolab_models` owns the correlations.
+
+Three rules govern it:
+
+1. **It owns no physical quantity.** The overlay divides the solids the solver
+   already extracted. Mass, flow, TDS, extraction yield, every sample and every
+   region summary are bit-identical with and without a bean. A field that would
+   change a physical number does not belong in a bean document.
+2. **Absent means absent.** `dump_recipe_json()` omits `bean` entirely when there
+   is none, and `dump_result_json()`/`dump_summary_json()` omit `flavor`, so every
+   recipe and result written before the overlay keeps its bytes and its hash. The
+   flavour time series is its own `flavor.csv`; `samples.csv` has a fixed header
+   and is never extended.
+3. **`bean.description` is metadata, not identity.** `recipe_hash()` erases it
+   before hashing, exactly as `coefficient_hash()` erases `provenance`. Editing a
+   roaster's cupping note must not change a run's identity or its artifact
+   directory. The rest of the bean *is* hashed, because it changes the reported
+   flavour.
+
+Attaching a bean therefore changes `recipe_hash` and `result_hash` — the document
+differs and the run reports something new — while leaving every beanless run
+untouched. Bean values are never calibration targets.
+
+Note that `schemas/shot-result.schema.json` has no `additionalProperties: false`,
+which is what makes the additive `flavor` key backward-compatible for existing
+consumers. Adding that keyword later would break them.
+
 ## Contract Change Procedure
 
 1. Update the C++ owner and define validation, default, and compatibility rules.

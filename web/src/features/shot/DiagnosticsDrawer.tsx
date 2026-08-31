@@ -71,9 +71,11 @@ export function DiagnosticsDrawer({ result }: { result: ShotResult }) {
         <p className="note">
           One-dimensional lumped puck: uniform flow, one thermal mass, no channelling and no
           spatial temperature or concentration field. Estimated TDS and extraction yield are
-          engineering outputs, not flavour scores — taste depends on compound composition, roast,
-          water chemistry and distribution that this model does not resolve (8.5). The coefficient
-          set above is uncalibrated until a measured shot has been fitted.
+          engineering outputs, not flavour scores — water chemistry and distribution are not
+          resolved (8.5). When a bean is attached, the sensory panel adds a heuristic estimate
+          computed from authored solute-class priors that have never been compared with a tasting
+          panel; it changes no quantity above. The coefficient set above is uncalibrated until a
+          measured shot has been fitted.
         </p>
       </div>
     </details>

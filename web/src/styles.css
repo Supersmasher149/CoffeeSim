@@ -297,3 +297,26 @@ tbody tr { cursor: pointer; }
 .grind-psd-bar { background: rgba(127, 127, 127, 0.18); border-radius: 2px; height: 0.6rem; }
 .grind-psd-bar > span { display: block; height: 100%; border-radius: 2px; background: currentColor; opacity: 0.55; }
 .grind-psd-value { text-align: right; opacity: 0.75; }
+
+/* Sensory overlay (FlavorPanel). Deliberately quiet: these are heuristic
+   estimates and should not out-shout the measured metric strip. */
+.flavor-heuristic { color: var(--muted); font-weight: 400; margin-left: 6px; text-transform: none; }
+.flavor-headline { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 10px; }
+.flavor-score { font-size: 22px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.flavor-headline .unit { font-size: 11px; color: var(--muted); margin-left: 4px; }
+.flavor-verdict { font-size: 12px; color: var(--accent-2); }
+.flavor-dominant { font-size: 11px; color: var(--muted); }
+.flavor-axes { display: grid; gap: 4px; margin-bottom: 10px; }
+.flavor-axis { display: grid; grid-template-columns: 84px 1fr 78px; align-items: center; gap: 8px; }
+.flavor-axis-name { font-size: 11px; color: var(--muted); text-transform: capitalize; }
+.flavor-track { position: relative; height: 10px; background: var(--panel-2); border-radius: 5px; }
+.flavor-fill { height: 100%; background: var(--accent); border-radius: 5px; }
+.flavor-target { position: absolute; top: -2px; width: 2px; height: 14px; background: var(--fg, #e8ded6); opacity: 0.75; }
+.flavor-axis-value { font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.flavor-axis-dev { color: var(--muted); margin-left: 6px; }
+.flavor-composition { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.flavor-chip { font-size: 10px; color: var(--muted); background: var(--panel-2); border: 1px solid var(--line); border-radius: 3px; padding: 2px 6px; }
+.flavor-caveat { font-size: 10.5px; line-height: 1.5; color: var(--muted); margin: 0 0 8px; }
+.bean-readout { font-size: 12px; }
+.bean-name { font-weight: 600; margin-bottom: 2px; }
+.bean-classes { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0 6px; }

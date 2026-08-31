@@ -1,4 +1,11 @@
-import type { GrindBin, Recipe, RecipeCatalogueEntry, ValidationIssue } from "../../api/types";
+import { SOLUTE_CLASSES } from "../../api/types";
+import type {
+  BeanProfile,
+  GrindBin,
+  Recipe,
+  RecipeCatalogueEntry,
+  ValidationIssue,
+} from "../../api/types";
 import { inputRanges } from "../../state/workspace";
 import { ProfileEditor } from "./ProfileEditor";
 
@@ -72,6 +79,34 @@ function NumberField({ label, value, range, step = 1, path, issues, onChange }: 
   );
 }
 
+// Read-only, like GrindDistributionReadout above. There is deliberately no bean
+// editor: these are authored priors, not brew controls, and offering sliders
+// over them would suggest a precision that does not exist. Bean documents are
+// edited by hand under assets/beans/ or supplied with `simulate --bean`.
+function BeanReadout({ bean }: { bean: BeanProfile }) {
+  const description = bean.description;
+  return (
+    <div className="bean-readout">
+      <div className="bean-name">{description?.display_name ?? bean.id}</div>
+      {description?.roaster && <div className="note">{description.roaster}</div>}
+      {description?.notes && description.notes.length > 0 && (
+        <div className="note">{description.notes.join(" · ")}</div>
+      )}
+      <div className="bean-classes">
+        {SOLUTE_CLASSES.map((klass) => (
+          <span key={klass} className="flavor-chip">
+            {klass} <b>{(bean.classes[klass].mass_fraction * 100).toFixed(0)}%</b>
+          </span>
+        ))}
+      </div>
+      <p className="note">
+        Authored priors, never validated against tasting. Changes no mass, TDS or
+        yield — only the sensory estimate below the metric strip.
+      </p>
+    </div>
+  );
+}
+
 export function ControlRail(props: Props) {
   const { recipe, onChange, issues } = props;
   const puck = (patch: Partial<Recipe["puck"]>) =>
@@ -115,6 +150,13 @@ export function ControlRail(props: Props) {
           label="Depth (mm)" value={recipe.puck.depth_mm} range={inputRanges.depth_mm} step={0.5}
           path="recipe.puck.depth_mm" issues={issues} onChange={(v) => puck({ depth_mm: v })} />
       </div>
+
+      {recipe.bean && (
+        <div className="section">
+          <h2>Bean</h2>
+          <BeanReadout bean={recipe.bean} />
+        </div>
+      )}
 
       <div className="section">
         <h2>Grind</h2>

@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://espressolab.local/schemas/bean-1.0.json",
+  "title": "EspressoLab bean profile",
+  "description": "A coffee's solute-class composition and its declared sensory target, for the flavour overlay. Drives no physical quantity: a shot's mass, TDS and extraction yield are identical with and without one. Every value is an authored prior, not a measurement -- see assets/beans/README.md.",
+  "$comment": "Kept synchronized with parse_bean()/bean_to_json() in engine/artifact_io/json_io.cpp (structure and required-ness) and BeanProfile::validate() in engine/espresso_core/bean.cpp (ranges, and the mass-fraction sum this schema cannot express). Appears inline as the recipe's optional `bean` key and standalone under assets/beans/.",
+  "type": "object",
+  "required": ["id", "classes", "target"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "id": { "type": "string", "minLength": 1 },
+    "version": { "type": "string" },
+    "classes": {
+      "type": "object",
+      "description": "All six classes are required. Their mass fractions must sum to 1, which BeanProfile::validate() enforces and this schema cannot.",
+      "required": ["acids", "sugars", "maillard", "lipids", "bitter", "polyphenols"],
+      "additionalProperties": false,
+      "properties": {
+        "acids": { "$ref": "#/$defs/solute_class" },
+        "sugars": { "$ref": "#/$defs/solute_class" },
+        "maillard": { "$ref": "#/$defs/solute_class" },
+        "lipids": { "$ref": "#/$defs/solute_class" },
+        "bitter": { "$ref": "#/$defs/solute_class" },
+        "polyphenols": { "$ref": "#/$defs/solute_class" }
+      }
+    },
+    "axis_weights": {
+      "type": "object",
+      "description": "Optional per-axis weights over the solute classes. Absent axes and absent classes keep the shared model defaults. Only each row's shape matters; the mapping normalises by the row mean.",
+      "additionalProperties": false,
+      "properties": {
+        "fruit": { "$ref": "#/$defs/weight_row" },
+        "acidity": { "$ref": "#/$defs/weight_row" },
+        "sweetness": { "$ref": "#/$defs/weight_row" },
+        "chocolate": { "$ref": "#/$defs/weight_row" },
+        "body": { "$ref": "#/$defs/weight_row" },
+        "bitterness": { "$ref": "#/$defs/weight_row" },
+        "astringency": { "$ref": "#/$defs/weight_row" }
+      }
+    },
+    "target": {
+      "type": "object",
+      "description": "All seven axes are required. This is what makes the verdict bean-relative rather than a judgement against a universal ideal.",
+      "required": ["fruit", "acidity", "sweetness", "chocolate", "body", "bitterness", "astringency"],
+      "additionalProperties": false,
+      "properties": {
+        "fruit": { "$ref": "#/$defs/target_axis" },
+        "acidity": { "$ref": "#/$defs/target_axis" },
+        "sweetness": { "$ref": "#/$defs/target_axis" },
+        "chocolate": { "$ref": "#/$defs/target_axis" },
+        "body": { "$ref": "#/$defs/target_axis" },
+        "bitterness": { "$ref": "#/$defs/target_axis" },
+        "astringency": { "$ref": "#/$defs/target_axis" }
+      }
+    },
+    "description": {
+      "type": ["object", "null"],
+      "description": "Descriptive metadata about the values, not a solver input. Erased before recipe_hash() so editing a tasting note cannot change a run's identity.",
+      "additionalProperties": false,
+      "properties": {
+        "roaster": { "type": "string" },
+        "display_name": { "type": "string" },
+        "roast_level": { "type": "string" },
+        "origins": { "type": "array", "items": { "type": "string" } },
+        "notes": { "type": "array", "items": { "type": "string" } },
+        "suggested_ratio": { "type": ["number", "null"] },
+        "source": { "type": "string" },
+        "limitations": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  },
+  "$defs": {
+    "solute_class": {
+      "type": "object",
+      "required": ["mass_fraction"],
+      "additionalProperties": false,
+      "properties": {
+        "mass_fraction": { "type": "number", "minimum": 0, "maximum": 1 },
+        "relative_rate": {
+          "type": "number", "minimum": 0.05, "maximum": 10,
+          "description": "Relative to the maillard class, which is 1.0 by definition. Optional; defaults to the shared model ladder."
+        }
+      }
+    },
+    "weight_row": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "acids": { "type": "number", "minimum": 0, "maximum": 10 },
+        "sugars": { "type": "number", "minimum": 0, "maximum": 10 },
+        "maillard": { "type": "number", "minimum": 0, "maximum": 10 },
+        "lipids": { "type": "number", "minimum": 0, "maximum": 10 },
+        "bitter": { "type": "number", "minimum": 0, "maximum": 10 },
+        "polyphenols": { "type": "number", "minimum": 0, "maximum": 10 }
+      }
+    },
+    "target_axis": {
+      "type": "object",
+      "required": ["intensity"],
+      "additionalProperties": false,
+      "properties": {
+        "intensity": { "type": "number", "minimum": 0, "maximum": 10 },
+        "tolerance": { "type": "number", "minimum": 0.1, "maximum": 10 },
+        "weight": { "type": "number", "minimum": 0, "maximum": 10 }
+      }
+    }
+  }
+}

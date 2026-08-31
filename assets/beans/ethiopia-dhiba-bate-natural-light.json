@@ -1,0 +1,35 @@
+{
+  "schema_version": "1.0",
+  "id": "ethiopia-dhiba-bate-natural-light",
+  "version": "1.0.0",
+  "description": {
+    "roaster": "unspecified",
+    "display_name": "Ethiopia Dhiba Bate, natural (light)",
+    "roast_level": "light",
+    "origins": ["Dhiba Bate, Ethiopia (natural sundried)"],
+    "notes": ["blueberry", "stone fruit", "floral", "tea-like"],
+    "suggested_ratio": 16.0,
+    "source": "Authored contrast profile: the same natural Ethiopian component Hologram uses, taken on its own at a lighter roast.",
+    "limitations": [
+      "Authored priors, not measurements. Present so the catalogue spans a range wide enough for axis differences to be visible at all.",
+      "A light roast retains more chlorogenic acids and unreacted sugars and builds fewer melanoidins. That ordering is well established; these values are chosen to express it, not derived from an assay."
+    ]
+  },
+  "classes": {
+    "acids":       { "mass_fraction": 0.22 },
+    "sugars":      { "mass_fraction": 0.33 },
+    "maillard":    { "mass_fraction": 0.24 },
+    "lipids":      { "mass_fraction": 0.06 },
+    "bitter":      { "mass_fraction": 0.07 },
+    "polyphenols": { "mass_fraction": 0.08 }
+  },
+  "target": {
+    "fruit":       { "intensity": 8.5 },
+    "acidity":     { "intensity": 7.5 },
+    "sweetness":   { "intensity": 6.0 },
+    "chocolate":   { "intensity": 2.0 },
+    "body":        { "intensity": 4.0 },
+    "bitterness":  { "intensity": 2.5, "weight": 0.8 },
+    "astringency": { "intensity": 2.5, "weight": 0.8 }
+  }
+}

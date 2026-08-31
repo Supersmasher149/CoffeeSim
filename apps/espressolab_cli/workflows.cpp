@@ -94,6 +94,14 @@ Cfd3dMaterialField load_cfd3d_material(const std::filesystem::path& path, const 
 SimulateOutcome run_simulate(const SimulateRequest& request, const CancellationCallback& is_cancelled) {
     SimulateOutcome outcome;
     outcome.recipe = artifact_io::load_recipe_file(request.recipe_path);
+    if (!request.bean_path.empty()) {
+        outcome.recipe.bean = artifact_io::load_bean_file(request.bean_path);
+        // Validated here rather than at load: a bean is only well-formed in the
+        // context of the recipe it is attached to, and Recipe::validate() is
+        // what reports it under recipe.bean.* like every other input.
+        const ValidationResult validation = outcome.recipe.validate();
+        if (!validation.ok()) throw InvalidInputError(validation);
+    }
     if (!request.coefficients_path.empty()) {
         outcome.coefficients = artifact_io::load_coefficients_file(request.coefficients_path);
     }

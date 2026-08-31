@@ -19,6 +19,10 @@ struct LoadError : std::runtime_error {
 
 Recipe load_recipe_json(const std::string& json_text);
 Recipe load_recipe_file(const std::filesystem::path& file);
+// A standalone bean profile from assets/beans/, the same shape as a recipe's
+// inline `bean` object. Splicing one into a recipe is what --bean does.
+BeanProfile load_bean_json(const std::string& json_text);
+BeanProfile load_bean_file(const std::filesystem::path& file);
 std::string dump_recipe_json(const Recipe& recipe, int indent = 2);
 
 ModelCoefficients load_coefficients_json(const std::string& json_text);
@@ -29,6 +33,9 @@ std::string dump_summary_json(const ShotResult& result, int indent = 2);
 std::string dump_manifest_json(const ShotResult& result, int indent = 2);
 std::string dump_result_json(const ShotResult& result, int indent = 2);
 std::string dump_samples_csv(const ShotResult& result);
+// The sensory overlay time series. Written as its own artifact, and only for a
+// run that carried a bean, so samples.csv stays byte-stable for every run.
+std::string dump_flavor_series_csv(const ShotResult& result);
 
 // Section 10.4: outputs/shots/<run-id>/{recipe,coefficients,summary,manifest}.json + samples.csv
 void write_shot_artifacts(const std::filesystem::path& directory, const Recipe& recipe,

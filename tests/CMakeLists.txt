@@ -8,6 +8,8 @@ add_executable(espressolab_tests
   unit/test_water_properties.cpp
   unit/test_permeability.cpp
   unit/test_grind.cpp
+  unit/test_bean.cpp
+  unit/test_flavor.cpp
   unit/test_grinder.cpp
   unit/test_flow.cpp
   unit/test_heat.cpp
@@ -20,6 +22,7 @@ add_executable(espressolab_tests
   unit/test_tui_forms.cpp
   unit/test_ring_buffer.cpp
   integration/test_shots.cpp
+  integration/test_flavor_shots.cpp
   integration/test_invariants.cpp
   integration/test_convergence.cpp
   integration/test_axial_cells.cpp

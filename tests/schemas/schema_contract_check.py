@@ -21,6 +21,24 @@ import tempfile
 from pathlib import Path
 
 import jsonschema
+import referencing
+import referencing.jsonschema
+
+
+# The shipped schemas cross-reference each other by $id (recipe.schema.json's
+# `bean` is a $ref to bean-1.0.json), so a validator has to be handed the whole
+# set. Validating against a bare schema silently fails to resolve those refs.
+def schema_registry(schema_dir: Path):
+    registry = referencing.Registry()
+    for path in sorted(schema_dir.glob("*.json")):
+        document = load_schema(path)
+        if "$id" not in document:
+            continue
+        resource = referencing.Resource.from_contents(
+            document, default_specification=referencing.jsonschema.DRAFT202012
+        )
+        registry = resource @ registry
+    return registry
 
 
 def load_schema(path: Path):
@@ -28,9 +46,12 @@ def load_schema(path: Path):
         return json.load(f)
 
 
-def schema_accepts(schema, instance) -> tuple[bool, str]:
+def schema_accepts(schema, instance, registry=None) -> tuple[bool, str]:
     try:
-        jsonschema.validate(instance=instance, schema=schema)
+        validator = jsonschema.Draft202012Validator(
+            schema, registry=registry if registry is not None else referencing.Registry()
+        )
+        validator.validate(instance)
         return True, ""
     except jsonschema.ValidationError as e:
         return False, e.message
@@ -57,6 +78,7 @@ def main():
     repo_root = Path(__file__).resolve().parents[2]
     cli = sys.argv[1] if len(sys.argv) > 1 else default_binary(repo_root)
 
+    registry = schema_registry(repo_root / "schemas")
     recipe_schema = load_schema(repo_root / "schemas" / "recipe.schema.json")
     coeff_schema = load_schema(repo_root / "schemas" / "coefficients.schema.json")
     baseline_recipe = json.loads(
@@ -72,9 +94,9 @@ def main():
     def check(name, recipe, coefficients, expect_schema, expect_cli, note=""):
         nonlocal checked
         checked += 1
-        schema_ok, schema_msg = schema_accepts(recipe_schema, recipe)
+        schema_ok, schema_msg = schema_accepts(recipe_schema, recipe, registry)
         if coefficients is not None:
-            coeff_ok, coeff_msg = schema_accepts(coeff_schema, coefficients)
+            coeff_ok, coeff_msg = schema_accepts(coeff_schema, coefficients, registry)
             schema_ok = schema_ok and coeff_ok
             schema_msg = schema_msg or coeff_msg
         cli_ok, cli_msg = cli_accepts(cli, recipe, coefficients)
@@ -259,6 +281,64 @@ def main():
         expect_schema=True,
         expect_cli=False,
         note="schema cannot express the cross-item sum-to-1 rule; GrindDistribution::validate() enforces it",
+    )
+
+    # --- the flavour overlay's bean profile ---
+    hologram = json.loads(
+        (repo_root / "assets" / "beans" / "counter-culture-hologram.json").read_text()
+    )
+    bean_recipe = copy.deepcopy(baseline_recipe)
+    bean_recipe["bean"] = hologram
+    check(
+        "valid_recipe_with_bean_profile",
+        bean_recipe,
+        default_coeff,
+        expect_schema=True,
+        expect_cli=True,
+        note="optional inline bean; drives no physical quantity",
+    )
+
+    r = copy.deepcopy(bean_recipe)
+    r["bean"]["classes"]["acids"]["mass_fraction"] = 2.0
+    check(
+        "invalid_bean_mass_fraction_out_of_range",
+        r,
+        default_coeff,
+        expect_schema=False,
+        expect_cli=False,
+    )
+
+    r = copy.deepcopy(bean_recipe)
+    del r["bean"]["classes"]["lipids"]
+    check(
+        "invalid_bean_missing_solute_class",
+        r,
+        default_coeff,
+        expect_schema=False,
+        expect_cli=False,
+        note="the six classes are a closed vocabulary; a missing one is an error, not a zero",
+    )
+
+    r = copy.deepcopy(bean_recipe)
+    r["bean"]["classes"]["esters"] = {"mass_fraction": 0.0}
+    check(
+        "invalid_bean_unknown_solute_class",
+        r,
+        default_coeff,
+        expect_schema=False,
+        expect_cli=False,
+        note="schema additionalProperties and the loader's UNKNOWN_SOLUTE_CLASS agree",
+    )
+
+    r = copy.deepcopy(bean_recipe)
+    r["bean"]["classes"]["acids"]["mass_fraction"] = 0.20
+    check(
+        "documented_divergence_bean_mass_fraction_sum",
+        r,
+        default_coeff,
+        expect_schema=True,
+        expect_cli=False,
+        note="schema cannot express the cross-item sum-to-1 rule; BeanProfile::validate() enforces it",
     )
 
     print(f"\n{checked - len(failures)}/{checked} cases matched expectations.")

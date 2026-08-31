@@ -34,7 +34,8 @@ void print_usage() {
     std::cout << R"(espressolab_cli - deterministic espresso extraction simulator
 
 Usage:
-  espressolab_cli simulate --recipe <file> [--coefficients <file>] [--out <dir>]
+  espressolab_cli simulate --recipe <file> [--coefficients <file>] [--bean <file>]
+                          [--out <dir>]
                            [--dt <s>] [--sample-interval <s>] [--quiet]
   espressolab_cli sweep    --spec <file> [--out <dir>] [--quiet]
                            [--workers <n>] [--ring-capacity <n>]
@@ -166,6 +167,27 @@ void print_shot_report(const ShotResult& result) {
               << "  samples         " << result.samples.size() << '\n'
               << "  result hash     " << result.manifest.result_hash << '\n';
 
+    // The sensory overlay, only for a run that named a bean. Labelled as an
+    // estimate every time it is printed: these axes come from authored priors
+    // that have never been checked against tasting (assets/beans/README.md).
+    if (result.flavor.has_value()) {
+        const FlavorSummary& flavor = result.flavor->summary;
+        std::cout << std::fixed << std::setprecision(1);
+        std::cout << "\n  sensory estimate (heuristic, uncalibrated) for "
+                  << result.flavor->bean_id << '\n'
+                  << "    verdict       " << to_string(flavor.verdict) << '\n'
+                  << "    match score   " << flavor.match_score << " / 100 vs the bean's target\n"
+                  << "    furthest off  " << to_string(flavor.dominant_deviation_axis) << '\n';
+        for (std::size_t a = 0; a < kSensoryAxisCount; ++a) {
+            const FlavorAxisScore& axis = flavor.axes[a];
+            std::cout << "    " << std::left << std::setw(14)
+                      << to_string(static_cast<SensoryAxis>(a)) << std::right << std::setw(4)
+                      << axis.intensity << "  target " << std::setw(4) << axis.target
+                      << "  " << std::showpos << axis.deviation << std::noshowpos << '\n';
+        }
+        std::cout << std::defaultfloat << std::setprecision(2);
+    }
+
     // FR-08: clamps and invalid states are never silent.
     for (const auto& w : result.warnings) {
         std::cout << "  warning [" << w.code << "] at " << std::fixed << std::setprecision(2)
@@ -176,7 +198,8 @@ void print_shot_report(const ShotResult& result) {
 
 int command_simulate(int argc, char** argv) {
     if (!reject_unknown_options(argc, argv, 2,
-                                 {"recipe", "coefficients", "out", "dt", "sample-interval", "quiet"},
+                                 {"recipe", "coefficients", "bean", "out", "dt",
+                                  "sample-interval", "quiet"},
                                  "simulate")) {
         return kUsageError;
     }
@@ -190,6 +213,7 @@ int command_simulate(int argc, char** argv) {
     cli_workflows::SimulateRequest request;
     request.recipe_path = flags.at("recipe");
     if (flags.count("coefficients")) request.coefficients_path = flags.at("coefficients");
+    if (flags.count("bean")) request.bean_path = flags.at("bean");
     if (flags.count("dt")) request.dt_s = std::stod(flags.at("dt"));
     if (flags.count("sample-interval")) request.sample_interval_s = std::stod(flags.at("sample-interval"));
     if (flags.count("out")) request.out_dir = flags.at("out");

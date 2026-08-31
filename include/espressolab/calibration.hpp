@@ -11,6 +11,10 @@
 
 // Section 11.3: calibration is an explicit, separate workflow. Nothing here runs
 // as part of a normal simulation, and none of it looks at taste descriptions.
+// That does not change now that a sensory overlay exists: no bean-profile value
+// is exposed through fit-params, and the loss function reads only mass, time,
+// TDS and pressure. Fitting a coefficient against a predicted flavour axis would
+// be fitting against an authored prior.
 namespace espressolab::calibration {
 
 // One point from a real shot. Pressure is optional because most setups can

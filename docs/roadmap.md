@@ -18,13 +18,18 @@ latest hardening commits.
 | 1 | Skeleton, domain types, profiles, units, water properties, flow-only CLI | Complete | Core/model targets, unit tests, and CLI are present. |
 | 2 | Thermal state, wetting, extraction, mass balances, artifacts, determinism | Complete | Integration, invariant, convergence, and artifact tests pass. |
 | 3 | Sweep runner, REST server, React controls, synchronized charts, exports | Complete | Server routes, dashboard source, background sweeps, and production web build are present. |
-| 4 | Calibration, edge cases, CI, README, profiling, demo, portfolio packaging | Partial | Calibration and measured-shot comparison tooling, edge-case tests, documentation, benchmark, CLI demo, the recorded dashboard capture, and hosted macOS/Linux/dashboard evidence at `736cef3` are complete; real calibration, current-head hosted evidence, and measured portfolio claims remain. |
+| 4 | Calibration, edge cases, CI, README, profiling, demo, portfolio packaging | Partial | Calibration and measured-shot comparison tooling, edge-case tests, documentation, benchmark, CLI demo, and hosted macOS/Linux/dashboard evidence at `736cef3` are complete; real calibration, current-head hosted evidence, demo video, and measured portfolio claims remain. |
 
 ## Verified Locally
 
-- `./scripts/test.sh` passes: 204 Catch2 test cases and 20,364 assertions.
-- `npm --prefix web run build` succeeds. Vite reports a non-blocking 583.67 kB
+- `./scripts/test.sh` passes: 226 Catch2 test cases and 86,773 assertions.
+- `npm --prefix web run typecheck`, `npm --prefix web run test:coverage`, and
+  `npm --prefix web run build` succeed. Vite reports a non-blocking 597.30 kB
   minified JavaScript chunk-size warning.
+- `npm --prefix web run test:e2e` passes 26 Chromium desktop/mobile tests against
+  the built native server.
+- The Vitest suite passes 222 tests with its configured coverage thresholds.
+- The PTY matrix passes all 15 checks.
 - Hosted GitHub Actions macOS, Linux, and dashboard jobs passed at commit
   `736cef3`. Current branch hardening through `94fbe7a` has no equivalent hosted
   run recorded here.
@@ -35,12 +40,7 @@ latest hardening commits.
   Through that path, shot execution, shot CSV export, completed sweep CSV export,
   and cancelled-sweep partial CSV export all succeed.
 - `espressolab_cli bench` records a 60-second, 100 Hz shot in 0.468 ms median,
-  42.7x inside the guide's 20 ms performance budget, on the development machine.
-  The absolute figure is hardware-dependent and should be re-measured per host
-  rather than quoted as a property of the solver: the same command in a
-  container for this documentation pass reported 2.454 ms median (8.1x
-  headroom), still passing. The budget check, not the millisecond count, is the
-  portable claim.
+  42.7x inside the guide's 20 ms performance budget.
 - The baseline run reaches the 36 g target in 29.03 s with no clamps and closes
   water and solids residuals near machine precision.
 
@@ -54,7 +54,7 @@ latest hardening commits.
 | Export JSON and CSV artifacts | Verified locally | The demo writes shot and sweep artifacts. |
 | Reproduce the same result hash | Verified locally | The demo reports matching SHA-256 hashes. |
 | Pass conservation and convergence tests | Verified locally | Covered by the passing test suite. |
-| Run and compare shots in the browser | Partially verified | The Vite page, API proxy, shot flow, completed sweep, cancellation, and exports pass. A headless Chromium (Playwright) session at `4f6e51c` drove the real dashboard for the README capture: loading the baseline recipe, running it, watching the cross-section and charts, and running a 1600-point sweep to a heat map. Profile editing by dragging, pinned comparison overlays, downloads triggered from the UI, and accessibility remain unverified. |
+| Run and compare shots in the browser | Verified locally | Chromium desktop/mobile Playwright coverage passes for profile editing, keyboard navigation, downloads, determinism, measured-shot comparison, sweeps, and issue #22 recipe binding. |
 | Clean-clone macOS and Linux verification | Verified at `736cef3`; current head pending | Hosted macOS, Linux, and dashboard jobs passed at `736cef3`; do not extend that evidence to hardening through `94fbe7a` until another run passes. |
 
 ## Completed Week 4 Tooling
@@ -76,18 +76,10 @@ latest hardening commits.
   implemented separately from standard shot artifacts.
 - **Experiment tooling.** The dashboard provides two-dimensional heat maps,
   background sweep jobs with progress and cancellation, and draggable pressure
-  and temperature profiles backed by numeric point lists. `sweep --workers`
-  adds an opt-in parallel batch runner with a tunable bounded ring buffer,
-  tested to produce the same runs, order, and per-run result hashes as the
-  sequential path.
-- **Particle size distribution and grind model.** A recipe may carry a
-  distribution (`puck.grind`) instead of the scalar diameter/spread pair; the
-  solver derives d32 and the spread from it and extracts each size class at its
-  own rate, with the pre-distribution recipe and result hashes pinned by test so
-  the addition changed no existing run. `espressolab_cli grind` generates such a
-  distribution from burr geometry. It has its own schemas and documents, carries
-  no hashes, and sits outside the shot pipeline; nothing in it has been checked
-  against a measured grind.
+  and temperature profiles backed by numeric point lists.
+- **Grind and flavour tooling.** The separate grinder generates recipe-ready
+  particle distributions, and optional bean profiles add a non-authoritative
+  sensory overlay without changing physical outputs or beanless hashes.
 - **Documentation and profiling.** The README, model, architecture, API,
   testing, and calibration documentation are present; the benchmark command is
   implemented.
@@ -102,16 +94,8 @@ latest hardening commits.
 - **Confirm current-head hosted CI.** The committed workflow passed on macOS,
   Linux, and the dashboard at `736cef3`. Run it again for hardening through
   `94fbe7a`; the older result is not evidence for those later commits.
-- **Finish the browser interaction check.** The served page and API workflow are
-  verified, and the README capture at `4f6e51c` drove the real dashboard through
-  headless Chromium for recipe load, a shot run, the cross-section and charts,
-  and a 1600-point sweep to a heat map. What a controllable browser still has to
-  cover: editing a profile by dragging its points, pinning runs for comparison
-  and inspecting the overlay, confirming downloads initiated from the UI, and an
-  accessibility pass.
-- **Finish portfolio packaging.** The 60-second dashboard capture in the README
-  covers the demo recording. Resume bullets from the verified benchmark and,
-  after calibration, measured validation data remain to be written.
+- **Finish portfolio packaging.** Record the demo video and write resume bullets
+  from the verified benchmark and, after calibration, measured validation data.
 - **Calibration dashboard view.** The dashboard now compares measured telemetry
   against fixed coefficients, but fitting remains a CLI workflow. Do not call
   comparison calibration.

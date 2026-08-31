@@ -140,7 +140,10 @@ aggregate, not a per-cell time history.
 The result hash covers canonicalized inputs, solver controls, ordered samples,
 and final region summaries. Changing serialization order or the set of hashed
 fields changes reproducibility identity and must be treated as a deliberate,
-tested contract change.
+tested contract change. Identical inputs reproduce the same hash on the same
+build. The sample series is formatted at 17 significant digits, so the final
+ulp can differ between platform math libraries; the hash is a reproducibility
+identity within one toolchain, not a universal cross-platform checksum.
 
 ## Cartesian 3D CFD
 
@@ -227,36 +230,6 @@ A spec that validates may still produce a distribution a recipe rejects: the
 recipe requires a derived d32 in 150–800 µm, and a fine enough burr gap falls
 below it. That is intended — the shot correlations do not cover that bed — and
 the CLI reports it rather than deferring the failure.
-
-## Reproducibility is per-toolchain
-
-`recipe_hash` and `coefficient_hash` are digests of JSON documents serialized at
-fixed precision, so they are identical everywhere. `result_hash` is not: it
-covers the ordered sample series at 17 significant digits, and the last ulp of
-the solver's output depends on the platform's libm — `std::exp` in
-`temperature_factor()`, `std::pow` in `grind_factor()` and the Kozeny-Carman
-permeability are not bit-identical across implementations.
-
-Measured on the same commit, the baseline shot hashes
-`ff604b486f72...` on Linux x86_64 and `80156b2ee118...` on macOS arm64, while
-agreeing on beverage mass, TDS and extraction yield to ten significant figures
-and on shot time and sample count exactly. (Termination is robust because the
-mass-target crossing clears its threshold by ~2e-5 relative, some ten orders
-above floating-point noise.)
-
-What this means in practice:
-
-- A `result_hash` identifies a run **within one build**. It is what
-  `scripts/demo.sh` checks, and what makes a rerun on your machine comparable
-  with your earlier run.
-- It is **not** a cross-platform checksum, and a test must never pin a literal
-  one — that asserts a toolchain, not a contract. Pin the physical outputs to a
-  tight tolerance instead, and assert the hash only for determinism.
-- Comparing runs across machines means comparing the physical quantities, or
-  rebuilding both on the same toolchain.
-
-Making the hash portable would mean giving up the platform libm for the
-transcendentals. That is a deliberate, separate change nobody has asked for.
 
 ## Beans and the sensory overlay
 

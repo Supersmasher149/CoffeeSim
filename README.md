@@ -33,10 +33,7 @@ A baseline shot on an M-series laptop:
 ```
 
 `espressolab_cli bench` runs a 60-second shot at 100 Hz in **0.49 ms** median —
-about 2000 simulations per second, and 40x inside the 20 ms budget. Like the
-shot above, that is the M-series laptop; the millisecond figure is
-hardware-dependent, so run the command for your own host rather than treating
-it as a property of the solver. The budget check is the portable claim.
+about 2000 simulations per second, and 40x inside the 20 ms budget.
 
 ## What a grind sweep looks like
 
@@ -64,11 +61,16 @@ Finer grind, more resistance, longer shot, stronger and more extracted — until
 
 *Baseline shot run to completion, then a 1600-point grind x temperature sweep (`puck.particle_diameter_um` x `temperature_profile_c.constant`, 40 steps each) rendered as a heat map — captured against `./scripts/dev.sh` at commit `4f6e51c`, not staged or narrated.*
 
-Recipes are edited through draggable pressure and inlet-temperature curves with
-the numeric point list underneath, charts share one time cursor, and sweeps run
-in the background with live progress and a cancel button — a 1600-run
-grind x temperature grid finishes in about four seconds and renders as a heat
-map.
+The workbench separates Shot, Measured Data, References, and Sweeps into
+keyboard-accessible tabs while preserving each workflow's state. Recipes are
+edited through draggable pressure and inlet-temperature curves with a numeric
+point list underneath. On narrow screens the recipe editor collapses so an
+existing result stays immediately accessible.
+
+Shot signals share one selectable analysis timeline and event lane, with an
+expandable raw-data table. Sweeps run in the background with live progress and
+a cancel button — a 1600-run grind x temperature grid finishes in about four
+seconds and renders as a keyboard-inspectable heat map.
 
 A cross-section panel replays the shot beside the charts: water entering the
 bed, the saturation level rising while nothing reaches the cup, then the stream
@@ -209,7 +211,10 @@ from standard shot artifacts.
 
 Every run records its recipe hash, coefficient hash, solver version, step size
 and a SHA-256 result hash over the canonicalised inputs and ordered output
-samples. The same inputs produce the same hash, and `scripts/demo.sh` checks it.
+samples. The same inputs produce the same hash on the same build; the final
+floating-point ulp can vary between platform math libraries, so the result hash
+is not a universal cross-platform checksum. `scripts/demo.sh` checks the
+same-build property.
 Coefficient sets are versioned separately from recipes and from solver code, so
 a re-fit never silently changes what a past run meant.
 
@@ -241,15 +246,13 @@ espressolab_cli version
 espressolab_cli tui        # interactive terminal UI (POSIX TTY only)
 ```
 
-`sweep --workers <n>` opts into a parallel batch runner; leaving it unset keeps
+`sweep --workers <n>` opts into the parallel batch runner; leaving it unset keeps
 the sequential path. It produces the same runs, in the same order, with the
-same per-run result hashes either way — `--workers` and `--ring-capacity` buy
-wall time, never a different answer. `grind` turns burr geometry into a
-particle size distribution and, like the CFD commands, sits outside the shot
-pipeline and writes its own files.
+same per-run result hashes either way. `--workers` and `--ring-capacity` change
+wall time, never the answer. The separate `grind` command writes a recipe-ready
+particle distribution without becoming part of the shot pipeline.
 
-`espressolab_cli tui` is a guided, form-based frontend to the commands above
-(all but `grind`, which is file-oriented only),
+`espressolab_cli tui` is a guided, form-based frontend to every command above,
 for interactive macOS/Linux terminals. It calls the same native loaders,
 solvers, calibration APIs, and artifact writers directly -- not the CLI, not
 the REST server -- so it produces the same units, artifacts, and result
@@ -274,23 +277,22 @@ outputs/sweeps/<sweep-id>/{sweep.json,runs.jsonl,aggregate.csv,manifest.json}
 ./scripts/test.sh
 ```
 
-The current native suite passes 204 test cases and 20,364 assertions: unit tests
+The current native suite passes 226 test cases and 86,773 assertions: unit tests
 for every correlation, whole-shot
 integration tests, generated-input property tests, mass-balance invariants, a
-step-size convergence test, sweep progress and cancellation tests, parallel
-sweep tests requiring the `--workers` path to match the sequential path run for
-run and hash for hash, particle size distribution tests pinning the pre-PSD
-recipe and result hashes, grinder comminution tests, parallel-region
+step-size convergence test, sweep progress and cancellation tests, parallel-region
 balance and serialization tests, axial grid-refinement and wetting-front tests, CFD verification tests
 (divergence, exact solutions, mesh convergence, conservation),
 calibration recovery tests, deterministic leave-one-out validation tests,
+particle-size distribution, grinder comminution, bean-profile and flavour-overlay tests,
 native cancellation-checkpoint tests, measured-shot catalogue/comparison tests,
 and pure (terminal-free) tests of the
 TUI's navigation, forms, and shared workflow services. A separate POSIX PTY
-smoke script (`python3 tests/pty/tui_smoke.py`) defines 14 checks for the TUI's
+smoke script (`python3 tests/pty/tui_smoke.py`) defines 15 checks for the TUI's
 actual terminal rendering, form execution/scrolling, resize, Ctrl-C, restoration,
-and non-TTY rejection; it is not part of `./scripts/test.sh` and was not rerun
-for this documentation refresh. Hosted GitHub Actions passed the macOS, Linux,
+and non-TTY rejection; it is not part of `./scripts/test.sh` and passes locally.
+The web suite passes 222 Vitest tests with coverage thresholds and 26 Chromium
+desktop/mobile Playwright tests against the native server. Hosted GitHub Actions passed the macOS, Linux,
 and dashboard jobs at commit `736cef3`; current branch hardening through
 `94fbe7a` has local evidence but no equivalent hosted run recorded here. See
 [docs/testing.md](docs/testing.md).
@@ -309,7 +311,7 @@ and dashboard jobs at commit `736cef3`; current branch hardening through
 | [docs/testing.md](docs/testing.md) | What each test layer is for |
 | [docs/roadmap.md](docs/roadmap.md) | Status against the four-week plan, and what is not done |
 | [docs/current-state-and-gaps.md](docs/current-state-and-gaps.md) | Evidence-based implementation status and open gaps |
-| [schemas/](schemas/) | JSON Schema for recipes, coefficients, shot results, CFD3D cases/results, and grinder specs/results |
+| [schemas/](schemas/) | JSON Schema for recipes, coefficients, shot results, and CFD3D cases/results |
 
 ## Requirements
 

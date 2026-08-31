@@ -17,8 +17,8 @@ using namespace espressolab::tui;
 TEST_CASE("every command has a discoverable navigator entry", "[tui][unit]") {
     // The full command set from CLAUDE.md's CLI surface, minus `tui` itself.
     const std::vector<std::string> expected = {"simulate", "sweep",      "calibrate", "synthesize",
-                                               "bench",    "cfd",        "cfd3d",     "params",
-                                               "fit-params", "version"};
+                                               "bench",    "cfd",        "cfd3d",     "grind",
+                                               "params",   "fit-params", "version"};
     REQUIRE(commands().size() == expected.size());
     for (const auto& title : expected) {
         const bool found = std::any_of(commands().begin(), commands().end(),
@@ -26,6 +26,7 @@ TEST_CASE("every command has a discoverable navigator entry", "[tui][unit]") {
         INFO("missing navigator entry: " << title);
         REQUIRE(found);
     }
+    for (const auto& spec : commands()) REQUIRE(spec.runner != nullptr);
 }
 
 TEST_CASE("default_fields preserves existing command defaults and units", "[tui][unit]") {

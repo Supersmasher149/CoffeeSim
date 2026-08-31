@@ -34,7 +34,7 @@ espressolab_cli tui  ->  espressolab_cli_support (workflows.cpp, tui/tui_forms.c
 | `espressolab_artifacts` | Versioned JSON/CSV load and dump, result hashes | Physics decisions |
 | `espressolab_experiments` | Sweeps, run schedules, aggregation, artifact naming | Chart rendering |
 | `espressolab_calibration` | Measured shots, the loss function, the fit | Anything the solver depends on |
-| `espressolab_grind` | Separate comminution model (burr geometry -> particle size distribution) and its own spec/result documents | Recipes, shot artifacts, the default pipeline, any result hash |
+| `espressolab_grind` | Separate comminution model and its own spec/result documents | Recipes, shot artifacts, the default pipeline, any result hash |
 | `espressolab_cfd` | Separate Level 4 axisymmetric pressure and transport solver | REST, dashboard, standard artifacts, default result hashes |
 | `espressolab_cfd3d` | Level 4b Cartesian 3D REV-scale pressure and transport solver | Default Level 1-3 path, equation ownership outside the solver |
 | `espressolab_references` | Published reference-shot metadata and partial-load reporting | Simulation, fitting, or validation decisions |
@@ -59,11 +59,10 @@ fields, and `ELF3D-1` field artifacts are separate contracts and never alter
 the standard shot result or its hashes.
 
 `espressolab_grind` is isolated in the same way, and more strictly: it depends
-on `espressolab_core_types` alone, has no REST route at all, and its spec and
-result documents carry no recipe hash, no coefficient hash, and no result hash.
-It produces a distribution a recipe *may* be given by hand (`puck.grind`), which
-is the only coupling between the two, and it is a copy-paste boundary rather
-than a call: nothing in the shot pipeline invokes the grinder.
+on `espressolab_core_types` alone, has no REST route, and its spec and result
+documents carry no recipe hash, coefficient hash, or result hash. It produces a
+distribution a recipe may receive by copy-paste; nothing in the shot pipeline
+invokes the grinder.
 
 `espressolab_cli tui` is an application-layer frontend: it calls
 `espressolab_cli_support` directly (native loaders, solvers, calibration APIs,
@@ -98,34 +97,15 @@ builds a circular Cartesian cut-cell mesh, runs the Level 4b solver, and emits
 `Cfd3dResult` plus optional time-indexed field snapshots.
 ```
 
-## Threads live in the applications, not the engine
+## Threads live in applications, not the engine
 
 `ExperimentRunner::run` takes an optional `(completed, total) -> bool` callback:
 it reports progress through it and stops when it returns false. That is the
-whole of the engine's involvement in background sweeps. Three application-layer
-places own threads, and no engine target owns any:
-
-| Owner | Thread it owns | Purpose |
-| --- | --- | --- |
-| `apps/espressolab_server/` | Job threads | Background REST sweeps and CFD3D runs |
-| `apps/espressolab_cli/tui/` | One worker thread | Keeps the render loop responsive during a job |
-| `apps/espressolab_cli/sweep_batch_runner.cpp` | A pool of worker threads | `sweep --workers`, the parallel batch path |
-
-The third is the newest and the easiest to misread. `sweep_batch_runner.cpp`
-is the only place in the codebase that runs sweep points concurrently;
-`engine/experiment_runner/` stays single-threaded and knows nothing about it.
-The two paths share the pure, stateless building blocks declared in
-`experiment.hpp` (`execute_sweep_point` and friends), which is what lets them
-produce byte-identical results: worker count and ring capacity change arrival
-order at the consumer, never a run's content or its final position in
-`result.runs`. A `BoundedRingBuffer`
-(`include/espressolab/ring_buffer.hpp`) decouples the producer threads from
-the consumer that aggregates them, so a slow consumer applies back-pressure
-instead of growing an unbounded queue. Leaving `--workers` unset keeps the
-sequential path exactly as it was.
-
-Because the engine owns no thread, the same runner still works unchanged in
-the CLI, the TUI, and in tests, where there is no thread at all.
+whole of the engine's involvement in background sweeps. The server (for REST),
+`apps/espressolab_cli/tui` (for the interactive shell), and the opt-in parallel
+sweep runner own application-level worker threads and cancellation controls, so
+the same runner still works unchanged in the CLI, the TUI, and in tests, where
+there is no thread at all.
 
 Native execution beyond sweeps is thread-agnostic the same way: `Simulator`,
 `CfdSolver`, `Cfd3dSolver`, and `calibration::fit`/`leave_one_out` each accept
@@ -153,17 +133,14 @@ engine/cfd/                 separate Level 4 axisymmetric CFD solver
 engine/cfd3d/               Level 4b Cartesian 3D CFD solver
 engine/grind/               separate comminution model and its own IO
 engine/artifact_io/         JSON/CSV, SHA-256, manifests, ELF3D fields
-engine/experiment_runner/   sweep axes, cartesian product, aggregation (single-threaded)
+engine/experiment_runner/   sweep axes, cartesian product, aggregation
 engine/reference_io/        reference-shot catalogue loader
-include/espressolab/        public headers, execution.hpp, ring_buffer.hpp
-apps/espressolab_cli/       simulate, sweep, params, version, calibrate, synthesize,
-                            bench, cfd, cfd3d, grind; sweep_batch_runner.{hpp,cpp}
-                            is the parallel sweep path behind --workers
+include/espressolab/        public headers
+apps/espressolab_cli/       simulate, sweep, params, version, calibrate, synthesize, bench, cfd, cfd3d, grind
 apps/espressolab_cli/tui/   interactive terminal UI over the same shared workflow services
 apps/espressolab_server/    REST endpoints on cpp-httplib
 web/src/features/           shot, sweeps, comparison, calibration
-assets/                     recipes, coefficients, sweep specs, measured shots, grinder specs
-schemas/                    JSON Schema for recipe, coefficients, shot result, CFD3D cases/results,
-                            grinder specs/results
-tests/                      unit, integration, fixtures; pty/, server/, cli/, schemas/ run outside test.sh
+assets/                     recipes, coefficients, sweep specs, measured shots, grinder specs, bean profiles
+schemas/                    JSON Schema for recipe, coefficients, shot result, CFD3D cases/results, grinder specs/results, beans
+tests/                      unit, integration, fixtures
 ```

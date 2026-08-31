@@ -7,6 +7,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "espressolab/version.hpp"
 #include "sweep_batch_runner.hpp"
 
 namespace espressolab::cli_workflows {
@@ -377,9 +378,7 @@ GrindOutcome run_grind(const GrindRequest& request) {
 
     const auto started = std::chrono::steady_clock::now();
     outcome.result = grind(outcome.spec);
-    outcome.wall_time_ms =
-        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started)
-            .count();
+    outcome.wall_time_ms = elapsed_ms(started);
 
     if (!request.out_path.empty()) {
         const std::filesystem::path dir(request.out_path);
@@ -393,6 +392,33 @@ GrindOutcome run_grind(const GrindRequest& request) {
         write_text_file(outcome.grind_path, grinder_io::dump_recipe_grind_json(outcome.result));
     }
     return outcome;
+}
+
+GrindUsabilityReport assess_grind_usability(const GrinderResult& result) {
+    const ValidationResult validation = result.distribution.validate();
+    if (!validation.ok()) {
+        return {GrindUsabilityStatus::invalid_distribution, validation.summary()};
+    }
+    if (result.sauter_mean_diameter_um < 150.0 || result.sauter_mean_diameter_um > 800.0) {
+        return {GrindUsabilityStatus::d32_out_of_range, {}};
+    }
+    return {};
+}
+
+// ------------------------------------------------------------ info commands --
+std::vector<std::string> run_params() { return supported_parameter_paths(); }
+
+std::vector<calibration::TunableParameter> run_fit_params() {
+    std::vector<calibration::TunableParameter> result;
+    for (const auto& name : calibration::tunable_parameter_names()) {
+        result.push_back(*calibration::tunable_parameter(name));
+    }
+    return result;
+}
+
+VersionInfo run_version() {
+    return {std::string(version::kSolver), std::string(version::kRecipeSchema),
+            std::string(version::kResultSchema)};
 }
 
 }  // namespace espressolab::cli_workflows

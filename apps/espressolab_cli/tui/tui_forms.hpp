@@ -37,19 +37,15 @@ enum class Command {
     bench,
     cfd,
     cfd3d,
+    grind,
     params,
     fit_params,
     version,
 };
 
-struct CommandSpec {
-    Command command;
-    std::string title;
-    std::string help;
-};
-
 // Every command reachable from the navigator, in menu order (issue #24: every
 // supported command has a discoverable navigator entry).
+struct CommandSpec;
 const std::vector<CommandSpec>& commands();
 
 std::string field_value(const std::vector<Field>& fields, const std::string& label);
@@ -71,6 +67,16 @@ struct JobResult {
 
 using ProgressCallback = std::function<void(int completed, int total, std::string status)>;
 using JobFunction = std::function<JobResult(const CancellationCallback&, const ProgressCallback&)>;
+using JobRunner = JobResult (*)(const std::vector<Field>&, const CancellationCallback&,
+                                const ProgressCallback&);
+
+struct CommandSpec {
+    Command command;
+    std::string title;
+    std::string help;
+    std::vector<Field> defaults;
+    JobRunner runner;
+};
 
 // Builds the job for one command with its captured field values. Every case
 // calls the same `cli_workflows` service the legacy CLI command uses

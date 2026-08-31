@@ -16,7 +16,7 @@ boundaries, reproducibility guarantees, or cross-language data contracts.
 | `engine/experiment_runner/` | Sweep axes, Cartesian execution, progress, and aggregate export (single-threaded) |
 | `engine/calibration/` | Measured-shot loading, loss functions, fitting, and validation reports |
 | `engine/reference_io/` | Read-only reference-shot catalogue loading |
-| `include/espressolab/` | Public C++ headers shared across targets, including the cancellation/status contract (`execution.hpp`) and the bounded queue behind parallel sweeps (`ring_buffer.hpp`) |
+| `include/espressolab/` | Public C++ headers shared across targets, including the cancellation/status contract (`execution.hpp`) and bounded sweep queue (`ring_buffer.hpp`) |
 | `apps/espressolab_cli/` | Argv parsing and `workflows.{hpp,cpp}`: shared CLI workflow services (load, validate, run, write artifacts) used by both the legacy commands and the TUI; `sweep_batch_runner.{hpp,cpp}` owns the parallel sweep path |
 | `apps/espressolab_cli/tui/` | The interactive terminal UI: `tui_forms.{hpp,cpp}` (navigation/forms, no terminal dependency) and `tui.cpp` (FTXUI rendering and the worker thread) |
 | `apps/espressolab_server/` | Local REST translation, in-memory runs, and background sweep jobs |
@@ -25,17 +25,14 @@ boundaries, reproducibility guarantees, or cross-language data contracts.
 | `schemas/` | Intended JSON exchange formats |
 | `tests/` | Unit, integration, property, convergence, and verification tests |
 | `tests/pty/` | POSIX PTY smoke matrix for the TUI, run separately from `ctest` |
-| `tests/server/`, `tests/cli/` | Black-box smoke scripts that start a real built binary; registered under `ctest -L server`, not in `test.sh` |
-| `tests/schemas/` | Schema-vs-loader contract check; needs `jsonschema`, run by hand |
 
 ## Dependency Rule
 
 Dependencies point inward. The model library and Level 1-3 core know nothing
-about HTTP, React, CSV, JSON files, or browser state. Threads are owned by the
-applications, never the engine: the experiment runner receives progress through
-a callback and remains usable by the CLI and native tests, where it owns no
-threads. The dashboard renders native results rather than calculating model
-metrics.
+about HTTP, React, CSV, JSON files, or browser state. Application layers own
+threads; the experiment runner receives progress through a callback and remains
+usable by the CLI and native tests, where it owns no threads. The dashboard
+renders native results rather than calculating model metrics.
 
 The TUI follows the same rule from the other direction: it is an
 application-layer frontend that calls native loaders, solvers, calibration
@@ -48,26 +45,17 @@ terminal UI dependency at all, which is what makes it usable from
 cooperative cancellation and coarse status are a callback pair
 (`espressolab::CancellationCallback` in `execution.hpp`), checked at solver,
 pressure-iteration, calibration, and sweep boundaries, not a thread the solver
-owns. Exactly three thread owners exist -- the server's job threads, the TUI's
-worker thread (in `tui.cpp`), and the parallel sweep pool in
-`sweep_batch_runner.cpp` -- and all three call the same synchronous,
-thread-agnostic native APIs. If you add a fourth, it belongs in an application,
-not in `engine/`.
-
-`sweep_batch_runner.cpp` deserves its own note, because it is the one place
-where two execution paths must agree. It runs sweep points concurrently while
-`engine/experiment_runner/` stays sequential, and both call the same pure
-helpers from `experiment.hpp`, so a spec run with `--workers 8` must yield the
-same runs, in the same order, with the same per-run result hashes as the
-sequential path. Changing either path without the other is a determinism bug;
-`tests/integration/test_sweep_batch_runner.cpp` is what catches it.
+owns. The TUI's own worker thread (in `tui.cpp`), the server's job threads, and
+the opt-in parallel sweep runner call the same synchronous, thread-agnostic
+native APIs. None of these threads belong to an engine target.
 
 Keep a new concern in the lowest layer that can own it. A physics decision
 belongs in the model library or solver, serialization in `artifact_io`, request
 translation in the server, and rendering-only behavior in `web/` or `tui.cpp`.
-The separate CFD targets may depend on the core and model library, and the
-grind target on the core types, but none of them may become a hidden dependency
-of the default simulation pipeline or change its artifacts or hashes.
+The separate CFD and grind targets may depend on the core and model library but
+must not become hidden dependencies of the default simulation pipeline. The
+grind target depends only on core types, has no REST route or shot hash, and
+produces distributions that a recipe may receive by copy-paste.
 
 For the component diagram and runtime flow, see [architecture.md](architecture.md).
 
@@ -105,6 +93,7 @@ The web project has independent static and production-build checks:
 
 ```bash
 npm --prefix web run typecheck
+npm --prefix web run test:coverage
 npm --prefix web run build
 ```
 
@@ -119,14 +108,15 @@ tag or list available tests with:
 ```
 
 Native tests cover unit behavior, whole shots, invariants, axial cells,
-calibration, sweeps (sequential and parallel), CFD verification, the particle
-size distribution and grinder models (`[grind]`, `[grind_sim]`), cancellation
-checkpoints (`[cancellation]`), and the TUI's pure navigation/form/workflow
-logic (`[tui]`, `[cli_workflows]`)
-without a terminal. The web project currently has typechecking and build
-checks but no browser interaction test harness. Test a dashboard interaction
-manually through `./scripts/dev.sh` whenever changing dragging, selection,
-chart synchronization, downloads, or accessibility.
+calibration, sweeps, CFD verification, cancellation checkpoints (`[cancellation]`),
+the grind and flavour overlays, and the TUI's pure navigation/form/workflow
+logic (`[tui]`, `[cli_workflows]`) without a terminal. Vitest covers the web
+unit, component, and accessibility layers; `npm --prefix web run test:coverage`
+enforces their thresholds. Playwright covers real browser interactions against
+the built native server: run `npm --prefix web run test:e2e` for Chromium
+desktop/mobile, or `npm --prefix web run test:e2e:all` for the full nightly
+cross-browser matrix. Use `./scripts/dev.sh` for exploratory manual testing,
+not as a substitute for those automated checks.
 
 The TUI's terminal rendering, input handling, and resize/Ctrl-C behavior are
 not exercised by `ctest` -- they need a real pseudo-terminal, not just the
@@ -146,9 +136,9 @@ matches real espresso; real-shot validation remains a separate evidence task.
 
 ## Changing a Data Contract
 
-Recipe, coefficient, result, sweep, measured-shot, CFD3D, grinder, and
-reference data cross several layers. Make those edits atomically and do not
-treat a schema edit as sufficient.
+Recipe, coefficient, result, sweep, measured-shot, CFD3D, grinder, bean, and
+reference data cross several layers.
+Make those edits atomically and do not treat a schema edit as sufficient.
 
 1. Define the field, units, ownership, default behavior, and version impact in
    the C++ domain type.

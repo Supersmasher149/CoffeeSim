@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import {
   CartesianGrid,
   Line,
@@ -48,10 +48,18 @@ function AxisControls({
   parameters: string[];
   label: string;
 }) {
+  // Every field here was a bare <label> sibling with no htmlFor/id, so
+  // neither a screen reader nor getByLabelText could associate "from" with
+  // the axis it belonged to once there were two axes on the page.
+  const parameterId = useId();
+  const fromId = useId();
+  const toId = useId();
+  const stepsId = useId();
   return (
     <div className="row" style={{ flexWrap: "wrap", gap: 8 }}>
-      <span className="note" style={{ width: 54 }}>{label}</span>
+      <label className="note" htmlFor={parameterId} style={{ width: 54 }}>{label}</label>
       <select
+        id={parameterId}
         style={{ width: 220 }}
         value={axis.parameterPath}
         onChange={(e) => onChange({ ...axis, parameterPath: e.target.value })}
@@ -61,18 +69,18 @@ function AxisControls({
         ))}
       </select>
       <div className="field" style={{ margin: 0 }}>
-        <label>from</label>
-        <input type="number" value={axis.from}
+        <label htmlFor={fromId}>from</label>
+        <input id={fromId} type="number" value={axis.from}
                onChange={(e) => onChange({ ...axis, from: Number(e.target.value) })} />
       </div>
       <div className="field" style={{ margin: 0 }}>
-        <label>to</label>
-        <input type="number" value={axis.to}
+        <label htmlFor={toId}>to</label>
+        <input id={toId} type="number" value={axis.to}
                onChange={(e) => onChange({ ...axis, to: Number(e.target.value) })} />
       </div>
       <div className="field" style={{ margin: 0 }}>
-        <label>steps</label>
-        <input type="number" min={2} max={40} value={axis.steps}
+        <label htmlFor={stepsId}>steps</label>
+        <input id={stepsId} type="number" min={2} max={40} value={axis.steps}
                onChange={(e) => onChange({ ...axis, steps: Number(e.target.value) })} />
       </div>
     </div>
@@ -93,6 +101,7 @@ export function SweepPanel({ baseline, parameters, onError }: Props) {
   const [metric, setMetric] = useState<HeatMetric>("shot_time_s");
   const [result, setResult] = useState<SweepResult>();
   const [activeId, setActiveId] = useState<string>();
+  const [submitting, setSubmitting] = useState(false);
   const pollTimer = useRef<number>();
 
   // The second axis is the outer one, so the primary axis varies fastest and
@@ -101,6 +110,7 @@ export function SweepPanel({ baseline, parameters, onError }: Props) {
   const runCount = axes.reduce((total, axis) => total * Math.max(axis.steps, 1), 1);
   const selected = METRICS.find((entry) => entry.key === metric)!;
   const running = result?.status === "running" || result?.status === "queued";
+  const busy = submitting || running;
 
   // Sweeps run in the background on the server, so the dashboard polls for
   // progress instead of holding a request open (15.2).
@@ -136,6 +146,8 @@ export function SweepPanel({ baseline, parameters, onError }: Props) {
   }, [activeId, onError]);
 
   const run = async () => {
+    if (busy) return;
+    setSubmitting(true);
     try {
       const accepted = await api.startSweep(
         twoDimensional ? "dashboard-2d" : "dashboard",
@@ -152,6 +164,8 @@ export function SweepPanel({ baseline, parameters, onError }: Props) {
       setActiveId(accepted.sweep_id);
     } catch (error) {
       onError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -186,8 +200,8 @@ export function SweepPanel({ baseline, parameters, onError }: Props) {
                    onChange={(e) => setTwoDimensional(e.target.checked)} />
             second axis (heat map)
           </label>
-          <button onClick={run} disabled={running || runCount > 20000}>
-            {running ? "Running…" : `Run sweep (${runCount})`}
+          <button onClick={run} disabled={busy || runCount > 20000}>
+            {submitting ? "Starting…" : running ? "Running…" : `Run sweep (${runCount})`}
           </button>
           {runCount > 20000 && (
             <span className="note">A single sweep is limited to 20000 runs.</span>
@@ -208,6 +222,12 @@ export function SweepPanel({ baseline, parameters, onError }: Props) {
       {running && result && (
         <div style={{ marginBottom: 12 }}>
           <div
+            role="progressbar"
+            aria-label="Sweep progress"
+            aria-valuemin={0}
+            aria-valuemax={result.total}
+            aria-valuenow={result.completed}
+            aria-valuetext={`${result.completed} of ${result.total} runs`}
             style={{
               height: 6, borderRadius: 3, background: "var(--bg)",
               border: "1px solid var(--line)", overflow: "hidden",
@@ -233,7 +253,7 @@ export function SweepPanel({ baseline, parameters, onError }: Props) {
       {finished && result && (
         <>
           <div className="row" style={{ marginBottom: 10 }}>
-            <select style={{ width: 220 }} value={metric}
+            <select style={{ width: 220 }} value={metric} aria-label="Metric"
                     onChange={(e) => setMetric(e.target.value as HeatMetric)}>
               {METRICS.map((entry) => (
                 <option key={entry.key} value={entry.key}>
@@ -257,8 +277,15 @@ export function SweepPanel({ baseline, parameters, onError }: Props) {
               metric={metric}
               metricLabel={selected.label}
               metricUnit={selected.unit}
+              partial={result.cancelled === true}
             />
           ) : (
+            <div
+              role="img"
+              aria-label={
+                `${selected.label} against ${result.axes![0].parameter_path} across ${runs.length} runs.`
+              }
+            >
             <ResponsiveContainer width="100%" height={190}>
               <LineChart data={lineData} margin={{ top: 6, right: 14, bottom: 6, left: 4 }}>
                 <CartesianGrid stroke="#3a302a" strokeDasharray="2 4" />
@@ -280,8 +307,10 @@ export function SweepPanel({ baseline, parameters, onError }: Props) {
                       strokeWidth={2} dot={{ r: 3 }} isAnimationActive={false} />
               </LineChart>
             </ResponsiveContainer>
+            </div>
           )}
 
+          <div className="table-scroll">
           <table style={{ marginTop: 12 }}>
             <thead>
               <tr>
@@ -310,6 +339,7 @@ export function SweepPanel({ baseline, parameters, onError }: Props) {
               ))}
             </tbody>
           </table>
+          </div>
         </>
       )}
     </div>

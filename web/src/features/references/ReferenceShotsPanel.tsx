@@ -125,8 +125,8 @@ export function ReferenceShotsPanel({ catalogue, active, recipe, error }: Props)
         <span className="reference-badge">metadata only</span>
       </div>
 
-      {error && <div className="error">Reference catalogue unavailable: {error}</div>}
-      {!catalogue && !error && <p className="note">Loading reference catalogue…</p>}
+      {error && <div className="error" role="alert">Reference catalogue unavailable: {error}</div>}
+      {!catalogue && !error && <p className="note" aria-live="polite">Loading reference catalogue…</p>}
       {catalogue && catalogue.references.length === 0 && (
         <p className="note">No valid reference records are available.</p>
       )}
@@ -176,7 +176,7 @@ export function ReferenceShotsPanel({ catalogue, active, recipe, error }: Props)
         </>
       )}
       {catalogue && catalogue.load_errors.length > 0 && (
-        <div className="reference-load-errors">
+        <div className="reference-load-errors" role="status">
           {catalogue.load_errors.map((loadError) => (
             <div key={`${loadError.file}-${loadError.code}`}>
               <code>{loadError.code}</code> {loadError.file}: {loadError.message}

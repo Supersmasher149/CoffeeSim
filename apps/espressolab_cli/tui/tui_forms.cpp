@@ -281,40 +281,171 @@ JobResult run_cfd3d(const std::vector<Field>& fields, const CancellationCallback
     return output;
 }
 
+void append_grind_report(std::vector<std::string>& lines, const GrinderSpec& spec,
+                         const GrinderResult& result) {
+    lines.push_back("grinder       " + spec.name);
+    lines.push_back("burr gap      " + format_number(spec.burr_gap_um, 1) + " um over " +
+                    std::to_string(spec.passes) + " passes");
+    lines.push_back("d32 (Sauter)  " + format_number(result.sauter_mean_diameter_um, 2) + " um");
+    lines.push_back("spread (sigma) " + format_number(result.geometric_std_dev, 3));
+    lines.push_back("fines produced " + format_number(result.cumulative_fines_fraction * 100.0, 3) +
+                    " % of mass");
+    lines.push_back("bins          " + std::to_string(result.distribution.bins.size()));
+    lines.push_back("mass residual " + format_number(result.mass_balance_residual, 6));
+    for (const GrindBin& bin : result.distribution.bins) {
+        std::ostringstream row;
+        row << format_number(units::m_to_microns(bin.diameter_m), 1) << " um : "
+            << format_number(bin.mass_fraction, 4);
+        lines.push_back(row.str());
+    }
+    // Mirrors the legacy CLI's `command_grind` usability note (same 150-800 um
+    // range a recipe's puck.grind is validated against).
+    const auto usability = cli_workflows::assess_grind_usability(result);
+    if (usability.status == cli_workflows::GrindUsabilityStatus::invalid_distribution) {
+        lines.push_back("NOTE: this distribution is not usable in a recipe: " + usability.detail);
+    } else if (usability.status == cli_workflows::GrindUsabilityStatus::d32_out_of_range) {
+        lines.push_back("NOTE: d32 is outside the 150-800 um range a recipe supports; widen the burr gap.");
+    }
+}
+
+JobResult run_grind(const std::vector<Field>& fields, const CancellationCallback&, const ProgressCallback&) {
+    cli_workflows::GrindRequest request;
+    request.spec_path = field_value(fields, "spec");
+    request.out_path = field_value(fields, "out");
+
+    const cli_workflows::GrindOutcome outcome = cli_workflows::run_grind(request);
+
+    JobResult output;
+    output.lines.push_back("grinder: " + outcome.spec.name +
+                           (request.spec_path.empty() ? " (built-in default spec)" : ""));
+    output.lines.push_back("wall time: " + format_number(outcome.wall_time_ms, 1) + " ms");
+    append_grind_report(output.lines, outcome.spec, outcome.result);
+    if (!outcome.result_path.empty()) {
+        output.lines.push_back("artifacts: " + outcome.result_path.parent_path().string());
+        output.lines.push_back("  " + outcome.result_path.filename().string() + " (full run)");
+        output.lines.push_back("  " + outcome.grind_path.filename().string() +
+                               " (paste into a recipe's puck.grind)");
+    }
+    return output;
+}
+
 JobResult run_info(Command command, const CancellationCallback&, const ProgressCallback&) {
     JobResult output;
     if (command == Command::params) {
         output.lines = {"sweepable recipe parameters:"};
-        for (const auto& path : supported_parameter_paths()) output.lines.push_back(path);
+        for (const auto& path : cli_workflows::run_params()) output.lines.push_back(path);
     } else if (command == Command::fit_params) {
         output.lines = {"fittable coefficients:"};
-        for (const auto& name : calibration::tunable_parameter_names()) {
-            const auto parameter = calibration::tunable_parameter(name);
-            output.lines.push_back(name + " [" + format_number(parameter->low, 6) + ", " +
-                                   format_number(parameter->high, 6) + "]" +
-                                   (parameter->logarithmic ? " (log scale)" : ""));
+        for (const auto& parameter : cli_workflows::run_fit_params()) {
+            output.lines.push_back(parameter.name + " [" + format_number(parameter.low, 6) + ", " +
+                                   format_number(parameter.high, 6) + "]" +
+                                   (parameter.logarithmic ? " (log scale)" : ""));
         }
     } else {
-        output.lines = {std::string(version::kSolver) + " recipe-schema=" + std::string(version::kRecipeSchema) +
-                        " result-schema=" + std::string(version::kResultSchema)};
+        const auto info = cli_workflows::run_version();
+        output.lines = {info.solver + " recipe-schema=" + info.recipe_schema +
+                        " result-schema=" + info.result_schema};
     }
     return output;
+}
+
+JobResult run_params_job(const std::vector<Field>&, const CancellationCallback& cancel,
+                        const ProgressCallback& progress) {
+    return run_info(Command::params, cancel, progress);
+}
+
+JobResult run_fit_params_job(const std::vector<Field>&, const CancellationCallback& cancel,
+                             const ProgressCallback& progress) {
+    return run_info(Command::fit_params, cancel, progress);
+}
+
+JobResult run_version_job(const std::vector<Field>&, const CancellationCallback& cancel,
+                          const ProgressCallback& progress) {
+    return run_info(Command::version, cancel, progress);
 }
 
 }  // namespace
 
 const std::vector<CommandSpec>& commands() {
-    static const std::vector<CommandSpec> value{
-        {Command::simulate, "simulate", "Run the deterministic standard shot solver"},
-        {Command::sweep, "sweep", "Run a Cartesian recipe parameter sweep"},
-        {Command::calibrate, "calibrate", "Fit coefficients against measured shots"},
-        {Command::synthesize, "synthesize", "Write a synthetic measured-shot fixture"},
-        {Command::bench, "bench", "Benchmark repeated standard simulations"},
-        {Command::cfd, "cfd", "Run the experimental 2D axisymmetric CFD solver"},
-        {Command::cfd3d, "cfd3d", "Run the experimental 3D Cartesian CFD solver"},
-        {Command::params, "params", "List sweepable recipe parameter paths"},
-        {Command::fit_params, "fit-params", "List fittable coefficients and bounds"},
-        {Command::version, "version", "Show solver and schema versions"},
+    static const std::vector<CommandSpec> value = {
+        CommandSpec{Command::simulate,
+         "simulate",
+         "Run the deterministic standard shot solver",
+         {{"recipe", "assets/recipes/baseline.json"},
+          {"coefficients", "assets/coefficients/default-v1.json"},
+          {"dt", "0.01"},
+          {"sample interval", "0.05"},
+          {"out", ""}},
+         run_simulate},
+        CommandSpec{Command::sweep,
+         "sweep",
+         "Run a Cartesian recipe parameter sweep",
+         {{"spec", "assets/sweeps/grind-size.json"}, {"out", ""}},
+         run_sweep},
+        CommandSpec{Command::calibrate,
+         "calibrate",
+         "Fit coefficients against measured shots",
+         {{"shots", "assets/measured_shots"},
+          {"coefficients", ""},
+          {"fit", "kozeny_constant,extraction_rate_ref_s"},
+          {"holdout", ""},
+          {"leave-one-out", "false"},
+          {"report", ""},
+          {"out", ""},
+          {"id", ""},
+          {"coefficient version", "1.0.0"},
+          {"max iterations", "400"}},
+         run_calibrate},
+        CommandSpec{Command::synthesize,
+         "synthesize",
+         "Write a synthetic measured-shot fixture",
+         {{"recipe", "assets/recipes/baseline.json"},
+          {"coefficients", ""},
+          {"noise", "0"},
+          {"seed", "1"},
+          {"out", "outputs/measured-shot.json"}},
+         run_synthesize},
+        CommandSpec{Command::bench,
+         "bench",
+         "Benchmark repeated standard simulations",
+         {{"seconds", "60"},
+          {"repeats", "20"},
+          {"recipe", "assets/recipes/baseline.json"},
+          {"coefficients", ""}},
+         run_bench},
+        CommandSpec{Command::cfd,
+         "cfd",
+         "Run the experimental 2D axisymmetric CFD solver",
+         {{"recipe", "assets/recipes/baseline.json"},
+          {"coefficients", ""},
+          {"radial cells", "12"},
+          {"axial cells", "24"},
+          {"dt", "0.005"},
+          {"field", "saturation"}},
+         run_cfd},
+        CommandSpec{Command::cfd3d,
+         "cfd3d",
+         "Run the experimental 3D Cartesian CFD solver",
+         {{"case", ""},
+          {"recipe", ""},
+          {"coefficients", ""},
+          {"nx", "32"},
+          {"ny", "32"},
+          {"nz", "16"},
+          {"dt", "0.005"},
+          {"sample interval", "0.05"},
+          {"snapshot interval", "1.0"},
+          {"material", ""},
+          {"out", ""}},
+         run_cfd3d},
+        CommandSpec{Command::grind,
+         "grind",
+         "Model burr geometry as a particle size distribution",
+         {{"spec", ""}, {"out", ""}},
+         run_grind},
+        CommandSpec{Command::params, "params", "List sweepable recipe parameter paths", {}, run_params_job},
+        CommandSpec{Command::fit_params, "fit-params", "List fittable coefficients and bounds", {}, run_fit_params_job},
+        CommandSpec{Command::version, "version", "Show solver and schema versions", {}, run_version_job},
     };
     return value;
 }
@@ -382,76 +513,19 @@ bool parse_bool(const std::vector<Field>& fields, const std::string& label) {
 }
 
 std::vector<Field> default_fields(Command command) {
-    switch (command) {
-        case Command::simulate:
-            return {{"recipe", "assets/recipes/baseline.json"},
-                    {"coefficients", "assets/coefficients/default-v1.json"},
-                    {"dt", "0.01"},
-                    {"sample interval", "0.05"},
-                    {"out", ""}};
-        case Command::sweep:
-            return {{"spec", "assets/sweeps/grind-size.json"}, {"out", ""}};
-        case Command::calibrate:
-            return {{"shots", "assets/measured_shots"},
-                    {"coefficients", ""},
-                    {"fit", "kozeny_constant,extraction_rate_ref_s"},
-                    {"holdout", ""},
-                    {"leave-one-out", "false"},
-                    {"report", ""},
-                    {"out", ""},
-                    {"id", ""},
-                    {"coefficient version", "1.0.0"},
-                    {"max iterations", "400"}};
-        case Command::synthesize:
-            return {{"recipe", "assets/recipes/baseline.json"},
-                    {"coefficients", ""},
-                    {"noise", "0"},
-                    {"seed", "1"},
-                    {"out", "outputs/measured-shot.json"}};
-        case Command::bench:
-            return {{"seconds", "60"}, {"repeats", "20"}, {"recipe", "assets/recipes/baseline.json"}, {"coefficients", ""}};
-        case Command::cfd:
-            return {{"recipe", "assets/recipes/baseline.json"},
-                    {"coefficients", ""},
-                    {"radial cells", "12"},
-                    {"axial cells", "24"},
-                    {"dt", "0.005"},
-                    {"field", "saturation"}};
-        case Command::cfd3d:
-            return {{"case", ""},
-                    {"recipe", ""},
-                    {"coefficients", ""},
-                    {"nx", "32"},
-                    {"ny", "32"},
-                    {"nz", "16"},
-                    {"dt", "0.005"},
-                    {"sample interval", "0.05"},
-                    {"snapshot interval", "1.0"},
-                    {"material", ""},
-                    {"out", ""}};
-        case Command::params:
-        case Command::fit_params:
-        case Command::version:
-            return {};
-    }
-    return {};
+    const auto it = std::find_if(commands().begin(), commands().end(),
+                                 [command](const CommandSpec& spec) { return spec.command == command; });
+    return it == commands().end() ? std::vector<Field>{} : it->defaults;
 }
 
 JobFunction make_job(Command command, std::vector<Field> fields) {
-    return [command, fields = std::move(fields)](const CancellationCallback& cancel, const ProgressCallback& progress) {
-        switch (command) {
-            case Command::simulate: return run_simulate(fields, cancel, progress);
-            case Command::sweep: return run_sweep(fields, cancel, progress);
-            case Command::calibrate: return run_calibrate(fields, cancel, progress);
-            case Command::synthesize: return run_synthesize(fields, cancel, progress);
-            case Command::bench: return run_bench(fields, cancel, progress);
-            case Command::cfd: return run_cfd(fields, cancel, progress);
-            case Command::cfd3d: return run_cfd3d(fields, cancel, progress);
-            case Command::params:
-            case Command::fit_params:
-            case Command::version: return run_info(command, cancel, progress);
-        }
-        return JobResult{};
+    const auto it = std::find_if(commands().begin(), commands().end(),
+                                 [command](const CommandSpec& spec) { return spec.command == command; });
+    if (it == commands().end() || it->runner == nullptr) return {};
+    const JobRunner runner = it->runner;
+    return [runner, fields = std::move(fields)](const CancellationCallback& cancel,
+                                                 const ProgressCallback& progress) {
+        return runner(fields, cancel, progress);
     };
 }
 

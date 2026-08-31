@@ -220,6 +220,32 @@ struct GrindOutcome {
 
 GrindOutcome run_grind(const GrindRequest& request);
 
+enum class GrindUsabilityStatus { usable, invalid_distribution, d32_out_of_range };
+
+struct GrindUsabilityReport {
+    GrindUsabilityStatus status = GrindUsabilityStatus::usable;
+    std::string detail;
+};
+
+// Keeps the recipe envelope and distribution validation in one place for the
+// legacy CLI and the terminal UI. Presentation layers retain their own wording.
+GrindUsabilityReport assess_grind_usability(const GrinderResult& result);
+
+// ------------------------------------------------------------ info commands --
+// `params`, `fit-params`, and `version` read no files and run no solver --
+// they only expose static build-time data. Routing them through this layer
+// anyway keeps every espressolab_cli command going through one place, so
+// both frontends share one implementation instead of two hand-kept copies.
+std::vector<std::string> run_params();
+std::vector<calibration::TunableParameter> run_fit_params();
+
+struct VersionInfo {
+    std::string solver;
+    std::string recipe_schema;
+    std::string result_schema;
+};
+VersionInfo run_version();
+
 // ---------------------------------------------------------------- helpers ---
 // Shared so both frontends read/write files identically. `path` may name a
 // directory or a plain file depending on the caller.

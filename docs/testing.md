@@ -18,10 +18,12 @@ ctest --test-dir build -L server  # black-box REST/CLI smoke scripts, registered
 ```
 
 `./scripts/test.sh` does not run the PTY script, the `server`-labeled ctest
-smoke scripts, dashboard checks, demo, or warnings-as-errors build. The
-current Catch2 run passes 204 test cases and 20,364 assertions. The PTY
-script currently defines 14 checks, but it was not rerun for this
-documentation refresh.
+smoke scripts, dashboard checks, demo, or warnings-as-errors build. The web
+checks are separate: `npm --prefix web run typecheck`,
+`npm --prefix web run test:coverage`, and `npm --prefix web run build` cover
+static, runtime, and production-build behavior. `npm --prefix web run test:e2e`
+runs the Chromium desktop/mobile browser suite against a built native server;
+`npm --prefix web run test:e2e:all` adds the nightly Firefox and WebKit matrix.
 
 ## What each layer is for
 
@@ -35,7 +37,7 @@ codes and paths from the loaders.
 the baseline stops on its mass target with no hard warnings, a coarse puck runs
 fast and weak, a choked puck stalls with a warning instead of a numerical
 failure, pre-infusion delays first drops relative to immediate pressure, and the
-same inputs reproduce the same result hash.
+  same inputs reproduce the same result hash on the same build.
 
 **Property and invariant tests** generate 200 valid recipes from a fixed seed
 and require that none produce NaN or infinity, that masses stay nonnegative,
@@ -83,15 +85,15 @@ every bin, while sweeping the spread of a distribution is refused rather than
 guessed.
 
 **Sensory overlay tests** (`[flavor]`) cover bean documents and the flavour
-layer. The load-bearing one is in `[artifacts]`: pinned hash literals, captured
-from the build *before* the overlay was written, assert that a beanless run
-still produces exactly the recipe hash, result hash and `run_id` it always did.
-Regenerating those literals from the current build would make the test compare
-the code against itself. The integration tests assert the rest bit-for-bit --
-attaching a bean must leave every sample, region and summary field equal -- and
-otherwise make only relative claims (a light natural reads fruitier than a dark
-roast), never absolute intensities, because no absolute intensity means anything
-until a tasting panel has been run.
+layer. The load-bearing one is in `[artifacts]`: recipe and coefficient hashes
+are pinned, while physical outputs are checked to tight tolerances and repeated
+result hashes are checked for determinism. A result hash is not pinned as a
+literal because its sample-series formatting includes platform-libm-sensitive
+last-ulp values. The integration tests assert the rest bit-for-bit -- attaching
+a bean must leave every sample, region and summary field equal -- and otherwise
+make only relative claims (a light natural reads fruitier than a dark roast),
+never absolute intensities, because no absolute intensity means anything until a
+tasting panel has been run.
 
 **Grinder tests** (`[grind_sim]`) cover the comminution model behind
 `espressolab_cli grind`, which is outside the shot pipeline and owns no result
@@ -201,6 +203,85 @@ that they call the same function. What these tests cannot cover -- FTXUI
 rendering, raw-mode/alternate-screen lifecycle, resize, and real Ctrl-C
 delivery through a terminal's line discipline -- is the separate PTY smoke
 matrix's job; see `tests/pty/tui_smoke.py`.
+
+## Frontend runtime tests
+
+The dashboard (`web/`) has its own layered suite, separate from the Catch2
+binary above and run by the `web` and `web-e2e` CI jobs rather than
+`./scripts/test.sh`:
+
+```bash
+npm --prefix web run test              # Vitest: unit + component + accessibility
+npm --prefix web run test:watch
+npm --prefix web run test:coverage     # same, with coverage thresholds enforced
+npm --prefix web run test:e2e          # Playwright: chromium + chromium-mobile
+npm --prefix web run test:e2e:all      # + firefox + webkit + a mobile webkit viewport
+```
+
+**Unit tests** (`web/src/state/workspace.test.ts`, `web/src/api/client.test.ts`)
+cover the two modules everything else depends on: every `localValidation`
+boundary (exact, just inside, just outside, NaN/Infinity, scalar vs. PSD,
+null target mass, unordered/duplicate/empty profiles), `preInfusionEnd`'s
+immediate-peak and repeated-peak cases, and the API client's HTTP methods,
+query/path encoding (including reserved characters in measured-shot and
+coefficient identifiers), `AbortSignal` forwarding, and every branch of
+`ApiFailure` parsing (structured error, missing `details.issues`, non-JSON
+body, network rejection). These two files carry their own, higher coverage
+thresholds in `web/vitest.config.ts`.
+
+**Component tests** (React Testing Library, one file per component under
+`web/src/features/`, `web/src/app/`, plus `web/src/App.test.tsx`) run against a mock server
+(`msw`, `web/src/test/fixtures/server.ts`) so they exercise the same
+`fetch()` path production code takes rather than a mocked API client. They
+cover loading/empty/error states, request races (measured-shot comparison's
+abort-on-reselect and disabled-while-loading guards; sweep polling,
+cancellation, and terminal states with real `setTimeout`-driven polling
+rather than fake timers, which fought `userEvent` and `msw` in practice),
+immutable-patch edits, keyboard interaction (arrow-key profile point
+movement, snapping, neighbour fencing), and the two production bugs this
+suite's construction found and fixed: `App.tsx` was handing
+`ReferenceShotsPanel` the live draft recipe instead of the recipe that
+produced the active result (same class of bug the `activeRecipe` contract
+already guarded against for `PuckView`/`ChartStack` -- see the `Audit P7,
+issue #22` comments), and several controls (`ControlRail`'s number fields,
+`ComparisonTray`'s remove buttons, `SweepPanel`'s axis fields and progress
+bar, `HeatMap`'s cells) had no accessible name or label association at all.
+The workbench-shell tests also pin semantic tab selection and arrow/Home/End
+keyboard navigation, while App tests cross tabs before asserting workflow-local
+content so hidden panels cannot accidentally leak into the accessibility tree.
+`web/src/test/setup.ts` centralises the jsdom gaps every one of these files
+would otherwise hit individually: `ResizeObserver`, `matchMedia`,
+`requestAnimationFrame`, Blob URLs, and the SVG measurement/coordinate APIs
+(`getBBox`, `createSVGPoint`, `getScreenCTM`) Recharts and `ProfileCanvas`
+both call.
+
+**Accessibility tests** (`web/src/a11y.test.tsx`) run `axe-core` (via
+`vitest-axe`) against five stable states -- the empty app, a completed
+simulation, a completed measured-shot comparison, a completed two-axis sweep,
+and an open diagnostics drawer/profile editor -- and fail only on
+serious/critical violations (`web/src/test/a11y.ts`); moderate/minor findings
+are real but noisier, and gating on them would fail this check for reasons
+unrelated to an actual regression.
+
+**Playwright tests** (`web/e2e/`) are the only layer that runs a real browser
+against the real built `espressolab_server` binary, per
+`web/playwright.config.ts`'s two-stage `webServer`: the native server on an
+isolated port, then Vite with its dev-proxy target pointed at that port via
+`ESPRESSOLAB_SERVER_URL` (`web/vite.config.ts`). They cover what jsdom cannot:
+real SVG pointer geometry and `getScreenCTM` (dragging a profile point),
+keyboard navigation through actual focus order, file downloads (CSV/JSON,
+inspected after `page.waitForEvent("download")`), deterministic result
+hashes across two real solver runs, and that comparing a measured shot or
+pinning a run behaves the same way against the real server as the mocked
+component tests already proved. Desktop and mobile Chromium run in CI on
+every push and PR; the nightly schedule adds Firefox, WebKit and a mobile
+WebKit viewport. CI retries a failure once and still records it as flaky
+rather than a clean pass, and uploads the HTML report plus every failing
+test's trace/screenshot/video.
+
+There is no separate visual-regression layer yet -- Playwright's
+`screenshot: "only-on-failure"` is diagnostic only, not a maintained set of
+golden images.
 
 ## On golden fixtures
 

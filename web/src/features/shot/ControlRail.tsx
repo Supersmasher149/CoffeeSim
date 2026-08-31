@@ -1,3 +1,5 @@
+import { useId, useRef } from "react";
+
 import { SOLUTE_CLASSES } from "../../api/types";
 import type {
   BeanProfile,
@@ -63,12 +65,18 @@ function GrindDistributionReadout({ bins }: { bins: GrindBin[] }) {
 // Units live in the label, never only in surrounding prose (12.5).
 function NumberField({ label, value, range, step = 1, path, issues, onChange }: NumberFieldProps) {
   const invalid = issues.some((issue) => issue.path === path);
+  // The label and input were siblings with no htmlFor/id link, so a screen
+  // reader (and RTL's getByLabelText) had no way to associate one with the
+  // other. useId keeps it unique across the rail's several NumberFields.
+  const inputId = useId();
   return (
     <div className="field">
-      <label title={`${range[0]} to ${range[1]}`}>{label}</label>
+      <label htmlFor={inputId} title={`${range[0]} to ${range[1]}`}>{label}</label>
       <input
+        id={inputId}
         type="number"
         className={invalid ? "invalid" : undefined}
+        aria-invalid={invalid}
         value={value}
         step={step}
         min={range[0]}
@@ -109,6 +117,12 @@ function BeanReadout({ bean }: { bean: BeanProfile }) {
 
 export function ControlRail(props: Props) {
   const { recipe, onChange, issues } = props;
+  const targetMass = useRef({ recipeId: props.selectedId, value: recipe.stop.target_beverage_g ?? 36 });
+  if (targetMass.current.recipeId !== props.selectedId) {
+    targetMass.current = { recipeId: props.selectedId, value: recipe.stop.target_beverage_g ?? 36 };
+  } else if (recipe.stop.target_beverage_g !== null) {
+    targetMass.current.value = recipe.stop.target_beverage_g;
+  }
   const puck = (patch: Partial<Recipe["puck"]>) =>
     onChange({ ...recipe, puck: { ...recipe.puck, ...patch } });
   const stop = (patch: Partial<Recipe["stop"]>) =>
@@ -118,7 +132,11 @@ export function ControlRail(props: Props) {
     <aside className="rail">
       <div className="section">
         <h2>Recipe</h2>
-        <select value={props.selectedId} onChange={(e) => props.onSelectRecipe(e.target.value)}>
+        <select
+          aria-label="Recipe"
+          value={props.selectedId}
+          onChange={(e) => props.onSelectRecipe(e.target.value)}
+        >
           {props.recipes.map((entry) =>
             "recipe" in entry ? (
               <option key={entry.id} value={entry.id}>
@@ -184,11 +202,23 @@ export function ControlRail(props: Props) {
 
       <div className="section">
         <h2>Stop conditions</h2>
-        <NumberField
-          label="Target mass (g)" value={recipe.stop.target_beverage_g ?? 36}
-          range={inputRanges.target_beverage_g} step={1}
-          path="recipe.stop.target_beverage_g" issues={issues}
-          onChange={(v) => stop({ target_beverage_g: v })} />
+        <label className="toggle-field">
+          <input
+            type="checkbox"
+            checked={recipe.stop.target_beverage_g !== null}
+            onChange={(event) =>
+              stop({ target_beverage_g: event.target.checked ? targetMass.current.value : null })
+            }
+          />
+          Stop at target mass
+        </label>
+        {recipe.stop.target_beverage_g !== null && (
+          <NumberField
+            label="Target mass (g)" value={recipe.stop.target_beverage_g}
+            range={inputRanges.target_beverage_g} step={1}
+            path="recipe.stop.target_beverage_g" issues={issues}
+            onChange={(v) => stop({ target_beverage_g: v })} />
+        )}
         <NumberField
           label="Max time (s)" value={recipe.stop.maximum_time_s}
           range={inputRanges.maximum_time_s} step={1}

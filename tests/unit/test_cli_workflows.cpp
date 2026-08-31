@@ -43,6 +43,22 @@ TEST_CASE("run_simulate matches calling Simulator::run directly", "[cli_workflow
            Catch::Approx(direct.summary.beverage_mass_kg));
 }
 
+TEST_CASE("assess_grind_usability centralizes the recipe envelope check", "[cli_workflows][grind]") {
+    GrinderResult valid;
+    valid.distribution.bins = {{350e-6, 1.0}};
+    valid.sauter_mean_diameter_um = 350.0;
+    REQUIRE(assess_grind_usability(valid).status == GrindUsabilityStatus::usable);
+
+    GrinderResult invalid;
+    REQUIRE(assess_grind_usability(invalid).status == GrindUsabilityStatus::invalid_distribution);
+    REQUIRE_FALSE(assess_grind_usability(invalid).detail.empty());
+
+    GrinderResult outside;
+    outside.distribution.bins = {{900e-6, 1.0}};
+    outside.sauter_mean_diameter_um = 900.0;
+    REQUIRE(assess_grind_usability(outside).status == GrindUsabilityStatus::d32_out_of_range);
+}
+
 TEST_CASE("run_simulate is deterministic across repeated calls", "[cli_workflows][unit]") {
     SimulateRequest request;
     request.recipe_path = baseline_recipe_path().string();

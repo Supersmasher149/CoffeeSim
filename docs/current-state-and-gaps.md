@@ -194,6 +194,19 @@ project can support:
   deterministic, but its coefficients are a plausible baseline rather than a fit,
   and no distribution it produces has been compared against a measured one. It
   sits outside the shot pipeline and has no REST or dashboard surface.
+- A wide burr gap can be grinder-valid (`burr_gap_um` within its documented
+  50–1500 µm range) yet produce a distribution the recipe schema rejects, even
+  when its d32 sits well inside the shot model's supported 150–800 µm band. The
+  output grid always ends exactly at `bean_diameter_um`, so at the shipped
+  default (6000 µm) gaps above roughly 750–800 µm place a tail bin over the
+  recipe's 2000 µm per-bin cap — sometimes carrying a fraction of a percent of
+  total mass — and the whole distribution is rejected. Neither raising `bins`
+  nor `bean_diameter_um` recovers usability (both push the same or more mass
+  further past the cap); only shrinking `bean_diameter_um` toward the schema's
+  2000 µm floor does, which is a workaround, not a physically faithful whole
+  bean size. See `docs/model.md`'s grinder section. Not yet triaged: whether
+  the fix belongs in the grinder model (e.g. dropping negligible-mass tail
+  bins before validation) or is accepted as an input-space boundary.
 - Extraction and TDS do not predict flavor or sensory quality. The sensory
   overlay is a separate, deliberately non-authoritative layer: its solute-class
   shares, relative rates and axis weights are authored priors, none has been

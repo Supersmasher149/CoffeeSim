@@ -1,16 +1,17 @@
 # EspressoLab: Current State and Gaps
 
-**Assessment date:** 2026-08-27
+**Assessment date:** 2026-09-01
 **Scope:** Repository state under `espressolab/`
 **Audience:** Project stakeholders, technical contributors, and portfolio reviewers
 
 ## Executive Summary
 
-EspressoLab has reached a substantially complete engineering MVP. It is a local
-espresso-simulation workbench with a deterministic C++20 simulation core, CLI,
-local REST server, React/TypeScript dashboard, reproducible JSON and CSV
+EspressoLab has reached a substantially complete engineering MVP. It is a
+local-first espresso-simulation workbench with a deterministic C++20 simulation
+core, CLI, REST server, React/TypeScript dashboard, reproducible JSON and CSV
 artifacts, parameter sweeps, measured-shot comparison, calibration tooling, and
-separate 2D axisymmetric and Cartesian 3D CFD solvers.
+separate 2D axisymmetric and Cartesian 3D CFD solvers. The repository also has
+an optional single-container Fly.io deployment for the dashboard and REST server.
 
 The project is strong on software structure, reproducible experiments, and
 automated verification of its standard configurations. It is not yet a
@@ -30,9 +31,11 @@ EspressoLab simulates a shot from controllable brew inputs and exposes pressure,
 temperature, flow, beverage mass, TDS, and extraction over time. It supports
 reproducible recipe comparison through parameter sweeps.
 
-The project is intentionally a local engineering workbench. It has no accounts,
-authentication, cloud deployment, database, or remote backend service; its REST
-server is local and session-bound.
+The project remains local-first: the default development workflow runs the REST
+server and dashboard on the user's machine. The repository also includes a
+single-container Fly.io deployment at
+https://espressolab-dashboard.fly.dev/. The hosted instance has no accounts,
+authentication, database, or durable storage; its server state is session-bound.
 
 ---
 
@@ -47,7 +50,7 @@ server is local and session-bound.
 | CFD | Separate 2D axisymmetric and Cartesian 3D finite-volume solvers with pressure, saturation, enthalpy, and solute transport | Implemented as explicit CLI paths; 3D also has asynchronous REST status/snapshot routes; verified, not validated |
 | CLI | `simulate`, `sweep`, `calibrate`, `synthesize`, `cfd`, `cfd3d`, `grind`, `bench`, `params`, `fit-params`, and `version` commands | Implemented |
 | Terminal UI | `espressolab_cli tui`: guided forms over every CLI command, calling the same shared workflow services as the file-oriented commands; cooperative cancellation; POSIX-only | Implemented; native logic and the 15-check PTY matrix pass locally |
-| REST server | Local API for health, recipes, references, measured-shot catalogue/comparison, shots, asynchronous sweeps and CFD3D jobs, cancellation, status, snapshots, and CSV artifacts | Implemented |
+| REST server | API for health, recipes, references, measured-shot catalogue/comparison, shots, asynchronous sweeps and CFD3D jobs, cancellation, status, snapshots, and CSV artifacts | Implemented locally and packaged with the dashboard for Fly.io; session-bound and unauthenticated |
 | Dashboard | Recipe controls, measured-shot comparison, draggable pressure and temperature profiles, synchronized charts, pinned runs, sweep heat maps, progress/cancellation, exports, diagnostics, and puck cross-section replay | Implemented; 222 Vitest tests and 26 Chromium desktop/mobile Playwright tests pass locally |
 | Artifacts | Versioned standard-shot and CFD3D inputs/results, JSON/CSV output, `ELF3D-1` snapshot fields, manifests, and SHA-256 hashes | Implemented |
 | Calibration | Bounded deterministic fitting, held-out validation, leave-one-shot-out workflow, provenance, and synthetic-data workflow | Tooling implemented; real-data evidence absent |
@@ -97,9 +100,9 @@ The repository documents the following local checks:
   not run PTY, dashboard, demo, or warnings-as-errors checks.
 - The dashboard typecheck, coverage suite, and production build succeed; Vite
   reports a non-blocking 597.30 kB minified JavaScript chunk warning.
-- GitHub Actions macOS, Linux, and dashboard jobs passed at commit `736cef3`.
-  Later hardening through current branch commit `94fbe7a` has no equivalent
-  hosted run recorded here.
+- GitHub Actions macOS, Linux, dashboard, and full nightly browser-matrix jobs
+  passed for current `origin/main` commit `347177c` in
+  [run 33508004359](https://github.com/Supersmasher149/CoffeeSim/actions/runs/33508004359).
 - The demo covers a baseline shot, a nine-run grind sweep, JSON/CSV artifacts,
   and repeated-run hash equality.
 - The baseline reaches 36 g in approximately 29.03 seconds with no clamps and
@@ -148,7 +151,6 @@ and output should be presented as a model result rather than a prediction.
 
 | Gap | Impact | Completion signal |
 | --- | --- | --- |
-| Current-branch hosted CI evidence is absent | Commit `736cef3` passed macOS/Linux/dashboard jobs, but later hardening through `94fbe7a` has only local evidence recorded here | Hosted workflow passes at the current branch head |
 | Dashboard has a non-blocking 597.30 kB minified JavaScript chunk warning | Does not block the MVP, but indicates a performance/packaging follow-up for a polished release | Chunk is reduced or the warning is explicitly accepted with measured load impact |
 | Portfolio packaging is unfinished | The project is not yet represented by a final demo video and evidence-based resume/project claims | Demo recording and portfolio copy use only verified benchmark and validation results |
 
@@ -160,15 +162,17 @@ and output should be presented as a model result rather than a prediction.
 - Shots, sweeps, and CFD3D jobs are retained only in process memory. Restarting
   the server loses them, and older entries are evicted from bounded
   session-local caches.
-- The API is local-only and has no authentication, authorization, CORS support,
-  cloud deployment, persistence, or multi-user operation. These are out of MVP
-  scope, but they are gaps for any hosted or collaborative product.
-- There is no documented installer or single packaged distribution for the
-  native server, CLI, and dashboard. Users currently build from the repository
-  and run the supplied scripts.
+- The API has no authentication, authorization, CORS support, persistence, or
+  multi-user operation. The Fly.io deployment is a single shared instance, not
+  a hosted collaborative product, and these remain gaps for that use case.
+- There is no documented installer or standalone distribution for the native
+  server, CLI, and dashboard. The Dockerfile provides a deployable
+  dashboard/server image and `fly.toml` provides the Fly.io configuration, but
+  the CLI/TUI still require a source build.
 - The frontend browser suite currently covers Chromium desktop and mobile on
-  every pull request; Firefox/WebKit remain a nightly matrix, and hosted
-  current-head evidence is still pending.
+  every pull request; Firefox/WebKit remain a nightly matrix. The current
+  `origin/main` has hosted evidence for both native platforms and the full
+  browser matrix in [run 33508004359](https://github.com/Supersmasher149/CoffeeSim/actions/runs/33508004359).
 
 ### Model Limitations That Remain Gaps by Design
 
@@ -224,12 +228,13 @@ project can support:
 2. Run leave-one-out calibration, inspect held-out mass/time/TDS errors, and
    publish a new provenance-bearing coefficient file only if the acceptance gate
    passes.
-3. Run hosted CI at the current branch head.
+3. Keep hosted CI green for future branch heads.
 4. Update the README and portfolio materials with measured claims only; record
    the demo video.
-5. Decide whether the project remains a local engineering workbench or needs
-   persistence, packaging, and deployment work. Do not add those capabilities
-   before the validation decision unless the product goal changes.
+5. Decide whether the project needs persistence, multi-user operation, and
+   broader packaging beyond the existing single-container Fly.io deployment.
+   Do not add those capabilities before the validation decision unless the
+   product goal changes.
 6. Treat a calibration dashboard and further model fidelity as follow-up work
    after real-shot evidence exists.
 

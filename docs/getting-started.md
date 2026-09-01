@@ -1,8 +1,11 @@
 # Getting Started
 
 EspressoLab is a local engineering workbench. The native solver, REST server,
-and browser dashboard run on your machine; there is no hosted service, account,
-or database to configure.
+and browser dashboard can run on your machine, and the repository also includes
+an optional [Fly.io deployment](https://espressolab-dashboard.fly.dev/). The
+hosted instance runs the same native solver in a single container. Neither local
+nor hosted mode has accounts, authentication, or a database; server-held runs
+remain session-bound.
 
 ## Requirements
 
@@ -80,6 +83,14 @@ use another `--out` directory when you need to preserve an earlier run.
 The script starts the local REST server on `127.0.0.1:8734` and the Vite
 development server on `http://localhost:5173`. Open the Vite URL in a browser.
 Stopping the script with `Ctrl-C` also stops the server process it launched.
+
+### Hosted dashboard
+
+The optional [live dashboard](https://espressolab-dashboard.fly.dev/) packages
+the built React application and native REST server behind one same-origin
+endpoint. It is a single shared demonstration instance, not a persistent or
+multi-user service; use the local workflow above when developing or preserving
+session data.
 
 The dashboard posts recipes to the native solver and renders its response. It
 does not reimplement the espresso model in TypeScript. Use the Shot, Measured

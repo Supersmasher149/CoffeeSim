@@ -47,8 +47,8 @@ The PTY script's 15 checks pass. Locally verified for the overlay: full suite,
 warnings-as-errors build, `scripts/demo.sh`, `scripts/calibration_demo.sh`, the
 18-case schema contract check, the PTY matrix, web typecheck/coverage/build, and
 Chromium desktop/mobile Playwright tests.
-Hosted macOS, Linux, and dashboard jobs passed at `736cef3`; later hardening
-through `94fbe7a` does not yet have equivalent hosted evidence.
+Hosted macOS, Linux, dashboard, and the full nightly browser matrix passed for
+current `origin/main` at `347177c` in run `33508004359`.
 
 Debug build, isolated from `build/`:
 

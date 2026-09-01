@@ -296,10 +296,11 @@ smoke script (`python3 tests/pty/tui_smoke.py`) defines 15 checks for the TUI's
 actual terminal rendering, form execution/scrolling, resize, Ctrl-C, restoration,
 and non-TTY rejection; it is not part of `./scripts/test.sh` and passes locally.
 The web suite passes 222 Vitest tests with coverage thresholds and 26 Chromium
-desktop/mobile Playwright tests against the native server. Hosted GitHub Actions passed the macOS, Linux,
-and dashboard jobs at commit `736cef3`; current branch hardening through
-`94fbe7a` has local evidence but no equivalent hosted run recorded here. See
-[docs/testing.md](docs/testing.md).
+desktop/mobile Playwright tests against the native server. Hosted GitHub Actions
+passed the macOS, Linux, dashboard, and full nightly browser matrix for current
+`origin/main` at [`347177c`](https://github.com/Supersmasher149/CoffeeSim/commit/347177c)
+in [run 33508004359](https://github.com/Supersmasher149/CoffeeSim/actions/runs/33508004359).
+See [docs/testing.md](docs/testing.md).
 
 ## Documentation
 

@@ -25,8 +25,12 @@ operational work beyond that single shared instance.
 
 - `./scripts/test.sh` passes: 226 Catch2 test cases and 86,773 assertions.
 - `npm --prefix web run typecheck`, `npm --prefix web run test:coverage`, and
-  `npm --prefix web run build` succeed. Vite reports a non-blocking 597.30 kB
-  minified JavaScript chunk-size warning.
+  `npm --prefix web run build` succeed. PR #52 brought every emitted JavaScript
+  chunk below Vite's 500 kB threshold and reduced initial JavaScript from
+  597,368 B / 172,158 B gzip to 190,915 B / 61,255 B gzip (68.0% raw / 64.4%
+  gzip). Total emitted JavaScript is essentially unchanged, changing from
+  597,368 B / 172,158 B gzip to 595,450 B / 172,493 B gzip, so this is an
+  initial-load improvement rather than a total-transfer reduction.
 - `npm --prefix web run test:e2e` passes 26 Chromium desktop/mobile tests against
   the built native server.
 - The Vitest suite passes 222 tests with its configured coverage thresholds.

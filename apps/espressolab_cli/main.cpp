@@ -1,4 +1,5 @@
 #include <cctype>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -165,6 +166,48 @@ void print_error(const std::string& code, const std::string& message, const std:
     std::cerr << ": " << message << '\n';
 }
 
+// Bug fix: every numeric flag used to go through a raw std::stod/std::stoi/
+// std::stoul call with no try/catch, so a malformed value (or a value with a
+// trailing-garbage suffix std::stoX silently ignores, e.g. "5xyz") threw
+// straight out of the command handler and was caught only by main()'s
+// generic catch (const std::exception&), reporting a misleading
+// INTERNAL_ERROR with exit code 1 for what is really a usage error. These
+// mirror tui_forms.cpp's parse_double/parse_int: require the whole string be
+// consumed and (for doubles) finite, and report failure through print_error
+// instead of throwing.
+std::optional<double> parse_double_flag(const std::string& key, const std::string& text) {
+    try {
+        std::size_t consumed = 0;
+        const double parsed = std::stod(text, &consumed);
+        if (consumed == text.size() && std::isfinite(parsed)) return parsed;
+    } catch (const std::exception&) {
+    }
+    print_error("INVALID_ARGUMENT", "--" + key + " must be a finite number, got '" + text + "'", key);
+    return std::nullopt;
+}
+
+std::optional<long long> parse_int_flag(const std::string& key, const std::string& text) {
+    try {
+        std::size_t consumed = 0;
+        const long long parsed = std::stoll(text, &consumed);
+        if (consumed == text.size()) return parsed;
+    } catch (const std::exception&) {
+    }
+    print_error("INVALID_ARGUMENT", "--" + key + " must be an integer, got '" + text + "'", key);
+    return std::nullopt;
+}
+
+std::optional<unsigned long long> parse_ulong_flag(const std::string& key, const std::string& text) {
+    try {
+        std::size_t consumed = 0;
+        const unsigned long long parsed = std::stoull(text, &consumed);
+        if (consumed == text.size()) return parsed;
+    } catch (const std::exception&) {
+    }
+    print_error("INVALID_ARGUMENT", "--" + key + " must be a non-negative integer, got '" + text + "'", key);
+    return std::nullopt;
+}
+
 void print_shot_report(const ShotResult& result) {
     const ShotSummary& s = result.summary;
     std::cout << std::fixed << std::setprecision(2);
@@ -228,8 +271,16 @@ int command_simulate(int argc, char** argv) {
     request.recipe_path = flags.at("recipe");
     if (flags.count("coefficients")) request.coefficients_path = flags.at("coefficients");
     if (flags.count("bean")) request.bean_path = flags.at("bean");
-    if (flags.count("dt")) request.dt_s = std::stod(flags.at("dt"));
-    if (flags.count("sample-interval")) request.sample_interval_s = std::stod(flags.at("sample-interval"));
+    if (flags.count("dt")) {
+        const auto dt = parse_double_flag("dt", flags.at("dt"));
+        if (!dt) return kUsageError;
+        request.dt_s = *dt;
+    }
+    if (flags.count("sample-interval")) {
+        const auto sample_interval = parse_double_flag("sample-interval", flags.at("sample-interval"));
+        if (!sample_interval) return kUsageError;
+        request.sample_interval_s = *sample_interval;
+    }
     if (flags.count("out")) request.out_dir = flags.at("out");
 
     const cli_workflows::SimulateOutcome outcome = cli_workflows::run_simulate(request);
@@ -271,19 +322,35 @@ int command_sweep(int argc, char** argv) {
     // line. A flag wins over its env var; leaving both unset keeps the
     // sequential default exactly as before.
     if (flags.count("workers")) {
-        request.workers = static_cast<std::size_t>(std::stoul(flags.at("workers")));
+        const auto workers = parse_ulong_flag("workers", flags.at("workers"));
+        if (!workers) return kUsageError;
+        request.workers = static_cast<std::size_t>(*workers);
     } else if (const char* env = std::getenv("ESPRESSOLAB_SWEEP_WORKERS")) {
-        request.workers = static_cast<std::size_t>(std::stoul(env));
+        const auto workers = parse_ulong_flag("workers", env);
+        if (!workers) return kUsageError;
+        request.workers = static_cast<std::size_t>(*workers);
     }
     if (flags.count("ring-capacity")) {
-        request.ring_capacity = static_cast<std::size_t>(std::stoul(flags.at("ring-capacity")));
+        const auto ring_capacity = parse_ulong_flag("ring-capacity", flags.at("ring-capacity"));
+        if (!ring_capacity) return kUsageError;
+        request.ring_capacity = static_cast<std::size_t>(*ring_capacity);
     } else if (const char* env = std::getenv("ESPRESSOLAB_SWEEP_RING_CAPACITY")) {
-        request.ring_capacity = static_cast<std::size_t>(std::stoul(env));
+        const auto ring_capacity = parse_ulong_flag("ring-capacity", env);
+        if (!ring_capacity) return kUsageError;
+        request.ring_capacity = static_cast<std::size_t>(*ring_capacity);
     }
     if (request.ring_capacity && !request.workers) {
         print_error("MISSING_ARGUMENT",
                     "--ring-capacity requires --workers (or ESPRESSOLAB_SWEEP_WORKERS) to also be set",
                     "");
+        return kUsageError;
+    }
+    // Bug fix: a --ring-capacity of 0 used to reach BoundedRingBuffer's
+    // constructor, which throws std::invalid_argument -- caught only by
+    // main()'s generic handler and reported as INTERNAL_ERROR instead of a
+    // usage error.
+    if (request.ring_capacity && *request.ring_capacity == 0) {
+        print_error("OUT_OF_RANGE", "--ring-capacity must be at least 1", "ring-capacity");
         return kUsageError;
     }
 
@@ -329,8 +396,16 @@ int command_synthesize(int argc, char** argv) {
     cli_workflows::SynthesizeRequest request;
     request.recipe_path = flags.at("recipe");
     if (flags.count("coefficients")) request.coefficients_path = flags.at("coefficients");
-    request.noise_g = flags.count("noise") ? std::stod(flags.at("noise")) : 0.0;
-    request.seed = flags.count("seed") ? static_cast<unsigned int>(std::stoul(flags.at("seed"))) : 1u;
+    if (flags.count("noise")) {
+        const auto noise = parse_double_flag("noise", flags.at("noise"));
+        if (!noise) return kUsageError;
+        request.noise_g = *noise;
+    }
+    if (flags.count("seed")) {
+        const auto seed = parse_ulong_flag("seed", flags.at("seed"));
+        if (!seed) return kUsageError;
+        request.seed = static_cast<unsigned int>(*seed);
+    }
     request.out_path = flags.at("out");
     if (flags.count("recipe-path")) request.recipe_path_for_provenance = flags.at("recipe-path");
 
@@ -355,8 +430,16 @@ int command_bench(int argc, char** argv) {
     const auto& flags = *parsed;
 
     cli_workflows::BenchRequest request;
-    request.seconds = flags.count("seconds") ? std::stod(flags.at("seconds")) : 60.0;
-    request.repeats = flags.count("repeats") ? std::stoi(flags.at("repeats")) : 200;
+    if (flags.count("seconds")) {
+        const auto seconds = parse_double_flag("seconds", flags.at("seconds"));
+        if (!seconds) return kUsageError;
+        request.seconds = *seconds;
+    }
+    if (flags.count("repeats")) {
+        const auto repeats = parse_int_flag("repeats", flags.at("repeats"));
+        if (!repeats) return kUsageError;
+        request.repeats = static_cast<int>(*repeats);
+    }
     request.recipe_path = flags.count("recipe") ? flags.at("recipe") : "assets/recipes/baseline.json";
     if (flags.count("coefficients")) request.coefficients_path = flags.at("coefficients");
 
@@ -489,7 +572,11 @@ int command_calibrate(int argc, char** argv) {
     cli_workflows::CalibrateRequest request;
     request.shots_dir = flags.at("shots");
     if (flags.count("coefficients")) request.coefficients_path = flags.at("coefficients");
-    if (flags.count("max-iterations")) request.max_iterations = std::stoi(flags.at("max-iterations"));
+    if (flags.count("max-iterations")) {
+        const auto max_iterations = parse_int_flag("max-iterations", flags.at("max-iterations"));
+        if (!max_iterations) return kUsageError;
+        request.max_iterations = static_cast<int>(*max_iterations);
+    }
     request.fit_names = split_list(flags.at("fit"));
     request.holdout_ids = flags.count("holdout") ? split_list(flags.at("holdout")) : std::vector<std::string>{};
     request.leave_one_out = leave_one_out;
@@ -532,9 +619,21 @@ int command_cfd(int argc, char** argv) {
     cli_workflows::CfdRequest request;
     request.recipe_path = flags.at("recipe");
     if (flags.count("coefficients")) request.coefficients_path = flags.at("coefficients");
-    if (flags.count("radial")) request.radial_cells = std::stoi(flags.at("radial"));
-    if (flags.count("axial")) request.axial_cells = std::stoi(flags.at("axial"));
-    if (flags.count("dt")) request.dt_s = std::stod(flags.at("dt"));
+    if (flags.count("radial")) {
+        const auto radial = parse_int_flag("radial", flags.at("radial"));
+        if (!radial) return kUsageError;
+        request.radial_cells = static_cast<int>(*radial);
+    }
+    if (flags.count("axial")) {
+        const auto axial = parse_int_flag("axial", flags.at("axial"));
+        if (!axial) return kUsageError;
+        request.axial_cells = static_cast<int>(*axial);
+    }
+    if (flags.count("dt")) {
+        const auto dt = parse_double_flag("dt", flags.at("dt"));
+        if (!dt) return kUsageError;
+        request.dt_s = *dt;
+    }
 
     const cli_workflows::CfdOutcome outcome = cli_workflows::run_cfd(request);
     const CfdResult& result = outcome.result;
@@ -659,12 +758,36 @@ int command_cfd3d(int argc, char** argv) {
     if (flags.count("case")) request.case_path = flags.at("case");
     if (flags.count("recipe")) request.recipe_path = flags.at("recipe");
     if (flags.count("coefficients")) request.coefficients_path = flags.at("coefficients");
-    if (flags.count("nx")) request.nx = std::stoi(flags.at("nx"));
-    if (flags.count("ny")) request.ny = std::stoi(flags.at("ny"));
-    if (flags.count("nz")) request.nz = std::stoi(flags.at("nz"));
-    if (flags.count("dt")) request.dt_s = std::stod(flags.at("dt"));
-    if (flags.count("sample-interval")) request.sample_interval_s = std::stod(flags.at("sample-interval"));
-    if (flags.count("snapshot-interval")) request.snapshot_interval_s = std::stod(flags.at("snapshot-interval"));
+    if (flags.count("nx")) {
+        const auto nx = parse_int_flag("nx", flags.at("nx"));
+        if (!nx) return kUsageError;
+        request.nx = static_cast<int>(*nx);
+    }
+    if (flags.count("ny")) {
+        const auto ny = parse_int_flag("ny", flags.at("ny"));
+        if (!ny) return kUsageError;
+        request.ny = static_cast<int>(*ny);
+    }
+    if (flags.count("nz")) {
+        const auto nz = parse_int_flag("nz", flags.at("nz"));
+        if (!nz) return kUsageError;
+        request.nz = static_cast<int>(*nz);
+    }
+    if (flags.count("dt")) {
+        const auto dt = parse_double_flag("dt", flags.at("dt"));
+        if (!dt) return kUsageError;
+        request.dt_s = *dt;
+    }
+    if (flags.count("sample-interval")) {
+        const auto sample_interval = parse_double_flag("sample-interval", flags.at("sample-interval"));
+        if (!sample_interval) return kUsageError;
+        request.sample_interval_s = *sample_interval;
+    }
+    if (flags.count("snapshot-interval")) {
+        const auto snapshot_interval = parse_double_flag("snapshot-interval", flags.at("snapshot-interval"));
+        if (!snapshot_interval) return kUsageError;
+        request.snapshot_interval_s = *snapshot_interval;
+    }
     if (flags.count("material")) request.material_path = flags.at("material");
     if (flags.count("out")) request.out_dir = flags.at("out");
 

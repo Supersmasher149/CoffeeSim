@@ -9,16 +9,17 @@ validated against real espresso shots.
 
 The engineering MVP is substantially complete. The deterministic C++20 core,
 CLI, REST server, React/TypeScript dashboard, artifacts, sweeps, calibration
-machinery, and documentation are implemented. The remaining release work is
-real-world validation and portfolio packaging, plus hosted CI evidence for the
-latest hardening commits.
+machinery, and documentation are implemented. A single-container Fly.io
+deployment and current-head hosted CI evidence are also in place. The remaining
+release work is real-world validation and portfolio packaging, plus any future
+operational work beyond that single shared instance.
 
 | Week | Focus from the guide | Status | Evidence |
 | --- | --- | --- | --- |
 | 1 | Skeleton, domain types, profiles, units, water properties, flow-only CLI | Complete | Core/model targets, unit tests, and CLI are present. |
 | 2 | Thermal state, wetting, extraction, mass balances, artifacts, determinism | Complete | Integration, invariant, convergence, and artifact tests pass. |
 | 3 | Sweep runner, REST server, React controls, synchronized charts, exports | Complete | Server routes, dashboard source, background sweeps, and production web build are present. |
-| 4 | Calibration, edge cases, CI, README, profiling, demo, portfolio packaging | Partial | Calibration and measured-shot comparison tooling, edge-case tests, documentation, benchmark, CLI demo, and hosted macOS/Linux/dashboard evidence at `736cef3` are complete; real calibration, current-head hosted evidence, demo video, and measured portfolio claims remain. |
+| 4 | Calibration, edge cases, CI, README, profiling, demo, portfolio packaging | Partial | Calibration and measured-shot comparison tooling, edge-case tests, documentation, benchmark, CLI demo, and hosted macOS/Linux/dashboard plus full browser-matrix evidence at current `origin/main` commit `347177c` are complete; real calibration, demo video, and measured portfolio claims remain. |
 
 ## Verified Locally
 
@@ -30,15 +31,17 @@ latest hardening commits.
   the built native server.
 - The Vitest suite passes 222 tests with its configured coverage thresholds.
 - The PTY matrix passes all 15 checks.
-- Hosted GitHub Actions macOS, Linux, and dashboard jobs passed at commit
-  `736cef3`. Current branch hardening through `94fbe7a` has no equivalent hosted
-  run recorded here.
+- Hosted GitHub Actions macOS, Linux, dashboard, and full nightly browser-matrix
+  jobs passed for current `origin/main` commit `347177c` in
+  [run 33508004359](https://github.com/Supersmasher149/CoffeeSim/actions/runs/33508004359).
 - `./scripts/demo.sh` completes the documented CLI acceptance path:
   baseline simulation, nine-run grind-size sweep, JSON/CSV artifacts, and an
   identical SHA-256 result hash on rerun.
 - The Vite-served dashboard loads and proxies `/api/v1` to the local server.
   Through that path, shot execution, shot CSV export, completed sweep CSV export,
   and cancelled-sweep partial CSV export all succeed.
+- The [Fly.io deployment](https://espressolab-dashboard.fly.dev/) serves the
+  built dashboard and responds to `/api/v1/health` from the native server.
 - `espressolab_cli bench` records a 60-second, 100 Hz shot in 0.468 ms median,
   42.7x inside the guide's 20 ms performance budget.
 - The baseline run reaches the 36 g target in 29.03 s with no clamps and closes
@@ -55,7 +58,7 @@ latest hardening commits.
 | Reproduce the same result hash | Verified locally | The demo reports matching SHA-256 hashes. |
 | Pass conservation and convergence tests | Verified locally | Covered by the passing test suite. |
 | Run and compare shots in the browser | Verified locally | Chromium desktop/mobile Playwright coverage passes for profile editing, keyboard navigation, downloads, determinism, measured-shot comparison, sweeps, and issue #22 recipe binding. |
-| Clean-clone macOS and Linux verification | Verified at `736cef3`; current head pending | Hosted macOS, Linux, and dashboard jobs passed at `736cef3`; do not extend that evidence to hardening through `94fbe7a` until another run passes. |
+| Clean-clone macOS, Linux, and dashboard verification | Verified at current `origin/main` | Hosted macOS, Linux, dashboard, and full browser-matrix jobs passed for `347177c` in run 33508004359. |
 
 ## Completed Week 4 Tooling
 
@@ -91,9 +94,9 @@ latest hardening commits.
   recovery tests validate the fitter, not the espresso model. The CLI now
   supports leave-one-shot-out validation for three or more fixed-setup shots;
   supplying and running those real measurements is the highest-value next step.
-- **Confirm current-head hosted CI.** The committed workflow passed on macOS,
-  Linux, and the dashboard at `736cef3`. Run it again for hardening through
-  `94fbe7a`; the older result is not evidence for those later commits.
+- **Maintain current-head hosted CI evidence.** The committed workflow passes on
+  macOS, Linux, the dashboard, and the browser matrix at `347177c`; future
+  changes require a new hosted run.
 - **Finish portfolio packaging.** Record the demo video and write resume bullets
   from the verified benchmark and, after calibration, measured validation data.
 - **Calibration dashboard view.** The dashboard now compares measured telemetry

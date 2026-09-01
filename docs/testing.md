@@ -296,7 +296,8 @@ for reproducibility, not for correctness.
 `./scripts/demo.sh` is the local acceptance workflow: from a clean clone, run
 the baseline recipe, complete a grind-size sweep, export JSON and CSV, and rerun
 the same inputs to the same result hash. GitHub Actions macOS, Linux, and
-dashboard jobs passed at commit `736cef3`. Later hardening on the current branch
-through `94fbe7a` has no equivalent hosted run recorded here, so do not extend
-that hosted evidence to the current branch. See
+dashboard, and full nightly browser-matrix jobs passed for current `origin/main`
+at commit `347177c` in [run 33508004359](https://github.com/Supersmasher149/CoffeeSim/actions/runs/33508004359).
+Future changes need their own hosted run; do not extend this evidence to an
+unrelated branch. See
 [current-state-and-gaps.md](current-state-and-gaps.md) for the evidence status.

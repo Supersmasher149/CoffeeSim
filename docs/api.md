@@ -1,9 +1,12 @@
-# Local API
+# API
 
 `espressolab_server` binds `127.0.0.1` (default port 8734) and serves the
-endpoints below. It is a local tool server: no accounts, no auth, no cloud
-deployment, and no persistence across a server restart. For ownership and
-versioning of every request and response document, see
+endpoints below when run locally. The repository also packages the same server
+with the dashboard for the [live Fly.io deployment](https://espressolab-dashboard.fly.dev/).
+The examples below use the local port. Neither mode provides accounts,
+authentication, or persistence across a server restart; the hosted instance is
+a single shared session-bound service. For ownership and versioning of every
+request and response document, see
 [data-contracts.md](data-contracts.md).
 
 ```bash

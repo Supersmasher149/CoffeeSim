@@ -2,7 +2,7 @@
   "schema_version": "1.0",
   "name": "Real-world espresso reference shots",
   "description": "Four shot-level references from Jonathan Gagne's EG-1 vs Niche blooming espresso experiment.",
-  "important_note": "No telemetry was fabricated. final_shot_time_s is null and timeseries is empty until the original DE1 .shot files are parsed.",
+  "important_note": "No telemetry was fabricated. timeseries and final_shot_time_s were populated by tools/import_shot_telemetry.py from the original DE1 .shot files (the article's zipped shot-file package, no explicit license stated for that archive -- see each record's source.data_quality.timeseries and docs/real-shot-validation.md). Everything this catalogue still cannot supply -- basket diameter, puck depth, particle size distribution, a measured brew temperature -- remains null; these shots are for shape comparison and provenance, not calibration or validation.",
   "references": [
     {
       "id": "real_gagne_eg1_01",

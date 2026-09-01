@@ -126,10 +126,16 @@ records preserve source links, setup metadata, grinder metadata, and reported
 shot-level values from the source documents.
 
 The catalogue is intentionally separate from `assets/measured_shots/` and the
-calibration workflow. The current records have no DE1 time series and no final
-shot time, so the response keeps those values null/empty and reports
-`telemetry_available: false`. The dashboard presents them as contextual
-comparison material, not as validation data or a recipe input.
+calibration workflow. `telemetry_available` is reported per reference and for
+the catalogue as a whole, reflecting whether that record's `timeseries` array
+is actually populated -- it is not a fixed `false`. A record without a parsed
+DE1 `.shot` file keeps `timeseries`/`final_shot_time_s` null/empty and
+`telemetry_available: false`; one populated by `tools/import_shot_telemetry.py`
+(see `docs/real-shot-validation.md`) reports `telemetry_available: true` and a
+non-empty `timeseries`. Either way the dashboard presents these records as
+contextual comparison material, not as validation data or a recipe input --
+the missing solver inputs (basket geometry, puck depth, PSD, measured
+temperature) are unaffected by whether telemetry is present.
 
 If the catalogue directory or manifest is unavailable, the endpoint returns a
 structured `REFERENCE_CATALOG_NOT_FOUND`, `REFERENCE_MANIFEST_NOT_FOUND`, or

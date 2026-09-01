@@ -32,6 +32,10 @@ struct ReferenceRecord {
 
 struct Catalogue {
     std::string schema_version = "1.0";
+    // Defaults describe a catalogue with no telemetry anywhere; load_directory
+    // recomputes both from the loaded references' actual `timeseries` content
+    // once any reference has a non-empty series (populated by
+    // tools/import_shot_telemetry.py or a future capture).
     bool telemetry_available = false;
     std::string limitation =
         "Shot-level metadata is reported; DE1 time series and final shot times are unavailable.";

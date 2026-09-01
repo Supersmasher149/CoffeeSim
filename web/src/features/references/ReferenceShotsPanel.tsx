@@ -134,7 +134,7 @@ export function ReferenceShotsPanel({ catalogue, active, recipe, error }: Props)
         <>
           <div className="reference-warning">
             {catalogue.limitation} Comparison with the current model is contextual only: the
-            recipes and setup differ, and reference shot time is unavailable.
+            recipes and setup differ, so any matching values are coincidental, not validation.
           </div>
           <div className="reference-table-wrap">
             <table className="reference-table">

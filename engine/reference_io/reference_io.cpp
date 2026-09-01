@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 #include <system_error>
@@ -28,6 +29,11 @@ json parse_file(const std::filesystem::path& file, const std::string& code) {
     } catch (const json::parse_error& e) {
         throw LoadError(code, file.string(), e.what());
     }
+}
+
+bool has_telemetry(const json& document) {
+    return document.contains("timeseries") && document.at("timeseries").is_array() &&
+           !document.at("timeseries").empty();
 }
 
 bool safe_relative_file(const std::filesystem::path& file) {
@@ -245,6 +251,32 @@ Catalogue load_directory(const std::filesystem::path& directory) {
             add_issue(catalogue, relative_name, error.code, error.what());
         }
     }
+
+    // The struct's default telemetry_available=false / limitation wording
+    // (espressolab/reference_io.hpp) covers the "no reference has telemetry
+    // yet" case; once a reference's timeseries is actually populated (by
+    // tools/import_shot_telemetry.py or a future capture), reflect that here
+    // instead of reporting a fixed limitation regardless of content.
+    const bool any_telemetry = std::any_of(catalogue.references.begin(), catalogue.references.end(),
+                                           [](const ReferenceRecord& record) {
+                                               return has_telemetry(record.document);
+                                           });
+    const bool all_telemetry = !catalogue.references.empty() &&
+                               std::all_of(catalogue.references.begin(), catalogue.references.end(),
+                                           [](const ReferenceRecord& record) {
+                                               return has_telemetry(record.document);
+                                           });
+    catalogue.telemetry_available = any_telemetry;
+    if (all_telemetry) {
+        catalogue.limitation =
+            "Time series and final shot times were parsed from the original DE1 .shot files for "
+            "every reference; see each record's source.data_quality for provenance.";
+    } else if (any_telemetry) {
+        catalogue.limitation =
+            "Time series and final shot times are available for some references (parsed from the "
+            "original DE1 .shot files) and unavailable for the rest; see each record's "
+            "source.data_quality.";
+    }
     return catalogue;
 }
 
@@ -254,7 +286,7 @@ std::string dump_json(const Catalogue& catalogue, int indent) {
         json document = record.document;
         document["id"] = record.id;
         document["file"] = record.file;
-        document["telemetry_available"] = false;
+        document["telemetry_available"] = has_telemetry(document);
         references.push_back(std::move(document));
     }
 

@@ -285,7 +285,7 @@ export interface ReferenceRecord {
   observed: ReferenceObserved;
   timeseries_fields: string[];
   timeseries: unknown[];
-  telemetry_available: false;
+  telemetry_available: boolean;
 }
 
 export interface ReferenceLoadError {
@@ -296,7 +296,7 @@ export interface ReferenceLoadError {
 
 export interface ReferenceCatalogue {
   schema_version: string;
-  telemetry_available: false;
+  telemetry_available: boolean;
   limitation: string;
   references: ReferenceRecord[];
   load_errors: ReferenceLoadError[];

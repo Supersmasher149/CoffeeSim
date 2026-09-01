@@ -198,11 +198,17 @@
 
     "result": {
       "type": "object", "additionalProperties": false,
-      "required": ["beverage_yield_g", "yield_scale_resolution_g", "tds_percent", "tds_method", "extraction_yield_percent", "extraction_yield_source"],
+      "required": ["beverage_yield_g", "yield_scale_resolution_g", "tds_percent", "tds_raw_percent", "tds_filtered_percent", "tds_uncertainty_percent_points", "tds_method", "extraction_yield_percent", "extraction_yield_source"],
       "properties": {
         "beverage_yield_g": { "type": ["number", "null"], "exclusiveMinimum": 0 },
         "yield_scale_resolution_g": { "type": ["number", "null"], "exclusiveMinimum": 0 },
-        "tds_percent": { "type": ["number", "null"], "minimum": 0, "maximum": 30 },
+        "tds_percent": {
+          "type": ["number", "null"], "minimum": 0, "maximum": 30,
+          "description": "The authoritative reading used elsewhere in this record (e.g. for a computed extraction_yield_percent). Must equal tds_filtered_percent when tds_method.filtered is true, else tds_raw_percent -- tds_method.filtered is what names which one is authoritative."
+        },
+        "tds_raw_percent": { "type": ["number", "null"], "minimum": 0, "maximum": 30, "description": "Unfiltered reading, if taken. Unfiltered espresso reads high." },
+        "tds_filtered_percent": { "type": ["number", "null"], "minimum": 0, "maximum": 30, "description": "Syringe-filtered reading, if taken." },
+        "tds_uncertainty_percent_points": { "type": ["number", "null"], "minimum": 0, "maximum": 5, "description": "Instrument/method uncertainty in TDS percentage points, e.g. a VST refractometer's published +/-0.03pp." },
         "tds_method": {
           "type": "object", "additionalProperties": false,
           "required": ["instrument", "filtered", "sample_temperature_c", "repeats", "readings_percent"],

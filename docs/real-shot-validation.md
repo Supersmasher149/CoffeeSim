@@ -16,7 +16,8 @@ in [calibration.md](calibration.md) — see "Calibration is not validation" belo
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | [Visualizer](https://visualizer.coffee/) shot API | Per-shot JSON: `timeframe` plus `data.espresso_pressure`, `espresso_flow`, `espresso_weight`, `espresso_flow_weight`, `espresso_temperature_basket`, `espresso_temperature_mix`, `espresso_resistance`, and the `*_goal` setpoint series; `bean_weight`, `drink_weight`, `drink_tds`, `drink_ey`, `grinder_model`, `grinder_setting`, `roast_date`, `roast_level`, free-text notes | **No machine model field**, no basket geometry, no puck depth, no PSD, no water recipe, no dose/yield scale resolution, no TDS method, no timing convention, no statement of whether the pressure series is pump or puck | Public shots readable anonymously (`GET /api/shots/<uuid>`, 200 requests / 10 min per IP). Shot data is user-submitted with **no stated reuse license** | **Yes — best available.** Real telemetry in a stable JSON shape | No | **No.** Heterogeneous across thousands of machines, baristas and unverified refractometers | Only after a specific shot's gaps are closed by contacting its author |
 | Visualizer [public compare example](https://visualizer.coffee/shots/7320f3a9-e2f6-4627-b745-b62c6d5f4d0d/compare/dbcaaa51-e830-4d54-9ae9-1494f78b6b8b) | Two shots, same coffee/grinder/setting: 20.1 g → 47.7 g in 72.8 s, TDS 10.94 %, EY 26.0 %; and 20.3 g → 47.7 g in 79.5 s, TDS 10.62 %, EY 25.0 %. 351-sample telemetry each | Same gaps as above. The web page's machine attribution is derived from free-text notes, not a field | Public, no stated license | Yes — the fixture this repo probed | Weak (n=2, one barista) | No | No |
-| [Coffee Ad Astra](https://www.patreon.com/coffeeadastra/posts/comparison-and-49666680) comparison post | Careful single-author extraction experiments, well-reasoned methodology | Post body is **not publicly retrievable** (HTTP 403 without a Patreon session); no machine-readable dataset is offered | Patron-only; all rights reserved | No | Background reading only | No | No |
+| [Coffee Ad Astra](https://www.patreon.com/coffeeadastra/posts/comparison-and-49666680) comparison post (Patreon) | Careful single-author extraction experiments, well-reasoned methodology | Post body is **not publicly retrievable** (HTTP 403 without a Patreon session); no machine-readable dataset is offered | Patron-only; all rights reserved | No | Background reading only | No | No |
+| [Coffee Ad Astra — EG-1 vs Niche blooming espresso](https://coffeeadastra.com/2021/05/10/a-comparison-between-standard-and-low-fines-espresso-shots/) (public, freely readable — a *different* post from the Patreon-locked one above) | Jonathan Gagné, 2021-03-02: EG-1 (SSP Ultra-Low-Fines) vs Niche Zero, Decent DE1+, Scott Rao blooming profile. Shot-level dose/yield/TDS(raw+filtered)/EY/peak-pressure published in a public Google Sheet, plus a zipped Dropbox archive of the author's 11 raw DE1 `.shot` telemetry files (pressure, flow, cumulative weight, mix temperature; ~380 samples/shot) | No basket diameter, no puck depth, no PSD (grind is a dial number), no measured brew temperature — still not simulable without inventing inputs | Public; the shot-files archive states no explicit license | **Yes** — `tools/import_shot_telemetry.py`, run against all four shots this repo carries | No | No — see `espresso_real_world_refs/` below | No |
 | [TUM / Mendeley dataset](https://data.mendeley.com/datasets/y2tz67f6ry/1) — Pannusch, Schmieder, Vannieuwenhuyse, Minceva, Briesen (TU München, 2023), DOI 10.17632/y2tz67f6ry.1 | MATLAB parameter-estimation code and an "Espresso Brewing Control App" for the kinetics model behind the Foods paper | It is **code, not the raw extraction data**; no shot telemetry | **CC BY-NC 3.0** — non-commercial only. Compatible with this repository only as a cited reference, not as vendored data | No | **Yes** — kinetic model structure for extraction of TDS and named compounds | No | No |
 | [Schmieder et al., *Foods* **12**(15):2871 (2023)](https://doi.org/10.3390/foods12152871), "Influence of Flow Rate, Particle Size, and Temperature on Espresso Extraction Kinetics" | Decent DE1 Pro (flow-controlled) + Mahlkönig E65S at three settings; laser-diffraction PSD (De Brouckere means 273–295 µm, Sauter means 26.9–29.2 µm); TDS by DR6000-T refractometer per DIN 10775; flow 1/2/3 ml·s⁻¹ × 80/89/98 °C central composite design; 20.00 ± 0.01 g dose; ten sequential fractions per extraction; 48 extractions | Per-shot telemetry time series are not published. **Data availability is "available from the corresponding author upon request"** — nothing downloadable | CC BY (gold open access) | No | **Yes — the strongest chemistry/extraction reference found.** Directly relevant to the extraction-rate and grind-factor correlations in [model.md](model.md) | Not as-is; the fractionated protocol is not a normal shot. Could become a calibration target only if the authors supply the raw data | No |
 
@@ -36,6 +37,47 @@ in [calibration.md](calibration.md) — see "Calibration is not validation" belo
   shots on one documented machine with the same coffee, water, basket and
   preparation, varying one factor at a time. That is what the protocol below is
   for.
+- **Real telemetry from a public source did materialize**, but not from
+  Visualizer — see "Real-world reference telemetry" below. It is shape-
+  comparison and provenance, still not a validation set: the same missing
+  inputs (basket geometry, puck depth, PSD, measured temperature) apply.
+
+## Real-world reference telemetry
+
+`espresso_real_world_refs/` (served by the REST server via `--references`,
+rendered by `web/src/features/references/ReferenceShotsPanel.tsx`) carries
+four shots from the Coffee Ad Astra EG-1-vs-Niche post in the table above:
+`real_gagne_eg1_01`, `real_gagne_eg1_07`, `real_gagne_niche_02`,
+`real_gagne_niche_06`. Each record's shot-level metadata (dose, TDS raw and
+filtered, extraction yield, peak pressure, puck prep, ...) was already
+transcribed from the article and its Google Sheet log. `timeseries` and
+`observed.final_shot_time_s` were the acknowledged gap — the manifest
+originally stated plainly that no telemetry had been fabricated and both were
+empty/null until the original DE1 `.shot` files were parsed.
+
+**That gap is now closed for these four shots.** The article links a zipped
+Dropbox archive of the author's raw DE1 shot exports
+(`shotfiles_Mar2_2021.zip`); the four filenames each record's
+`source.de1_shot_file` already names (`20210302T094131.shot` and its three
+siblings) are in that archive. `tools/import_shot_telemetry.py` parses the
+DE1 `.shot` format (`espresso_elapsed`/`espresso_pressure`/`espresso_flow`/
+`espresso_weight`/`espresso_temperature_mix`) and populates `timeseries`
+(rows in `timeseries_fields` order: `time_s`, `pressure_bar`, `flow_ml_s`,
+`beverage_mass_g`, `temperature_c`) and `observed.final_shot_time_s`. Each
+record's `source.data_quality` says so and names the file. The raw `.shot`
+exports themselves are **not** vendored into this repository — the archive
+states no explicit license, so only these derived numeric samples are
+reproduced, consistent with the shot-level metadata already committed here;
+see `tools/import_shot_telemetry.py`'s module docstring for the exact
+provenance and how to regenerate from a freshly downloaded copy of the
+archive.
+
+This remains **not a validation set**: `simulation_link`-equivalent inputs
+(basket diameter, puck depth, PSD, a measured brew temperature) are still
+absent, so these four shots cannot be simulated without inventing numbers.
+They are real curves for shape comparison against the dashboard's own shot,
+with honest, traceable provenance — nothing here is calibrated or validated
+against them.
 
 ## Capture protocol 1.0
 

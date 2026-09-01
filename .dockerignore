@@ -1,0 +1,11 @@
+build/
+build-debug/
+build-warnings/
+web/node_modules/
+web/dist/
+web/coverage/
+.git/
+results/
+profiling/
+CoffeeSim/
+.opencode/

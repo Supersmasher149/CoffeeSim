@@ -31,26 +31,54 @@ void write_text(const std::filesystem::path& path, const std::string& contents) 
 
 }  // namespace
 
-TEST_CASE("the real reference catalogue preserves metadata and missing telemetry", "[references]") {
+TEST_CASE("the real reference catalogue preserves metadata and populated telemetry", "[references]") {
     const reference_io::Catalogue catalogue = reference_io::load_directory(testing::reference_dir());
 
     REQUIRE(catalogue.references.size() == 4);
     REQUIRE(catalogue.load_errors.empty());
-    REQUIRE_FALSE(catalogue.telemetry_available);
+    REQUIRE(catalogue.telemetry_available);
     REQUIRE(catalogue.references.front().id == "real_gagne_eg1_01");
     REQUIRE(catalogue.references.back().id == "real_gagne_niche_06");
 
     const nlohmann::json& document = catalogue.references.front().document;
     REQUIRE(document.at("source").at("author") == "Jonathan Gagne");
     REQUIRE(document.at("observed").at("tds_filtered_pct") == 5.69);
-    REQUIRE(document.at("observed").at("final_shot_time_s").is_null());
+
+    // Populated by tools/import_shot_telemetry.py from the original DE1 shot
+    // file; every reference in this catalogue now carries a real series.
+    REQUIRE_FALSE(document.at("observed").at("final_shot_time_s").is_null());
+    REQUIRE(document.at("observed").at("final_shot_time_s").get<double>() > 0.0);
     REQUIRE(document.at("timeseries").is_array());
-    REQUIRE(document.at("timeseries").empty());
+    REQUIRE_FALSE(document.at("timeseries").empty());
+
+    // Each row matches timeseries_fields in column count and order: time_s is
+    // non-decreasing, and the row's final_shot_time_s-column time equals the
+    // observed value used above.
+    const nlohmann::json& fields = document.at("timeseries_fields");
+    const nlohmann::json& rows = document.at("timeseries");
+    double previous_time = -1.0;
+    for (const nlohmann::json& row : rows) {
+        REQUIRE(row.is_array());
+        REQUIRE(row.size() == fields.size());
+        const double time_s = row.at(0).get<double>();
+        REQUIRE(time_s >= previous_time);
+        previous_time = time_s;
+    }
+    REQUIRE(rows.back().at(0).get<double>() ==
+            Catch::Approx(document.at("observed").at("final_shot_time_s").get<double>()));
     REQUIRE_FALSE(document.contains("recipe"));
+
+    for (const reference_io::ReferenceRecord& record : catalogue.references) {
+        REQUIRE(record.document.contains("timeseries"));
+        REQUIRE_FALSE(record.document.at("timeseries").empty());
+    }
 
     const nlohmann::json response = nlohmann::json::parse(reference_io::dump_json(catalogue));
     REQUIRE(response.at("references").size() == 4);
-    REQUIRE_FALSE(response.at("telemetry_available").get<bool>());
+    REQUIRE(response.at("telemetry_available").get<bool>());
+    for (const nlohmann::json& reference : response.at("references")) {
+        REQUIRE(reference.at("telemetry_available").get<bool>());
+    }
 }
 
 TEST_CASE("reference catalogue reports individual file errors", "[references]") {

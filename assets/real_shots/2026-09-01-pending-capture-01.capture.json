@@ -95,6 +95,9 @@
     "beverage_yield_g": null,
     "yield_scale_resolution_g": null,
     "tds_percent": null,
+    "tds_raw_percent": null,
+    "tds_filtered_percent": null,
+    "tds_uncertainty_percent_points": null,
     "tds_method": {
       "instrument": null,
       "filtered": null,

@@ -4,7 +4,6 @@ import { ApiFailure, api } from "./api/client";
 import type { Recipe, ShotResult } from "./api/types";
 import { type WorkflowId, WorkflowTabs } from "./app/WorkflowTabs";
 import { hasRecipe, useBootstrap } from "./app/useBootstrap";
-import { ReferenceShotsPanel } from "./features/references/ReferenceShotsPanel";
 import { ShotWorkspace } from "./features/shot/ShotWorkspace";
 import {
   fallbackRecipe,
@@ -12,17 +11,18 @@ import {
   type ShotWorkspace as ShotWorkspaceState,
 } from "./state/workspace";
 
-// Both panels below are recharts consumers (see the note in ChartStack's
-// lazy import); they're the only two chart panels that render regardless of
+// Both panels below are recharts consumers (Calibration renders
+// MeasuredShotComparison; SweepPanel renders its own heat map and profile
+// charts); they're the only two chart panels that render regardless of
 // which tab is active (hidden by CSS, not unmounted -- App: workflow
 // navigation's "preserves workflow-local state" contract needs them to stay
 // mounted once visited). Loading them eagerly would pull recharts back into
 // the initial bundle no matter how the Shot tab defers ChartStack, so each
 // is its own dynamic import and neither renders until its tab has been
 // opened at least once.
-const MeasuredShotComparison = lazy(() =>
-  import("./features/calibration/MeasuredShotComparison").then((mod) => ({
-    default: mod.MeasuredShotComparison,
+const Calibration = lazy(() =>
+  import("./features/calibration/Calibration").then((mod) => ({
+    default: mod.Calibration,
   })),
 );
 const SweepPanel = lazy(() =>
@@ -35,7 +35,7 @@ export function App() {
   const [sweepError, setSweepError] = useState<string>();
   const [pinned, setPinned] = useState<ShotResult[]>([]);
   const [activeWorkflow, setActiveWorkflow] = useState<WorkflowId>("shot");
-  // Tracks every tab that has ever been opened, so the Measured data and
+  // Tracks every tab that has ever been opened, so the Calibration and
   // Sweeps panels (each `hidden`, not unmounted, once visited -- see the
   // dynamic-import note above) mount their lazy chunk once and then stay
   // mounted, instead of never rendering or re-fetching on every tab switch.
@@ -202,42 +202,30 @@ export function App() {
         </section>
 
         <section
-          id="workflow-panel-measured"
+          id="workflow-panel-calibration"
           className="workflow-panel"
           role="tabpanel"
-          aria-labelledby="workflow-tab-measured"
-          hidden={activeWorkflow !== "measured"}
+          aria-labelledby="workflow-tab-calibration"
+          hidden={activeWorkflow !== "calibration"}
         >
           <header className="workflow-heading">
-            <p className="eyebrow">Fixed-coefficient evaluation</p>
-            <h2>Measured data</h2>
-            <p>Compare one stored shot with one native simulation. This workflow never fits coefficients.</p>
+            <p className="eyebrow">Measured against simulated</p>
+            <h2>Calibration</h2>
+            <p>
+              Measured shots and published references are both ground truth, so they share one list.
+              This workflow never fits coefficients.
+            </p>
           </header>
-          {visitedWorkflows.has("measured") && (
-            <Suspense fallback={<p className="note" aria-live="polite">Loading measured-data workflow...</p>}>
-              <MeasuredShotComparison />
+          {visitedWorkflows.has("calibration") && (
+            <Suspense fallback={<p className="note" aria-live="polite">Loading calibration workflow...</p>}>
+              <Calibration
+                referenceCatalogue={referenceCatalogue}
+                referenceError={referenceError}
+                active={active}
+                recipe={workspace.activeRecipe}
+              />
             </Suspense>
           )}
-        </section>
-
-        <section
-          id="workflow-panel-references"
-          className="workflow-panel"
-          role="tabpanel"
-          aria-labelledby="workflow-tab-references"
-          hidden={activeWorkflow !== "references"}
-        >
-          <header className="workflow-heading">
-            <p className="eyebrow">Context, not validation</p>
-            <h2>Reference catalogue</h2>
-            <p>Inspect published metadata and synthetic fixtures alongside the active model result.</p>
-          </header>
-          <ReferenceShotsPanel
-            catalogue={referenceCatalogue}
-            error={referenceError}
-            active={active}
-            recipe={workspace.activeRecipe}
-          />
         </section>
 
         <section

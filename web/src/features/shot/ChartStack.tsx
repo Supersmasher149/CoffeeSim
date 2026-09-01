@@ -1,152 +1,68 @@
-import { useId, useState } from "react";
-import {
-  CartesianGrid,
-  Line,
-  LineChart,
-  ReferenceLine,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
-
 import type { ShotResult } from "../../api/types";
-
-interface Series {
-  key: string;
-  label: string;
-  color: string;
-  dashed?: boolean;
-}
+import { AnalysisCanvas, type CanvasSeries } from "../shared/AnalysisCanvas";
+import { overlayDashFor, TRACE_STYLES } from "../../theme/traceStyles";
 
 interface Props {
   result: ShotResult;
   comparisons: ShotResult[];
   preInfusionEnd?: number;
+  cursorTimeSeconds?: number;
   onCursorChange: (time?: number) => void;
 }
 
-const palette = ["#d98b4a", "#6fb3c8", "#9c8ad0", "#78b06a"];
-
-// Recharts' syncId gives every chart in the stack one shared hover cursor and
-// one shared time axis, which is the requirement in 12.5 and the acceptance
-// criterion for FR-06.
-const SYNC_ID = "espressolab-shot";
-
-type ChartKey = "pressure" | "flow" | "temperature" | "mass" | "strength";
-
-function ShotTooltip({ active, payload, label }: any) {
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="tooltip">
-      <div className="t">t = {Number(label).toFixed(2)} s</div>
-      {payload.map((entry: any) => (
-        <div key={entry.name} style={{ color: entry.color }}>
-          {entry.name}: {Number(entry.value).toFixed(2)}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function Chart({
-  title,
-  data,
-  series,
-  unit,
-  markers,
-  onCursorChange,
-}: {
-  title: string;
-  data: Record<string, number>[];
-  series: Series[];
+interface Channel {
+  key: "pressure" | "flow" | "mass" | "temperature";
+  label: string;
   unit: string;
-  markers: { time: number; label: string; color: string }[];
-  onCursorChange: (time?: number) => void;
-}) {
-  // Recharts renders an SVG with no text alternative of its own, so a screen
-  // reader sees the chart card's heading and then nothing about what the
-  // lines actually show. A one-sentence summary -- the series names and
-  // however many timeline markers this chart carries -- fills that gap
-  // without trying to narrate every data point.
-  const summary =
-    `${title}: ${series.map((line) => line.label).join(", ")} over the shot's timeline` +
-    (markers.length > 0 ? `, with ${markers.length} marked event${markers.length === 1 ? "" : "s"}.` : ".");
-
-  return (
-    <div className="chart-card" role="img" aria-label={summary}>
-      <h3>{title}</h3>
-      <ResponsiveContainer width="100%" height={170}>
-        <LineChart
-          data={data}
-          syncId={SYNC_ID}
-          margin={{ top: 4, right: 12, bottom: 4, left: 4 }}
-          onMouseMove={(state: any) => onCursorChange(state?.activeLabel)}
-          onMouseLeave={() => onCursorChange(undefined)}
-        >
-          <CartesianGrid stroke="#3a302a" strokeDasharray="2 4" />
-          <XAxis
-            dataKey="time_s" type="number" domain={["dataMin", "dataMax"]}
-            tick={{ fill: "#a2938a", fontSize: 11 }} stroke="#3a302a"
-            label={{ value: "time (s)", position: "insideBottom", offset: -2, fill: "#a2938a", fontSize: 11 }}
-          />
-          <YAxis
-            tick={{ fill: "#a2938a", fontSize: 11 }} stroke="#3a302a" width={64}
-            label={{ value: unit, angle: -90, position: "insideLeft", offset: 12,
-                     fill: "#a2938a", fontSize: 11 }}
-          />
-          <Tooltip content={<ShotTooltip />} />
-          {markers.map((marker) => (
-            <ReferenceLine
-              key={marker.label + marker.time}
-              x={marker.time}
-              stroke={marker.color}
-              strokeDasharray="3 3"
-              label={{ value: marker.label, fill: marker.color, fontSize: 10, position: "top" }}
-            />
-          ))}
-          {series.map((line) => (
-            <Line
-              key={line.key} type="monotone" dataKey={line.key} name={line.label}
-              stroke={line.color} strokeWidth={1.8} dot={false} isAnimationActive={false}
-              connectNulls
-              strokeDasharray={line.dashed ? "4 3" : undefined}
-            />
-          ))}
-        </LineChart>
-      </ResponsiveContainer>
-    </div>
-  );
+  extract: (sample: ShotResult["samples"][number]) => number;
 }
 
-export function ChartStack({ result, comparisons, preInfusionEnd, onCursorChange }: Props) {
-  const [selectedChart, setSelectedChart] = useState<ChartKey>("pressure");
-  const selectorId = useId();
-  const runs = [result, ...comparisons].slice(0, 3);
-  const rowsByTime = new Map<number, Record<string, number>>();
-  for (const sample of result.samples) rowsByTime.set(sample.time_s, { ...sample });
-  runs.slice(1).forEach((run, comparisonIndex) => {
-    const runIndex = comparisonIndex + 1;
-    for (const sample of run.samples) {
-      const row = rowsByTime.get(sample.time_s) ?? { time_s: sample.time_s };
-      row[`pressure_bar_${runIndex}`] = sample.pressure_bar;
-      row[`flow_ml_s_${runIndex}`] = sample.flow_ml_s;
-      row[`beverage_mass_g_${runIndex}`] = sample.beverage_mass_g;
-      row[`extraction_yield_percent_${runIndex}`] = sample.extraction_yield_percent;
-      row[`puck_temperature_c_${runIndex}`] = sample.puck_temperature_c;
-      row[`tds_percent_${runIndex}`] = sample.tds_percent;
-      rowsByTime.set(sample.time_s, row);
-    }
-  });
-  const data = [...rowsByTime.values()].sort((left, right) => left.time_s - right.time_s);
+// The four traces the Hi-Fi legend names (pressure/flow/mass/temperature),
+// always drawn together -- audit #04 retired the single-signal <select> that
+// used to gate the other three off screen.
+const CHANNELS: Channel[] = [
+  { key: "pressure", label: "pressure", unit: " bar", extract: (s) => s.pressure_bar },
+  { key: "flow", label: "flow", unit: " ml/s", extract: (s) => s.flow_ml_s },
+  { key: "mass", label: "mass", unit: " g", extract: (s) => s.beverage_mass_g },
+  { key: "temperature", label: "temperature", unit: " °C", extract: (s) => s.puck_temperature_c },
+];
 
-  const overlay = (key: string, label: string): Series[] =>
-    runs.slice(1).map((run, index) => ({
-      key: `${key}_${index + 1}`,
-      label: `${label} · ${run.manifest.run_id.slice(5, 11)}`,
-      color: palette[index + 1],
-      dashed: true,
-    }));
+const MAX_RUNS = 3;
+
+export function ChartStack({ result, comparisons, preInfusionEnd, cursorTimeSeconds, onCursorChange }: Props) {
+  const runs = [result, ...comparisons].slice(0, MAX_RUNS);
+  const overlayRuns = runs.slice(1);
+
+  const series: CanvasSeries[] = CHANNELS.map((channel) => {
+    const style = TRACE_STYLES[channel.key];
+    return {
+      key: channel.key,
+      label: channel.label,
+      color: style.color,
+      width: style.width,
+      dash: style.dash,
+      format: (value) => `${value.toFixed(2)}${channel.unit}`,
+      points: result.samples.map((sample) => ({ time: sample.time_s, value: channel.extract(sample) })),
+    };
+  });
+
+  const overlaySeries: CanvasSeries[] = overlayRuns.flatMap((run) => {
+    const dash = overlayDashFor(run.manifest.run_id);
+    const tag = run.manifest.run_id.slice(5, 11);
+    return CHANNELS.map((channel) => {
+      const style = TRACE_STYLES[channel.key];
+      return {
+        key: `${channel.key}_${run.manifest.run_id}`,
+        label: `${channel.label} · ${tag}`,
+        color: style.color,
+        width: 1.4,
+        dash,
+        opacity: 0.7,
+        format: (value: number) => `${value.toFixed(2)}${channel.unit}`,
+        points: run.samples.map((sample) => ({ time: sample.time_s, value: channel.extract(sample) })),
+      };
+    });
+  });
 
   const markers = [
     ...(preInfusionEnd !== undefined
@@ -163,51 +79,14 @@ export function ChartStack({ result, comparisons, preInfusionEnd, onCursorChange
     })),
   ];
 
-  const charts: Record<ChartKey, { title: string; unit: string; series: Series[] }> = {
-    pressure: {
-      title: "Commanded pressure (bar)",
-      unit: "bar",
-      series: [
-        { key: "pressure_bar", label: "commanded pressure", color: palette[0] },
-        ...overlay("pressure_bar", "pressure"),
-      ],
-    },
-    flow: {
-      title: "Computed flow (ml/s)",
-      unit: "ml/s",
-      series: [
-        { key: "flow_ml_s", label: "flow", color: palette[0] },
-        ...overlay("flow_ml_s", "flow"),
-      ],
-    },
-    temperature: {
-      title: "Temperatures (°C)",
-      unit: "°C",
-      series: [
-        { key: "inlet_temperature_c", label: "inlet", color: palette[1], dashed: true },
-        { key: "puck_temperature_c", label: "puck", color: palette[0] },
-        ...overlay("puck_temperature_c", "puck"),
-      ],
-    },
-    mass: {
-      title: "Beverage mass (g)",
-      unit: "g",
-      series: [
-        { key: "beverage_mass_g", label: "beverage mass", color: palette[0] },
-        ...overlay("beverage_mass_g", "mass"),
-      ],
-    },
-    strength: {
-      title: "Strength and extraction (%)",
-      unit: "%",
-      series: [
-        { key: "tds_percent", label: "TDS", color: palette[1] },
-        { key: "extraction_yield_percent", label: "extraction yield", color: palette[0] },
-        ...overlay("extraction_yield_percent", "yield"),
-      ],
-    },
-  };
-  const selected = charts[selectedChart];
+  const ariaLabel =
+    `Shot analysis: ${CHANNELS.map((c) => c.label).join(", ")} over the shot's timeline` +
+    (overlayRuns.length > 0
+      ? `, overlaid with ${overlayRuns.length} pinned run${overlayRuns.length > 1 ? "s" : ""} (${overlayRuns
+          .map((run) => run.manifest.run_id.slice(5, 11))
+          .join(", ")})`
+      : "") +
+    (markers.length > 0 ? `, with ${markers.length} marked event${markers.length === 1 ? "" : "s"}.` : ".");
 
   return (
     <section className="analysis-surface" aria-labelledby="shot-analysis-title">
@@ -216,20 +95,22 @@ export function ChartStack({ result, comparisons, preInfusionEnd, onCursorChange
           <p className="eyebrow">Synchronized timeline</p>
           <h2 id="shot-analysis-title">Shot analysis</h2>
         </div>
-        <label htmlFor={selectorId}>
-          Signal
-          <select
-            id={selectorId}
-            value={selectedChart}
-            onChange={(event) => setSelectedChart(event.target.value as ChartKey)}
-          >
-            <option value="pressure">Commanded pressure</option>
-            <option value="flow">Computed flow</option>
-            <option value="temperature">Temperatures</option>
-            <option value="mass">Beverage mass</option>
-            <option value="strength">Strength and extraction</option>
-          </select>
-        </label>
+      </div>
+
+      <div className="analysis-legend" aria-hidden="true">
+        {CHANNELS.map((channel) => {
+          const style = TRACE_STYLES[channel.key];
+          return (
+            <span key={channel.key} className="analysis-legend-item">
+              <span
+                className="analysis-legend-swatch"
+                style={{ borderTopColor: style.color, borderTopStyle: style.dash ? "dashed" : "solid" }}
+              />
+              {channel.label}
+              {channel.unit}
+            </span>
+          );
+        })}
       </div>
 
       <div className="event-lane" aria-label="Shot timeline events">
@@ -240,10 +121,13 @@ export function ChartStack({ result, comparisons, preInfusionEnd, onCursorChange
         )) : <span>No warnings or stop events were recorded.</span>}
       </div>
 
-      <Chart
-        title={selected.title} unit={selected.unit} data={data} markers={markers}
+      <AnalysisCanvas
+        ariaLabel={ariaLabel}
+        series={[...series, ...overlaySeries]}
+        markers={markers}
+        preInfusionEnd={preInfusionEnd}
+        cursorTimeSeconds={cursorTimeSeconds}
         onCursorChange={onCursorChange}
-        series={selected.series}
       />
 
       <details className="analysis-data drawer">

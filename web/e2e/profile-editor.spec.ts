@@ -47,12 +47,12 @@ test("drags a pressure-profile point with the pointer", async ({ page }) => {
   expect(after).not.toBe(before);
 });
 
-test("edits a profile point through the numeric disclosure and it stays in sync with the graphical control", async ({ page }) => {
+test("edits a profile point through the numeric table and it stays in sync with the graphical control", async ({ page }) => {
   await page.goto("/");
   await openRecipeEditor(page);
-  // The pressure profile's disclosure is the first "Edit numeric points"
-  // button on the page (ControlRail renders the pressure section first).
-  await page.getByRole("button", { name: /edit numeric points/i }).first().click();
+  // Audit #08: the numeric points are always visible now, with no disclosure
+  // toggle to open first. "Point 1 value in bar" is the pressure profile's
+  // field (ControlRail renders the pressure section first).
   const valueInput = page.getByLabel("Point 1 value in bar");
   await valueInput.fill("5");
   await valueInput.blur();

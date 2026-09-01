@@ -1,9 +1,11 @@
-export type WorkflowId = "shot" | "measured" | "references" | "sweeps";
+// Audit #06: measured shots and published references used to be two tabs
+// with two pickers for the same question ("what does the real world say?").
+// They now share one "Calibration" workflow and one ground-truth list.
+export type WorkflowId = "shot" | "calibration" | "sweeps";
 
 const workflows: { id: WorkflowId; label: string; description: string }[] = [
   { id: "shot", label: "Shot", description: "Author a recipe and inspect a native simulation" },
-  { id: "measured", label: "Measured data", description: "Compare one stored shot with one simulation" },
-  { id: "references", label: "References", description: "Inspect published and fixture metadata" },
+  { id: "calibration", label: "Calibration", description: "Compare a measured shot or a published reference against a simulation" },
   { id: "sweeps", label: "Sweeps", description: "Explore parameter sensitivity" },
 ];
 

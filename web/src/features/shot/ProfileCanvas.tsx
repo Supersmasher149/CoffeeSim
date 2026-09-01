@@ -29,6 +29,17 @@ export function ProfileCanvas({ points, range, maxTimeSeconds, unit, color, onCh
   const instructionsId = useId();
   const [dragIndex, setDragIndex] = useState<number>();
   const [hoverIndex, setHoverIndex] = useState<number>();
+  // Audit #08: the only readout used to be a 7.5px hover label that vanished
+  // on blur. selectedIndex is set by focus/drag/pointerdown and, unlike
+  // hoverIndex, is never cleared just because the pointer left the node -- so
+  // the readout below stays on screen once a point has been touched.
+  const [selectedIndex, setSelectedIndex] = useState<number | undefined>(points.length > 0 ? 0 : undefined);
+  const selected =
+    selectedIndex !== undefined && selectedIndex < points.length
+      ? selectedIndex
+      : points.length > 0
+        ? points.length - 1
+        : undefined;
 
   const span = maxTimeSeconds || 1;
   const [low, high] = range;
@@ -197,10 +208,10 @@ export function ProfileCanvas({ points, range, maxTimeSeconds, unit, color, onCh
             key={index}
             cx={toX(point[0])}
             cy={toY(point[1])}
-            r={dragIndex === index || hoverIndex === index ? 4.5 : 3.2}
+            r={dragIndex === index || hoverIndex === index || selected === index ? 4.5 : 3.2}
             fill={color}
-            stroke="var(--panel)"
-            strokeWidth={1.2}
+            stroke={selected === index ? "var(--text)" : "var(--panel)"}
+            strokeWidth={selected === index ? 2 : 1.2}
             style={{ cursor: "grab" }}
             role="slider"
             tabIndex={0}
@@ -213,6 +224,7 @@ export function ProfileCanvas({ points, range, maxTimeSeconds, unit, color, onCh
               event.stopPropagation();
               dragIndexRef.current = index;
               setDragIndex(index);
+              setSelectedIndex(index);
               try {
                 event.currentTarget.setPointerCapture(event.pointerId);
               } catch {
@@ -221,6 +233,7 @@ export function ProfileCanvas({ points, range, maxTimeSeconds, unit, color, onCh
             }}
             onPointerEnter={() => setHoverIndex(index)}
             onPointerLeave={() => setHoverIndex(undefined)}
+            onFocus={() => setSelectedIndex(index)}
             onKeyDown={(event) => handlePointKeyDown(event, index)}
             onDoubleClick={(event) => {
               event.stopPropagation();
@@ -229,15 +242,15 @@ export function ProfileCanvas({ points, range, maxTimeSeconds, unit, color, onCh
           />
         ))}
 
-        {hoverIndex !== undefined && points[hoverIndex] && (
+        {selected !== undefined && points[selected] && (
           <text
-            x={Math.min(toX(points[hoverIndex][0]) + 6, VIEW.width - 40)}
-            y={Math.max(toY(points[hoverIndex][1]) - 6, PAD.top + 8)}
-            fontSize={7.5}
+            x={Math.min(toX(points[selected][0]) + 6, VIEW.width - 40)}
+            y={Math.max(toY(points[selected][1]) - 6, PAD.top + 8)}
+            fontSize={8}
+            fontWeight={600}
             fill="var(--text)"
-            style={{ fontFamily: "ui-monospace, Menlo, monospace" }}
           >
-            {points[hoverIndex][0]}s · {points[hoverIndex][1]}
+            node {selected + 1} · {points[selected][0]}s · {points[selected][1]}
           </text>
         )}
       </svg>

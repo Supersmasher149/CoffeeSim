@@ -41,9 +41,11 @@ describe("Accessibility: stable application states", () => {
     const user = userEvent.setup();
     const { container } = render(<App />);
     await screen.findByRole("option", { name: /baseline/i });
-    await user.click(screen.getByRole("tab", { name: /measured data/i }));
-    await screen.findByLabelText(/measured shot/i);
-    await user.click(screen.getByRole("button", { name: /compare with default-v1/i }));
+    await user.click(screen.getByRole("tab", { name: /calibration/i }));
+    // Audit #06: the measured-shot picker is folded into the shared
+    // ground-truth list now, so the compare button is reachable directly
+    // rather than through the comparison's own (now hidden) <select>.
+    await user.click(await screen.findByRole("button", { name: /compare with default-v1/i }));
     await screen.findByText(/mass rmse/i);
     await expectNoSeriousViolations(container);
   }, 15000);
@@ -69,7 +71,7 @@ describe("Accessibility: stable application states", () => {
     await expectNoSeriousViolations(container);
   }, 15000);
 
-  it("an open diagnostics drawer and an open profile editor have no serious/critical violations", async () => {
+  it("an open diagnostics drawer and the always-visible profile editor have no serious/critical violations", async () => {
     server.use(http.post("/api/v1/shots", () => HttpResponse.json(makeShotResult())));
     const user = userEvent.setup();
     const { container } = render(<App />);
@@ -81,7 +83,8 @@ describe("Accessibility: stable application states", () => {
     // the accessibility-tree approximation RTL's getByRole uses, so it is
     // targeted by its own text instead.
     await user.click(screen.getByText(/^Diagnostics —/));
-    await user.click(screen.getAllByRole("button", { name: /edit numeric points/i })[0]);
+    // Audit #08: the profile editor's numeric points are on screen by
+    // default now, with no disclosure toggle to open first.
     await expectNoSeriousViolations(container);
   }, 15000);
 });

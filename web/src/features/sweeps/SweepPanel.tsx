@@ -33,6 +33,46 @@ function linspace({ from, to, steps }: AxisDraft): number[] {
   );
 }
 
+// Audit #05: axis drafts were hard-coded to 250-450µm/9 steps and 88-96°C/5
+// steps regardless of the baseline recipe, so a sweep could never express
+// "vary around here". Reads the swept parameter's current value off the
+// baseline recipe and centers a reasonable span on it instead.
+function scalarValueAt(recipe: Recipe, parameterPath: string): number | undefined {
+  switch (parameterPath) {
+    case "puck.particle_diameter_um":
+      return recipe.puck.particle_diameter_um ?? undefined;
+    case "puck.dose_g":
+      return recipe.puck.dose_g;
+    case "puck.basket_diameter_mm":
+      return recipe.puck.basket_diameter_mm;
+    case "puck.depth_mm":
+      return recipe.puck.depth_mm;
+    case "temperature_profile_c.constant":
+      return recipe.temperature_profile_c[0]?.[1];
+    default:
+      return undefined;
+  }
+}
+
+const AXIS_SPAN: Record<string, { width: number; steps: number }> = {
+  "puck.particle_diameter_um": { width: 200, steps: 9 },
+  "temperature_profile_c.constant": { width: 8, steps: 5 },
+  "puck.dose_g": { width: 4, steps: 5 },
+  "puck.basket_diameter_mm": { width: 10, steps: 5 },
+  "puck.depth_mm": { width: 10, steps: 5 },
+};
+
+function seedAxis(parameterPath: string, baseline: Recipe): AxisDraft {
+  const spec = AXIS_SPAN[parameterPath] ?? { width: 100, steps: 9 };
+  const center = scalarValueAt(baseline, parameterPath) ?? 0;
+  return {
+    parameterPath,
+    from: Number((center - spec.width / 2).toFixed(4)),
+    to: Number((center + spec.width / 2).toFixed(4)),
+    steps: spec.steps,
+  };
+}
+
 const METRICS: { key: HeatMetric; label: string; unit: string }[] = [
   { key: "shot_time_s", label: "shot time", unit: "s" },
   { key: "extraction_yield_percent", label: "extraction yield", unit: "%" },
@@ -91,12 +131,16 @@ function AxisControls({
 // heat map (section 11.1). Sweeps run synchronously in this build (15.2), so
 // "progress" is a busy state.
 export function SweepPanel({ baseline, parameters, onError }: Props) {
-  const [primary, setPrimary] = useState<AxisDraft>({
-    parameterPath: "puck.particle_diameter_um", from: 250, to: 450, steps: 9,
-  });
-  const [secondary, setSecondary] = useState<AxisDraft>({
-    parameterPath: "temperature_profile_c.constant", from: 88, to: 96, steps: 5,
-  });
+  // Lazy initializers: the drafts are seeded once from the baseline recipe
+  // present at mount, then edited freely -- the same "starting point, not a
+  // leash" contract the old hardcoded defaults had, just anchored to the
+  // actual recipe instead of an arbitrary constant.
+  const [primary, setPrimary] = useState<AxisDraft>(() =>
+    seedAxis("puck.particle_diameter_um", baseline),
+  );
+  const [secondary, setSecondary] = useState<AxisDraft>(() =>
+    seedAxis("temperature_profile_c.constant", baseline),
+  );
   const [twoDimensional, setTwoDimensional] = useState(false);
   const [metric, setMetric] = useState<HeatMetric>("shot_time_s");
   const [result, setResult] = useState<SweepResult>();
@@ -278,6 +322,8 @@ export function SweepPanel({ baseline, parameters, onError }: Props) {
               metricLabel={selected.label}
               metricUnit={selected.unit}
               partial={result.cancelled === true}
+              baselineY={scalarValueAt(baseline, result.axes![0].parameter_path)}
+              baselineX={scalarValueAt(baseline, result.axes![1].parameter_path)}
             />
           ) : (
             <div

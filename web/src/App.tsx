@@ -1,18 +1,33 @@
-import { useCallback, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useRef, useState } from "react";
 
 import { ApiFailure, api } from "./api/client";
 import type { Recipe, ShotResult } from "./api/types";
 import { type WorkflowId, WorkflowTabs } from "./app/WorkflowTabs";
 import { hasRecipe, useBootstrap } from "./app/useBootstrap";
-import { MeasuredShotComparison } from "./features/calibration/MeasuredShotComparison";
 import { ReferenceShotsPanel } from "./features/references/ReferenceShotsPanel";
 import { ShotWorkspace } from "./features/shot/ShotWorkspace";
-import { SweepPanel } from "./features/sweeps/SweepPanel";
 import {
   fallbackRecipe,
   localValidation,
   type ShotWorkspace as ShotWorkspaceState,
 } from "./state/workspace";
+
+// Both panels below are recharts consumers (see the note in ChartStack's
+// lazy import); they're the only two chart panels that render regardless of
+// which tab is active (hidden by CSS, not unmounted -- App: workflow
+// navigation's "preserves workflow-local state" contract needs them to stay
+// mounted once visited). Loading them eagerly would pull recharts back into
+// the initial bundle no matter how the Shot tab defers ChartStack, so each
+// is its own dynamic import and neither renders until its tab has been
+// opened at least once.
+const MeasuredShotComparison = lazy(() =>
+  import("./features/calibration/MeasuredShotComparison").then((mod) => ({
+    default: mod.MeasuredShotComparison,
+  })),
+);
+const SweepPanel = lazy(() =>
+  import("./features/sweeps/SweepPanel").then((mod) => ({ default: mod.SweepPanel })),
+);
 
 export function App() {
   const [selectedId, setSelectedId] = useState("baseline");
@@ -20,6 +35,19 @@ export function App() {
   const [sweepError, setSweepError] = useState<string>();
   const [pinned, setPinned] = useState<ShotResult[]>([]);
   const [activeWorkflow, setActiveWorkflow] = useState<WorkflowId>("shot");
+  // Tracks every tab that has ever been opened, so the Measured data and
+  // Sweeps panels (each `hidden`, not unmounted, once visited -- see the
+  // dynamic-import note above) mount their lazy chunk once and then stay
+  // mounted, instead of never rendering or re-fetching on every tab switch.
+  const [visitedWorkflows, setVisitedWorkflows] = useState<Set<WorkflowId>>(
+    () => new Set(["shot"]),
+  );
+  const changeWorkflow = useCallback((workflow: WorkflowId) => {
+    setActiveWorkflow(workflow);
+    setVisitedWorkflows((current) =>
+      current.has(workflow) ? current : new Set(current).add(workflow),
+    );
+  }, []);
   const draftTouched = useRef(false);
 
   const [workspace, setWorkspace] = useState<ShotWorkspaceState>({
@@ -132,7 +160,7 @@ export function App() {
           </>
         )}
       </header>
-      <WorkflowTabs active={activeWorkflow} onChange={setActiveWorkflow} />
+      <WorkflowTabs active={activeWorkflow} onChange={changeWorkflow} />
 
       <main className="main" id="main-content">
         {healthError && <div className="error" role="alert">{healthError}</div>}
@@ -185,7 +213,11 @@ export function App() {
             <h2>Measured data</h2>
             <p>Compare one stored shot with one native simulation. This workflow never fits coefficients.</p>
           </header>
-          <MeasuredShotComparison />
+          {visitedWorkflows.has("measured") && (
+            <Suspense fallback={<p className="note" aria-live="polite">Loading measured-data workflow...</p>}>
+              <MeasuredShotComparison />
+            </Suspense>
+          )}
         </section>
 
         <section
@@ -221,11 +253,15 @@ export function App() {
             <p>Run one- or two-axis experiments from the current draft recipe.</p>
           </header>
           {sweepError && <div className="error" role="alert">{sweepError}</div>}
-          <SweepPanel
-            baseline={workspace.draftRecipe}
-            parameters={health?.sweepable_parameters ?? ["puck.particle_diameter_um"]}
-            onError={setSweepError}
-          />
+          {visitedWorkflows.has("sweeps") && (
+            <Suspense fallback={<p className="note" aria-live="polite">Loading sweep workflow...</p>}>
+              <SweepPanel
+                baseline={workspace.draftRecipe}
+                parameters={health?.sweepable_parameters ?? ["puck.particle_diameter_um"]}
+                onError={setSweepError}
+              />
+            </Suspense>
+          )}
         </section>
       </main>
     </div>

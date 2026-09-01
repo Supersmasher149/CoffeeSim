@@ -1,14 +1,20 @@
-import { useState } from "react";
+import { Suspense, lazy, useState } from "react";
 
 import type { Recipe, RecipeCatalogueEntry, ShotResult, ValidationIssue } from "../../api/types";
 import { preInfusionEnd } from "../../state/workspace";
 import { ComparisonTray } from "../comparison/ComparisonTray";
-import { ChartStack } from "./ChartStack";
 import { ControlRail } from "./ControlRail";
 import { DiagnosticsDrawer } from "./DiagnosticsDrawer";
 import { FlavorPanel } from "./FlavorPanel";
 import { MetricStrip } from "./MetricStrip";
 import { PuckView } from "./PuckView";
+
+// recharts (and the d3/decimal.js chain it pulls in) is the single largest
+// contributor to the production bundle -- see the bundle-visualizer note in
+// vite.config.ts. ChartStack only ever renders once a shot has run, so a
+// dynamic import keeps that weight out of the chunk needed just to open the
+// workbench and edit a recipe.
+const ChartStack = lazy(() => import("./ChartStack").then((mod) => ({ default: mod.ChartStack })));
 
 interface Props {
   recipes: RecipeCatalogueEntry[];
@@ -79,12 +85,14 @@ export function ShotWorkspace({
               targetBeverageG={activeRecipe?.stop.target_beverage_g ?? null}
               cursorTimeSeconds={cursorTimeSeconds}
             />
-            <ChartStack
-              result={active}
-              comparisons={comparisons}
-              preInfusionEnd={activeRecipe ? preInfusionEnd(activeRecipe) : undefined}
-              onCursorChange={setCursorTimeSeconds}
-            />
+            <Suspense fallback={<p className="note" aria-live="polite">Loading charts...</p>}>
+              <ChartStack
+                result={active}
+                comparisons={comparisons}
+                preInfusionEnd={activeRecipe ? preInfusionEnd(activeRecipe) : undefined}
+                onCursorChange={setCursorTimeSeconds}
+              />
+            </Suspense>
             <ComparisonTray
               runs={pinned}
               activeId={active.manifest.run_id}

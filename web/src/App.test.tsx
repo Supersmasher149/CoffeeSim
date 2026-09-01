@@ -102,7 +102,7 @@ describe("App: workflow navigation", () => {
   it("preserves workflow-local state while switching tabs", async () => {
     const user = await renderApp();
     await user.click(screen.getByRole("tab", { name: "Sweeps" }));
-    const steps = screen.getByRole("spinbutton", { name: "steps" });
+    const steps = await screen.findByRole("spinbutton", { name: "steps" });
     await user.clear(steps);
     await user.type(steps, "7");
 

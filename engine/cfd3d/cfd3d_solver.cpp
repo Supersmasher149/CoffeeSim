@@ -52,10 +52,20 @@ struct OutputFields {
     Cfd3dField velocity_z;
 };
 
+struct WaterValues {
+    double density_kg_m3 = 0.0;
+    double viscosity_pa_s = 0.0;
+    double heat_capacity_j_kg_k = 0.0;
+};
+
+double node_capacity(const GeometryInternal& geometry, std::size_t active, double porosity,
+                     double density_kg_m3) {
+    return geometry.aggregate_area_xy_m2[active] * geometry.public_geometry.dz_m * porosity * density_kg_m3;
+}
+
 double node_capacity(const GeometryInternal& geometry, std::size_t active, double temperature_k,
                      double porosity, const WaterProperties& water) {
-    return geometry.aggregate_area_xy_m2[active] * geometry.public_geometry.dz_m * porosity *
-           water.density_kg_m3(temperature_k);
+    return node_capacity(geometry, active, porosity, water.density_kg_m3(temperature_k));
 }
 
 double concentration(const NodeState& state, std::size_t node) {
@@ -87,26 +97,25 @@ std::vector<double> aggregate_material(const GeometryInternal& geometry,
 }
 
 std::vector<double> compute_mobility(const GeometryInternal& geometry, const NodeState& state,
-                                     const std::vector<double>& material, double porosity,
-                                     double absolute_permeability_m2,
-                                     const WaterProperties& water,
-                                     const ModelCoefficients& coeff) {
+                                      const std::vector<double>& material, double porosity,
+                                      double absolute_permeability_m2,
+                                      const std::vector<WaterValues>& water_values,
+                                      const ModelCoefficients& coeff) {
     const std::size_t count = state.retained_water_kg.size();
     const std::size_t active_count = geometry.active_roots.size();
     std::vector<double> mobility(count, 0.0);
     for (std::size_t node = 0; node < count; ++node) {
         const std::size_t active = node % active_count;
-        const double capacity = node_capacity(geometry, active, state.temperature_k[node], porosity,
-                                              water);
+        const WaterValues& water = water_values[node];
+        const double capacity = node_capacity(geometry, active, porosity, water.density_kg_m3);
         const double saturation = capacity > kMassEpsilon
                                       ? state.retained_water_kg[node] / capacity
                                       : 0.0;
         const double clamped_saturation = std::clamp(saturation, 0.0, 1.0);
         const double permeability = absolute_permeability_m2 * material[node];
-        const double viscosity = water.viscosity_pa_s(state.temperature_k[node]);
         const double water_mobility =
             permeability * wetting_factor(clamped_saturation, coeff.dry_permeability_multiplier) /
-            viscosity;
+            water.viscosity_pa_s;
         const double dry = 1.0 - clamped_saturation;
         const double air_mobility = permeability * std::max(dry * dry, 1.0e-6) /
                                     kAirViscosityPaS;
@@ -456,14 +465,28 @@ Cfd3dResult Cfd3dSolver::run(const Recipe& recipe, const ModelCoefficients& coef
         last_snapshot_time = snapshot_time;
     };
 
+    // The node state is immutable for the duration of a timestep. Keep its
+    // temperature-dependent water properties together and refresh them only
+    // after the next state has been committed.
+    std::vector<WaterValues> current_water(node_count);
+    const auto refresh_current_water = [&]() {
+        for (std::size_t node = 0; node < node_count; ++node) {
+            const double temperature_k = state.temperature_k[node];
+            current_water[node] = {water_->density_kg_m3(temperature_k),
+                                   water_->viscosity_pa_s(temperature_k),
+                                   water_->heat_capacity_j_kg_k(temperature_k)};
+        }
+    };
+    refresh_current_water();
+
     const auto make_sample = [&](double sample_time, double flow_m3_s) {
         double retained_total = 0.0;
         double capacity_total = 0.0;
         double weighted_temperature = 0.0;
         for (std::size_t node = 0; node < node_count; ++node) {
             retained_total += state.retained_water_kg[node];
-            const double capacity = node_capacity(geometry, node % active_count,
-                                                  state.temperature_k[node], bed.porosity, *water_);
+            const double capacity = node_capacity(geometry, node % active_count, bed.porosity,
+                                                  current_water[node].density_kg_m3);
             capacity_total += capacity;
             weighted_temperature += capacity * state.temperature_k[node];
         }
@@ -495,8 +518,10 @@ Cfd3dResult Cfd3dSolver::run(const Recipe& recipe, const ModelCoefficients& coef
         throw_if_cancelled(is_cancelled);
         const double inlet_pressure_pa = recipe.pressure_pa.sample(time_s);
         const double inlet_temperature_k = recipe.inlet_temperature_k.sample(time_s);
+        const double inlet_density = water_->density_kg_m3(inlet_temperature_k);
+        const double inlet_heat_capacity = water_->heat_capacity_j_kg_k(inlet_temperature_k);
         last_mobility = compute_mobility(geometry, state, material, bed.porosity,
-                                         absolute_permeability_m2, *water_, coeff);
+                                         absolute_permeability_m2, current_water, coeff);
         const PressureLevel pressure_system =
             build_fine_pressure_level(geometry, last_mobility, inlet_pressure_pa,
                                       coeff.outlet_pressure_pa);
@@ -567,8 +592,7 @@ Cfd3dResult Cfd3dSolver::run(const Recipe& recipe, const ModelCoefficients& coef
             face.donor = face.total_flux_m3_s > 0.0 ? face.a : face.b;
             if (face.donor == kInvalidNode) {
                 // The only permitted boundary inflow is water from the screen.
-                face.water_rate_kg_s = face.total_flux_m3_s *
-                                       water_->density_kg_m3(inlet_temperature_k);
+                face.water_rate_kg_s = face.total_flux_m3_s * inlet_density;
                 face.energy_j = 0.0;
                 if (face.b != kInvalidNode) {
                     water_rate_per_node[face.b] += std::abs(face.water_rate_kg_s);
@@ -580,7 +604,8 @@ Cfd3dResult Cfd3dSolver::run(const Recipe& recipe, const ModelCoefficients& coef
                 wetting_factor(fraction, coeff.dry_permeability_multiplier);
             const double air_relative = std::max((1.0 - fraction) * (1.0 - fraction), 1.0e-6);
             const double permeability = absolute_permeability_m2 * material[face.donor];
-            const double viscosity = water_->viscosity_pa_s(state.temperature_k[face.donor]);
+            const WaterValues& donor_water = current_water[face.donor];
+            const double viscosity = donor_water.viscosity_pa_s;
             const double water_mobility = permeability * water_relative /
                                           viscosity;
             const double air_mobility = permeability * air_relative / kAirViscosityPaS;
@@ -588,9 +613,7 @@ Cfd3dResult Cfd3dSolver::run(const Recipe& recipe, const ModelCoefficients& coef
             const double fraction_water = total_mobility > 0.0
                                               ? water_mobility / total_mobility
                                               : 0.0;
-            const double donor_temperature = state.temperature_k[face.donor];
-            const double density = water_->density_kg_m3(donor_temperature);
-            const double rate = face.total_flux_m3_s * fraction_water * density;
+            const double rate = face.total_flux_m3_s * fraction_water * donor_water.density_kg_m3;
             face.water_rate_kg_s = rate;
             water_rate_per_node[face.donor] += std::abs(rate);
             if (face.a != kInvalidNode) water_rate_per_node[face.a] += std::abs(rate);
@@ -599,8 +622,8 @@ Cfd3dResult Cfd3dSolver::run(const Recipe& recipe, const ModelCoefficients& coef
         const double max_time_step = std::min(config.dt_s, recipe.maximum_time_s - time_s);
         double dt = max_time_step;
         for (std::size_t node = 0; node < node_count; ++node) {
-            const double capacity = node_capacity(geometry, node % active_count,
-                                                  state.temperature_k[node], bed.porosity, *water_);
+            const double capacity = node_capacity(geometry, node % active_count, bed.porosity,
+                                                  current_water[node].density_kg_m3);
             if (water_rate_per_node[node] > 0.0 && capacity > 0.0) {
                 dt = std::min(dt, config.cfl_number * capacity / water_rate_per_node[node]);
             }
@@ -621,9 +644,7 @@ Cfd3dResult Cfd3dSolver::run(const Recipe& recipe, const ModelCoefficients& coef
             face.water_mass_kg = face.water_rate_kg_s * dt;
             if (face.donor == kInvalidNode && face.water_mass_kg > 0.0) {
                 face.solids_mass_kg = 0.0;
-                face.energy_j = face.water_mass_kg *
-                                water_->heat_capacity_j_kg_k(inlet_temperature_k) *
-                                inlet_temperature_k;
+                face.energy_j = face.water_mass_kg * inlet_heat_capacity * inlet_temperature_k;
             } else if (face.donor != kInvalidNode && face.water_mass_kg != 0.0) {
                 const double leaving = water_rate_per_node[face.donor] * dt;
                 const double scale = leaving > state.retained_water_kg[face.donor]
@@ -632,9 +653,9 @@ Cfd3dResult Cfd3dSolver::run(const Recipe& recipe, const ModelCoefficients& coef
                 const double limited_scale = std::clamp(scale, 0.0, 1.0);
                 face.water_mass_kg *= limited_scale;
                 const double donor_concentration = concentration(state, face.donor);
+                const WaterValues& donor_water = current_water[face.donor];
                 face.solids_mass_kg = face.water_mass_kg * donor_concentration;
-                face.energy_j = face.water_mass_kg *
-                                water_->heat_capacity_j_kg_k(state.temperature_k[face.donor]) *
+                face.energy_j = face.water_mass_kg * donor_water.heat_capacity_j_kg_k *
                                 state.temperature_k[face.donor];
             }
         }
@@ -666,7 +687,7 @@ Cfd3dResult Cfd3dSolver::run(const Recipe& recipe, const ModelCoefficients& coef
                 outflow_kg += face.water_mass_kg;
                 outflow_solids += face.solids_mass_kg;
                 outflow_volume += face.water_mass_kg /
-                                  water_->density_kg_m3(state.temperature_k[face.a]);
+                                  current_water[face.a].density_kg_m3;
                 outlet_energy_j += face.energy_j;
             }
         }
@@ -692,7 +713,7 @@ Cfd3dResult Cfd3dSolver::run(const Recipe& recipe, const ModelCoefficients& coef
         for (std::size_t node = 0; node < node_count; ++node) {
             const double old_temperature = state.temperature_k[node];
             const double retained = state.retained_water_kg[node] + net_water[node];
-            const double cp = water_->heat_capacity_j_kg_k(old_temperature);
+            const double cp = current_water[node].heat_capacity_j_kg_k;
             const double dose_share =
                 recipe.dose_kg * geometry.aggregate_area_xy_m2[node % active_count] / basket_area_m2 /
                 static_cast<double>(mesh.nz);
@@ -768,6 +789,7 @@ Cfd3dResult Cfd3dSolver::run(const Recipe& recipe, const ModelCoefficients& coef
             ambient_energy_loss_j += loss_power * dt;
         }
         state = std::move(next);
+        refresh_current_water();
         cumulative_water_in_kg += inflow_kg;
         water_out_kg += outflow_kg;
         solids_in_cup_kg += outflow_solids;
@@ -804,7 +826,7 @@ Cfd3dResult Cfd3dSolver::run(const Recipe& recipe, const ModelCoefficients& coef
     if (!failed) {
         const double inlet_pressure_pa = recipe.pressure_pa.sample(time_s);
         last_mobility = compute_mobility(geometry, state, material, bed.porosity,
-                                         absolute_permeability_m2, *water_, coeff);
+                                         absolute_permeability_m2, current_water, coeff);
         const PressureLevel final_system =
             build_fine_pressure_level(geometry, last_mobility, inlet_pressure_pa,
                                       coeff.outlet_pressure_pa);
@@ -844,7 +866,7 @@ Cfd3dResult Cfd3dSolver::run(const Recipe& recipe, const ModelCoefficients& coef
                 static_cast<double>(mesh.nz) * coeff.coffee_heat_capacity_j_kg_k *
                 state.temperature_k[node];
         stored_energy_j += state.retained_water_kg[node] *
-                           water_->heat_capacity_j_kg_k(state.temperature_k[node]) *
+                           current_water[node].heat_capacity_j_kg_k *
                            state.temperature_k[node];
     }
     result.diagnostics.water_mass_residual_kg =

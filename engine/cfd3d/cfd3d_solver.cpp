@@ -481,21 +481,30 @@ Cfd3dResult Cfd3dSolver::run(const Recipe& recipe, const ModelCoefficients& coef
 
     const auto make_sample = [&](double sample_time, double flow_m3_s) {
         double retained_total = 0.0;
-        double capacity_total = 0.0;
+        double pore_capacity_total = 0.0;
+        double thermal_capacity_total = 0.0;
         double weighted_temperature = 0.0;
         for (std::size_t node = 0; node < node_count; ++node) {
             retained_total += state.retained_water_kg[node];
-            const double capacity = node_capacity(geometry, node % active_count, bed.porosity,
-                                                  current_water[node].density_kg_m3);
-            capacity_total += capacity;
-            weighted_temperature += capacity * state.temperature_k[node];
+            const double area = geometry.aggregate_area_xy_m2[node % active_count];
+            const double dose_share = recipe.dose_kg * area / basket_area_m2 /
+                                      static_cast<double>(mesh.nz);
+            const double pore_capacity = node_capacity(geometry, node % active_count, bed.porosity,
+                                                       current_water[node].density_kg_m3);
+            const double thermal_capacity =
+                dose_share * coeff.coffee_heat_capacity_j_kg_k +
+                std::max(state.retained_water_kg[node], 0.0) *
+                    current_water[node].heat_capacity_j_kg_k;
+            pore_capacity_total += pore_capacity;
+            thermal_capacity_total += thermal_capacity;
+            weighted_temperature += thermal_capacity * state.temperature_k[node];
         }
         ShotSample sample;
         sample.time_s = sample_time;
         sample.pressure_pa = recipe.pressure_pa.sample(sample_time);
         sample.inlet_temperature_k = recipe.inlet_temperature_k.sample(sample_time);
-        sample.puck_temperature_k = capacity_total > kMassEpsilon
-                                       ? weighted_temperature / capacity_total
+        sample.puck_temperature_k = thermal_capacity_total > kMassEpsilon
+                                       ? weighted_temperature / thermal_capacity_total
                                        : coeff.initial_puck_temperature_k;
         sample.flow_m3_s = flow_m3_s;
         sample.beverage_mass_kg = beverage_mass_kg;
@@ -505,7 +514,9 @@ Cfd3dResult Cfd3dSolver::run(const Recipe& recipe, const ModelCoefficients& coef
         sample.extraction_yield_fraction = recipe.dose_kg > kMassEpsilon
                                                 ? solids_in_cup_kg / recipe.dose_kg
                                                 : 0.0;
-        sample.saturation = capacity_total > kMassEpsilon ? retained_total / capacity_total : 0.0;
+        sample.saturation = pore_capacity_total > kMassEpsilon
+                                ? retained_total / pore_capacity_total
+                                : 0.0;
         sample.permeability_m2 = absolute_permeability_m2;
         result.samples.push_back(sample);
     };
@@ -718,7 +729,8 @@ Cfd3dResult Cfd3dSolver::run(const Recipe& recipe, const ModelCoefficients& coef
                 recipe.dose_kg * geometry.aggregate_area_xy_m2[node % active_count] / basket_area_m2 /
                 static_cast<double>(mesh.nz);
             const double loss_power = coeff.ambient_heat_loss_w_k *
-                                      (geometry.aggregate_area_xy_m2[node % active_count] / basket_area_m2) *
+                                      (geometry.aggregate_area_xy_m2[node % active_count] / basket_area_m2) /
+                                      static_cast<double>(mesh.nz) *
                                       (old_temperature - coeff.ambient_temperature_k);
             const double old_energy = dose_share * coeff.coffee_heat_capacity_j_kg_k * old_temperature +
                                       state.retained_water_kg[node] * cp * old_temperature;
@@ -784,7 +796,8 @@ Cfd3dResult Cfd3dSolver::run(const Recipe& recipe, const ModelCoefficients& coef
                 std::max(result.diagnostics.max_total_velocity_divergence_1_s,
                          std::abs(total_flux_per_node[node]) /
                              std::max(area * geometry.public_geometry.dz_m, kMassEpsilon));
-            const double loss_power = coeff.ambient_heat_loss_w_k * (area / basket_area_m2) *
+            const double loss_power = coeff.ambient_heat_loss_w_k * (area / basket_area_m2) /
+                                      static_cast<double>(mesh.nz) *
                                       (state.temperature_k[node] - coeff.ambient_temperature_k);
             ambient_energy_loss_j += loss_power * dt;
         }

@@ -130,6 +130,7 @@ export function ControlRail(props: Props) {
 
   return (
     <aside className="rail">
+      <div className="rail-body">
       <div className="section">
         <h2>Recipe</h2>
         <select
@@ -233,7 +234,7 @@ export function ControlRail(props: Props) {
           range={inputRanges.pressure_bar}
           maxTimeSeconds={recipe.stop.maximum_time_s}
           unit="bar"
-          color="#d98b4a"
+          color="#f2ece2"
           onChange={(points) => onChange({ ...recipe, pressure_profile_bar: points })}
         />
       </div>
@@ -250,14 +251,21 @@ export function ControlRail(props: Props) {
         />
       </div>
 
-      <button onClick={props.onRun} disabled={props.running || issues.length > 0}>
-        {props.running ? "Simulating…" : "Run simulation"}
-      </button>
-      {issues.length > 0 && (
-        <p className="note" style={{ marginTop: 8 }}>
-          {issues.length} input{issues.length > 1 ? "s are" : " is"} outside the supported range.
-        </p>
-      )}
+      </div>
+
+      <div className="rail-footer">
+        <button onClick={props.onRun} disabled={props.running || issues.length > 0}>
+          {props.running ? "Simulating…" : "Run simulation"}
+        </button>
+        <div className="hint">
+          <span>⌘⏎</span>
+          <span>
+            {issues.length > 0
+              ? `${issues.length} input${issues.length > 1 ? "s are" : " is"} outside the supported range`
+              : "recipe ready to run"}
+          </span>
+        </div>
+      </div>
     </aside>
   );
 }

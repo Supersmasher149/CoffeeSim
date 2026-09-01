@@ -99,7 +99,12 @@ test("pinning a run keeps its label correct after the draft is edited (Audit P7 
   // column must still show the submitted dose (18g), not the new draft.
   await page.getByLabel("Dose (g)").fill("14");
 
-  await page.getByRole("tab", { name: "References" }).click();
+  // Audit #06: References merged into the Calibration tab's shared
+  // ground-truth list; select the first published reference row to see its
+  // metadata table (the real catalogue's reference ids vary by asset file,
+  // unlike the vitest fixture's fixed "real_gagne_shot_01").
+  await page.getByRole("tab", { name: "Calibration" }).click();
+  await page.getByRole("button", { name: /published/i }).first().click();
   const referenceTable = page.getByRole("table");
   const doseRow = referenceTable.getByRole("row").filter({ hasText: "Dose" });
   await expect(doseRow.locator(".current-model")).toHaveText("18.0 g");

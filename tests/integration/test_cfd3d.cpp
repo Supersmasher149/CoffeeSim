@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <limits>
 #include <stdexcept>
 #include <vector>
 
@@ -12,6 +13,8 @@
 #include "espressolab/artifact_io.hpp"
 #include "espressolab/cfd3d.hpp"
 #include "espressolab/cfd3d_artifact_io.hpp"
+#include "espressolab/puck.hpp"
+#include "espressolab/units.hpp"
 
 using namespace espressolab;
 
@@ -66,6 +69,123 @@ TEST_CASE("cfd3d produces bounded deterministic fields", "[cfd3d][verification]"
         REQUIRE(value >= 0.0);
         REQUIRE(value <= 1.0 + 1.0e-9);
     }
+}
+
+TEST_CASE("cfd3d ambient cooling is independent of axial refinement", "[cfd3d][heat][verification]") {
+    Recipe recipe = testing::baseline_recipe();
+    recipe.pressure_pa = PiecewiseLinearProfile::constant(0.0);
+    recipe.target_beverage_mass_kg.reset();
+    recipe.maximum_time_s = 10.0;
+
+    ModelCoefficients coefficients = testing::baseline_coefficients();
+    coefficients.initial_puck_temperature_k = units::celsius_to_kelvin(90.0);
+    coefficients.ambient_heat_loss_w_k = 2.0;
+
+    auto run = [&](int axial_cells) {
+        Cfd3dConfig config;
+        config.mesh = {6, 6, axial_cells};
+        config.dt_s = 0.01;
+        config.sample_interval_s = 0.5;
+        config.snapshot_interval_s = 0.0;
+        return Cfd3dSolver().run(recipe, coefficients, config);
+    };
+
+    const Cfd3dResult coarse = run(2);
+    const Cfd3dResult refined = run(16);
+    REQUIRE(coarse.samples.back().puck_temperature_k ==
+            Catch::Approx(refined.samples.back().puck_temperature_k).margin(1.0e-9));
+}
+
+TEST_CASE("cfd3d hot inlet and puck preserve temperature without ambient loss",
+          "[cfd3d][heat][verification]") {
+    Recipe recipe = testing::baseline_recipe();
+    recipe.target_beverage_mass_kg.reset();
+    recipe.maximum_time_s = 10.0;
+
+    ModelCoefficients coefficients = testing::baseline_coefficients();
+    const double hot_temperature = units::celsius_to_kelvin(93.0);
+    coefficients.initial_puck_temperature_k = hot_temperature;
+    coefficients.ambient_heat_loss_w_k = 0.0;
+
+    Cfd3dConfig config = small_config();
+    config.snapshot_interval_s = 0.0;
+    const Cfd3dResult result = Cfd3dSolver().run(recipe, coefficients, config);
+
+    for (const ShotSample& sample : result.samples) {
+        REQUIRE(sample.puck_temperature_k == Catch::Approx(hot_temperature).margin(1.0e-9));
+    }
+}
+
+TEST_CASE("cfd3d reports temperature using actual thermal capacity",
+          "[cfd3d][heat][verification]") {
+    Recipe recipe = short_recipe();
+    recipe.target_beverage_mass_kg.reset();
+    recipe.maximum_time_s = 10.0;
+    ModelCoefficients coefficients = testing::baseline_coefficients();
+    coefficients.ambient_heat_loss_w_k = 0.0;
+
+    Cfd3dConfig config = small_config();
+    config.snapshot_interval_s = 0.0;
+    config.material = Cfd3dMaterialField(config.mesh.nx, config.mesh.ny, config.mesh.nz, 1.0);
+    for (int z = 0; z < config.mesh.nz; ++z) {
+        for (int y = 0; y < config.mesh.ny; ++y) {
+            config.material.at(config.mesh.nx - 1, y, z) = 8.0;
+        }
+    }
+
+    const Cfd3dResult result = Cfd3dSolver().run(recipe, coefficients, config);
+    const Cfd3dMesh& mesh = result.geometry.mesh;
+    const std::size_t xy_count = static_cast<std::size_t>(mesh.nx) *
+                                 static_cast<std::size_t>(mesh.ny);
+    double minimum_temperature = std::numeric_limits<double>::infinity();
+    double maximum_temperature = -std::numeric_limits<double>::infinity();
+    for (std::size_t xy = 0; xy < xy_count; ++xy) {
+        if (result.geometry.cell_area_xy_m2[xy] <= 0.0) continue;
+        for (int z = 0; z < mesh.nz; ++z) {
+            const double temperature = result.temperature_k.values()[xy + xy_count *
+                                                                       static_cast<std::size_t>(z)];
+            minimum_temperature = std::min(minimum_temperature, temperature);
+            maximum_temperature = std::max(maximum_temperature, temperature);
+        }
+    }
+    REQUIRE(maximum_temperature - minimum_temperature > 1.0e-6);
+
+    std::vector<double> aggregate_area(xy_count, 0.0);
+    for (std::size_t xy = 0; xy < xy_count; ++xy) {
+        const int root = result.geometry.agglomerate_parent[xy];
+        if (root >= 0) aggregate_area[static_cast<std::size_t>(root)] +=
+            result.geometry.cell_area_xy_m2[xy];
+    }
+
+    TabulatedWaterProperties water;
+    const double porosity =
+        compress_puck(recipe, coefficients,
+                      recipe.pressure_pa.max_value() - coefficients.outlet_pressure_pa)
+            .porosity;
+    double expected_weighted_temperature = 0.0;
+    double thermal_capacity_total = 0.0;
+    for (std::size_t xy = 0; xy < xy_count; ++xy) {
+        if (result.geometry.agglomerate_parent[xy] != static_cast<int>(xy)) continue;
+        const double area = aggregate_area[xy];
+        for (int z = 0; z < mesh.nz; ++z) {
+            const std::size_t index = xy + xy_count * static_cast<std::size_t>(z);
+            const double temperature = result.temperature_k.values()[index];
+            const double capacity = area * result.geometry.dz_m * porosity *
+                                    water.density_kg_m3(temperature);
+            const double retained = result.saturation.values()[index] * capacity;
+            const double dose_share = recipe.dose_kg * area / recipe.basket_area_m2() /
+                                      static_cast<double>(mesh.nz);
+            const double thermal_capacity =
+                dose_share * coefficients.coffee_heat_capacity_j_kg_k +
+                retained * water.heat_capacity_j_kg_k(temperature);
+            thermal_capacity_total += thermal_capacity;
+            expected_weighted_temperature += thermal_capacity * temperature;
+        }
+    }
+
+    REQUIRE(thermal_capacity_total > 0.0);
+    REQUIRE(result.samples.back().puck_temperature_k ==
+            Catch::Approx(expected_weighted_temperature / thermal_capacity_total).margin(1.0e-9));
 }
 
 // Regression: cfd3d_artifact_io::result_hash() used to hash dump_case_json()

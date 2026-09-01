@@ -10,3 +10,12 @@ web/dist/
 web/coverage/
 web/playwright-report/
 web/test-results/
+__pycache__/
+
+# Local scratch/tooling, not project source
+CoffeeSim/
+profiling/
+results/
+.opencode/
+session-*.md
+gitLog.txt

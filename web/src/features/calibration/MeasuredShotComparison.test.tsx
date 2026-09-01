@@ -1,5 +1,5 @@
 import { http, HttpResponse, delay } from "msw";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
@@ -61,6 +61,31 @@ describe("MeasuredShotComparison: running a comparison", () => {
     await screen.findByText(/mass rmse/i);
     expect(requests).toBe(1);
     expect(seenQuery).toBe("default-v1");
+  });
+
+  it("shows a cursor readout with measured/simulated/residual values on hover", async () => {
+    // Regression test: the comparison canvas never wired onCursorChange or
+    // cursorTimeSeconds into AnalysisCanvas at all, so hovering it did
+    // nothing -- unlike ChartStack, which had the callback wired but never
+    // fed the value back in.
+    useCatalogue();
+    server.use(
+      http.get("/api/v1/measured-shots/:id/compare", () => HttpResponse.json(makeMeasuredShotComparison())),
+    );
+    const user = userEvent.setup();
+    const { container } = render(<MeasuredShotComparison />);
+    await screen.findByLabelText(/measured shot/i);
+    await user.click(screen.getByRole("button", { name: /compare with default-v1/i }));
+    await screen.findByText(/mass rmse/i);
+
+    const svg = container.querySelector(".analysis-canvas-svg")!;
+    fireEvent.mouseMove(svg, { clientX: 50 });
+
+    const readout = container.querySelector(".cursor-readout");
+    expect(readout).toBeInTheDocument();
+    expect(readout!.textContent).toMatch(/measured/i);
+    expect(readout!.textContent).toMatch(/simulated/i);
+    expect(readout!.textContent).toMatch(/residual/i);
   });
 
   it("shows correctly-signed residuals and units for optional measurement fields", async () => {

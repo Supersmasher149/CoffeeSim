@@ -49,7 +49,8 @@ def load_schema(path: Path):
 def schema_accepts(schema, instance, registry=None) -> tuple[bool, str]:
     try:
         validator = jsonschema.Draft202012Validator(
-            schema, registry=registry if registry is not None else referencing.Registry()
+            schema,
+            registry=registry if registry is not None else referencing.Registry(),
         )
         validator.validate(instance)
         return True, ""

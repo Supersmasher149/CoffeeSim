@@ -51,10 +51,14 @@ describe("App: independent data loading", () => {
   });
 
   it("renders once health, recipes and references have each resolved, even though none of them share a request", async () => {
+    const user = userEvent.setup();
     render(<App />);
     await screen.findByText(/0\.1\.0-test/);
     await screen.findByRole("option", { name: /baseline/i });
-    await screen.findByText(/real-world references/i);
+    await user.click(screen.getByRole("tab", { name: "Calibration" }));
+    // The reference catalogue landing shows up as a row in the shared
+    // ground-truth list (audit #06), not its own tab.
+    await screen.findByText(/published · metadata only/i);
   });
 
   it("shows a connection message and still loads recipes when health fails", async () => {
@@ -66,8 +70,10 @@ describe("App: independent data loading", () => {
 
   it("surfaces a reference-catalogue error independently of a working recipe load", async () => {
     server.use(http.get("/api/v1/reference-shots", () => HttpResponse.error()));
+    const user = userEvent.setup();
     render(<App />);
     await screen.findByRole("option", { name: /baseline/i });
+    await user.click(screen.getByRole("tab", { name: "Calibration" }));
     await screen.findByText(/reference catalogue unavailable/i);
   });
 
@@ -119,7 +125,7 @@ describe("App: workflow navigation", () => {
     await user.type(dose, "2");
     expect(screen.getByRole("alert")).toHaveTextContent(/must be between 14 and 22/i);
 
-    await user.click(screen.getByRole("tab", { name: "Measured data" }));
+    await user.click(screen.getByRole("tab", { name: "Calibration" }));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
@@ -130,7 +136,7 @@ describe("App: workflow navigation", () => {
     await screen.findByRole("alert");
     expect(screen.getByRole("alert")).toHaveTextContent(/recipe catalogue unavailable/i);
 
-    await user.click(screen.getByRole("tab", { name: "References" }));
+    await user.click(screen.getByRole("tab", { name: "Calibration" }));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });
@@ -198,7 +204,10 @@ describe("App: running a simulation", () => {
     // The reference panel's "current model" column must reflect the recipe
     // that was *submitted* (18 g), never the draft as it stands once the
     // response lands (20 g) -- App.tsx's activeRecipe contract.
-    await user.click(screen.getByRole("tab", { name: "References" }));
+    await user.click(screen.getByRole("tab", { name: "Calibration" }));
+    // Audit #06: a reference now lives as a row in the shared ground-truth
+    // list; select it to see its metadata table.
+    await user.click(await screen.findByRole("button", { name: /shot 01/i }));
     const referenceTable = screen.getByRole("table");
     const doseRow = within(referenceTable).getAllByRole("row").find((row) => /dose/i.test(row.textContent ?? ""));
     expect(doseRow).toBeDefined();
@@ -312,7 +321,10 @@ describe("App: reference panel association (regression, Audit P7 issue #22 patte
     await user.clear(doseField);
     await user.type(doseField, "14");
 
-    await user.click(screen.getByRole("tab", { name: "References" }));
+    await user.click(screen.getByRole("tab", { name: "Calibration" }));
+    // Audit #06: a reference now lives as a row in the shared ground-truth
+    // list; select it to see its metadata table.
+    await user.click(await screen.findByRole("button", { name: /shot 01/i }));
     const referenceTable = screen.getByRole("table");
     const doseRow = within(referenceTable).getAllByRole("row").find((row) => /dose/i.test(row.textContent ?? ""));
     // Must still read 18.0 g (the submitted recipe), not 14 (the live draft).

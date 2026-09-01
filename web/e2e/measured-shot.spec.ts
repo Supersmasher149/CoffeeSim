@@ -7,8 +7,11 @@ import { expect, test } from "@playwright/test";
 
 test("comparing a measured shot issues exactly one compare request", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("tab", { name: "Measured data" }).click();
-  await expect(page.getByLabel(/measured shot/i)).toBeVisible();
+  // Audit #06: the "Measured data" tab merged into "Calibration", and the
+  // measured-shot picker's own <select> is folded into the shared
+  // ground-truth list, so the compare button is what's waited on here.
+  await page.getByRole("tab", { name: "Calibration" }).click();
+  await expect(page.getByRole("button", { name: /compare with default-v1/i })).toBeVisible();
 
   let compareRequests = 0;
   page.on("request", (request) => {

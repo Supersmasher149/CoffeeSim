@@ -103,34 +103,85 @@ describe("HeatMap: invalid runs", () => {
   });
 });
 
-describe("HeatMap: hover and keyboard detail", () => {
-  it("shows the hovered cell's detail and clears it on mouse leave", async () => {
+describe("HeatMap: live preview vs. sticky pin (audit #09)", () => {
+  it("shows the hovered cell's detail as a live preview, falling back to the placeholder with nothing pinned", async () => {
     const user = userEvent.setup();
     renderHeatMap();
-    expect(screen.getByText(/hover or focus a cell for its run/i)).toBeInTheDocument();
+    expect(screen.getByText(/click or focus a cell for its run/i)).toBeInTheDocument();
 
     const cell = screen.getByRole("button", { name: /temperature_profile_c\.constant 88, puck\.particle_diameter_um 250/i });
     await user.hover(cell);
     expect(screen.getByText(/target mass reached/i)).toBeInTheDocument();
 
     await user.unhover(cell);
-    expect(screen.getByText(/hover or focus a cell for its run/i)).toBeInTheDocument();
+    expect(screen.getByText(/click or focus a cell for its run/i)).toBeInTheDocument();
   });
 
-  it("shows the same detail on keyboard focus, so Tab reaches every cell's data", () => {
+  it("keeps a clicked cell's detail on screen after blur, instead of resetting to the placeholder", async () => {
+    const user = userEvent.setup();
     renderHeatMap();
     const cell = screen.getByRole("button", { name: /temperature_profile_c\.constant 96, puck\.particle_diameter_um 350/i });
-    fireEvent.focus(cell);
+
+    await user.click(cell);
+    expect(cell).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByText(/target mass reached/i)).toBeInTheDocument();
+    expect(screen.getByText(/pinned/i)).toBeInTheDocument();
 
     fireEvent.blur(cell);
-    expect(screen.getByText(/hover or focus a cell for its run/i)).toBeInTheDocument();
+    // Audit #09: this is the concrete fix -- blur used to erase the detail
+    // entirely; it now survives because the cell was pinned, not just hovered.
+    expect(screen.getByText(/target mass reached/i)).toBeInTheDocument();
+    expect(screen.queryByText(/click or focus a cell for its run/i)).not.toBeInTheDocument();
+  });
+
+  it("holds a second, shift-clicked cell alongside the pinned one for side-by-side comparison", async () => {
+    const user = userEvent.setup();
+    renderHeatMap();
+    const first = screen.getByRole("button", { name: /temperature_profile_c\.constant 88, puck\.particle_diameter_um 250/i });
+    const second = screen.getByRole("button", { name: /temperature_profile_c\.constant 96, puck\.particle_diameter_um 350/i });
+
+    await user.click(first);
+    fireEvent.click(second, { shiftKey: true });
+
+    expect(screen.getByText(/pinned/i)).toBeInTheDocument();
+    expect(screen.getByText(/held/i)).toBeInTheDocument();
+    // Both cells' detail are visible at once -- two "target mass reached"
+    // blocks (both fixture rows share that termination).
+    expect(screen.getAllByText(/target mass reached/i)).toHaveLength(2);
+  });
+
+  it("moves focus between adjacent cells with arrow keys", () => {
+    renderHeatMap();
+    const start = screen.getByRole("button", { name: /temperature_profile_c\.constant 88, puck\.particle_diameter_um 250/i });
+    start.focus();
+    fireEvent.keyDown(start, { key: "ArrowRight" });
+    const right = screen.getByRole("button", { name: /temperature_profile_c\.constant 88, puck\.particle_diameter_um 300/i });
+    expect(right).toHaveFocus();
   });
 
   it("carries the metric value and unit in every cell's aria-label as a non-color alternative", () => {
     renderHeatMap();
     const cell = screen.getByRole("button", { name: /temperature_profile_c\.constant 88, puck\.particle_diameter_um 250/i });
     expect(cell.getAttribute("aria-label")).toMatch(/shot time \d+\.\d s/);
+  });
+});
+
+describe("HeatMap: baseline coordinate (audit #05)", () => {
+  it("marks the aria-label of the cell matching the baseline recipe's values", () => {
+    renderHeatMap({ baselineY: 92, baselineX: 300 });
+    const baselineCell = screen.getByRole("button", { name: /temperature_profile_c\.constant 92, puck\.particle_diameter_um 300/i });
+    expect(baselineCell.getAttribute("aria-label")).toMatch(/baseline/i);
+
+    const otherCell = screen.getByRole("button", { name: /temperature_profile_c\.constant 88, puck\.particle_diameter_um 250/i });
+    expect(otherCell.getAttribute("aria-label")).not.toMatch(/baseline/i);
+  });
+
+  it("marks no cell as baseline when the coordinates are not given", () => {
+    renderHeatMap();
+    const group = screen.getByRole("group", { name: /heat map of/i });
+    for (const button of within(group).getAllByRole("button")) {
+      expect(button.getAttribute("aria-label")).not.toMatch(/baseline/i);
+    }
   });
 });
 

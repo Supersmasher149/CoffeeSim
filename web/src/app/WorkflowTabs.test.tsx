@@ -23,7 +23,7 @@ describe("WorkflowTabs", () => {
     shot.focus();
 
     await user.keyboard("{ArrowRight}");
-    expect(onChange).toHaveBeenLastCalledWith("measured");
+    expect(onChange).toHaveBeenLastCalledWith("calibration");
     await user.keyboard("{End}");
     expect(onChange).toHaveBeenLastCalledWith("sweeps");
     await user.keyboard("{Home}");

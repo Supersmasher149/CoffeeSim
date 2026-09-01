@@ -9,11 +9,10 @@ import { FlavorPanel } from "./FlavorPanel";
 import { MetricStrip } from "./MetricStrip";
 import { PuckView } from "./PuckView";
 
-// recharts (and the d3/decimal.js chain it pulls in) is the single largest
-// contributor to the production bundle -- see the bundle-visualizer note in
-// vite.config.ts. ChartStack only ever renders once a shot has run, so a
-// dynamic import keeps that weight out of the chunk needed just to open the
-// workbench and edit a recipe.
+// ChartStack now draws through AnalysisCanvas rather than recharts, so it no
+// longer carries that dependency's weight -- but it still only ever renders
+// once a shot has run, so a dynamic import keeps its own chunk out of what's
+// needed just to open the workbench and edit a recipe.
 const ChartStack = lazy(() => import("./ChartStack").then((mod) => ({ default: mod.ChartStack })));
 
 interface Props {
@@ -90,6 +89,7 @@ export function ShotWorkspace({
                 result={active}
                 comparisons={comparisons}
                 preInfusionEnd={activeRecipe ? preInfusionEnd(activeRecipe) : undefined}
+                cursorTimeSeconds={cursorTimeSeconds}
                 onCursorChange={setCursorTimeSeconds}
               />
             </Suspense>

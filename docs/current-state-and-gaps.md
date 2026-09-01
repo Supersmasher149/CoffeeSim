@@ -98,8 +98,13 @@ The repository documents the following local checks:
 
 - `./scripts/test.sh` passes 226 Catch2 test cases and 86,773 assertions. It does
   not run PTY, dashboard, demo, or warnings-as-errors checks.
-- The dashboard typecheck, coverage suite, and production build succeed; Vite
-  reports a non-blocking 597.30 kB minified JavaScript chunk warning.
+- The dashboard typecheck, coverage suite, and production build succeed. PR #52
+  reduced the initial JavaScript payload from 597,368 B / 172,158 B gzip to
+  190,915 B / 61,255 B gzip (68.0% raw / 64.4% gzip). PR #52 brought every
+  emitted JavaScript chunk below Vite's 500 kB threshold. Total emitted
+  JavaScript is essentially unchanged, changing from 597,368 B / 172,158 B
+  gzip to 595,450 B / 172,493 B gzip. This is an initial-load improvement, not
+  a reduction in total transfer.
 - GitHub Actions macOS, Linux, dashboard, and full nightly browser-matrix jobs
   passed for current `origin/main` commit `347177c` in
   [run 33508004359](https://github.com/Supersmasher149/CoffeeSim/actions/runs/33508004359).
@@ -151,7 +156,7 @@ and output should be presented as a model result rather than a prediction.
 
 | Gap | Impact | Completion signal |
 | --- | --- | --- |
-| Dashboard has a non-blocking 597.30 kB minified JavaScript chunk warning | Does not block the MVP, but indicates a performance/packaging follow-up for a polished release | Chunk is reduced or the warning is explicitly accepted with measured load impact |
+| Dashboard initial-load packaging | Resolved by PR #52: initial JavaScript fell from 597,368 B / 172,158 B gzip to 190,915 B / 61,255 B gzip, and every emitted JavaScript chunk is below 500 kB. Total emitted JavaScript remains essentially unchanged at 595,450 B / 172,493 B gzip. | Future performance reporting distinguishes initial payload from total transfer |
 | Portfolio packaging is unfinished | The project is not yet represented by a final demo video and evidence-based resume/project claims | Demo recording and portfolio copy use only verified benchmark and validation results |
 
 ### Product and Operational Gaps

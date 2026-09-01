@@ -1,0 +1,137 @@
+{
+  "schema_version": "1.0",
+  "kind": "real_shot_capture",
+  "id": "2026-09-01-pending-capture-01",
+  "status": "pending_capture",
+  "capture": {
+    "utc_timestamp": null,
+    "operator": null,
+    "protocol_version": "1.0"
+  },
+  "provenance": {
+    "source": "first-party capture (not yet performed)",
+    "source_url": null,
+    "license": null,
+    "retrieved_at": null,
+    "data_quality_flags": [
+      "pending_capture: no shot has been brewed against this record. Every observable is null by design and must stay null until a real shot is recorded.",
+      "No particle size distribution is planned for the first capture; grind.measured stays false and grinder.dial_setting is recorded verbatim as text. A dial number must never be converted to microns.",
+      "preparation.puck_depth_mm and grind PSD are solver inputs no consumer machine reports; until both are measured this record cannot be promoted to assets/measured_shots/ and simulation_link.recipe stays null."
+    ],
+    "calibration_eligible": false,
+    "validation_eligible": false
+  },
+  "machine": {
+    "model": null,
+    "firmware": null,
+    "basket": null,
+    "portafilter_diameter_mm": null,
+    "pressure_sensor_measures": null,
+    "pressure_sensor_location": null,
+    "temperature_sensor_location": null
+  },
+  "grinder": {
+    "model": null,
+    "burrs": null,
+    "dial_setting": null,
+    "rpm": null
+  },
+  "grind": {
+    "measured": false,
+    "method": null,
+    "d10_um": null,
+    "d50_um": null,
+    "d90_um": null,
+    "sauter_mean_d32_um": null,
+    "distribution": []
+  },
+  "coffee": {
+    "roaster": null,
+    "name": null,
+    "origin": null,
+    "process": null,
+    "roast_level": null,
+    "roast_date": null,
+    "days_off_roast": null,
+    "storage": null
+  },
+  "preparation": {
+    "dose_g": null,
+    "dose_scale_resolution_g": null,
+    "basket": null,
+    "distribution_technique": null,
+    "tamp": null,
+    "filter_paper": null,
+    "puck_screen": null,
+    "puck_depth_mm": null
+  },
+  "water": {
+    "recipe_name": null,
+    "source": null,
+    "tds_ppm": null,
+    "general_hardness_ppm_caco3": null,
+    "alkalinity_ppm_caco3": null
+  },
+  "temperature": {
+    "setpoint_c": null,
+    "measured_c": null,
+    "measurement_point": null,
+    "measurement_method": null,
+    "note": null
+  },
+  "pressure": {
+    "profile_name": null,
+    "profile_description": null,
+    "nominal_peak_bar": null,
+    "preinfusion": null
+  },
+  "timing": {
+    "convention": null,
+    "first_drip_s": null,
+    "end_condition": null,
+    "total_shot_time_s": null
+  },
+  "result": {
+    "beverage_yield_g": null,
+    "yield_scale_resolution_g": null,
+    "tds_percent": null,
+    "tds_method": {
+      "instrument": null,
+      "filtered": null,
+      "sample_temperature_c": null,
+      "repeats": null,
+      "readings_percent": []
+    },
+    "extraction_yield_percent": null,
+    "extraction_yield_source": null
+  },
+  "telemetry": {
+    "csv": null,
+    "columns": [],
+    "sample_rate_hz": null,
+    "row_count": null,
+    "time_origin": null
+  },
+  "observations": {
+    "taste": null,
+    "channeling": null,
+    "puck_condition": null,
+    "anomalies": [],
+    "notes": "ACQUISITION INSTRUCTIONS -- follow docs/real-shot-validation.md section \"Capture protocol 1.0\". Copy assets/real_shots/TEMPLATE.capture.json to a new file named <id>.capture.json, copy TEMPLATE.telemetry.csv beside it as <id>.telemetry.csv, and fill fields ONLY from things you measured. Leave anything you did not measure as null; do not carry a setpoint into temperature.measured_c, do not derive a PSD from a grinder dial, and record whether the logged pressure is pump or puck pressure. Brew at least five shots on one machine with one coffee, one water recipe, one basket and one preparation, varying only grind; reserve at least one for held-out validation and never fit on it. This record is the reserved slot for shot 01."
+  },
+  "attachments": {
+    "raw_shot_file": null,
+    "telemetry_csv": null,
+    "photos": [],
+    "video": null
+  },
+  "simulation_link": {
+    "recipe": null,
+    "unavailable_model_inputs": [
+      "puck.particle_diameter_um / puck.grind (no PSD measurement planned)",
+      "puck.depth_mm (must be measured on the tamped bed)",
+      "measured inlet water temperature (machine setpoint is not an observation)"
+    ],
+    "comparable_observables": []
+  }
+}

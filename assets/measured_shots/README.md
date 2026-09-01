@@ -30,6 +30,11 @@ espressolab_cli calibrate --shots assets/measured_shots \
 Write fitted coefficients and reports somewhere else: every `.json` in this
 directory is read as a measured shot.
 
+Records of *physically brewed* shots live in `assets/real_shots/` instead, in a
+richer format that also states what was not measured. They are deliberately not
+readable here; see `docs/real-shot-validation.md` for the capture protocol and
+for when a capture may be promoted into this directory.
+
 Rules from 11.3, worth repeating because they are what make the numbers usable:
 
 - Record time and beverage mass first; add pressure and TDS only if the

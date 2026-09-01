@@ -179,10 +179,12 @@ recipe, coefficient, configuration, and result hashes.
 | `apps/espressolab_server/` | Local REST translation, measured-shot comparison, in-memory runs, background sweep/CFD3D jobs (cpp-httplib) |
 | `web/src/features/` | shot, sweeps, run comparison, measured-shot comparison, calibration notice |
 | `assets/beans/` | Bean profiles for the sensory overlay. Authored priors, never measured |
+| `assets/real_shots/` | Real-shot capture records and templates. Inert: no build, solver, server or calibration path reads them |
 | `assets/` | Versioned example inputs and synthetic measurement fixtures |
 | `schemas/` | Intended JSON exchange formats |
 | `tests/` | Unit, integration, property, convergence, verification tests |
 | `tests/pty/` | POSIX PTY smoke matrix for the TUI (outside `ctest`; needs a real pseudo-terminal) |
+| `tests/schemas/` | Document-contract checks run outside `ctest`: `real_shot_capture_check.py` (stdlib, in CI) and `schema_contract_check.py` (needs unvendored `jsonschema`, run by hand) |
 
 ### Runtime data flow
 
@@ -314,10 +316,11 @@ reproducibility, not correctness.
 | `docs/architecture.md` | Component boundaries and the dependency rule |
 | `docs/api.md` | REST endpoints and the error contract |
 | `docs/calibration.md` | Fitting coefficients to measured shots |
+| `docs/real-shot-validation.md` | Where real measured-shot data can come from, the capture protocol, and how a capture is compared against a simulation |
 | `docs/testing.md` | What each test layer is for |
 | `docs/roadmap.md` | Status against the four-week plan, and what's not done |
 | `docs/current-state-and-gaps.md` | Evidence-based implementation status and open gaps |
-| `schemas/` | JSON Schema for recipes, coefficients, shot results, CFD3D cases/results, grinder specs/results |
+| `schemas/` | JSON Schema for recipes, coefficients, shot results, CFD3D cases/results, grinder specs/results, real-shot captures |
 
 ## Requirements
 

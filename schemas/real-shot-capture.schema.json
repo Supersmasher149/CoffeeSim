@@ -1,0 +1,280 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://espressolab.local/schemas/real-shot-capture-1.0.json",
+  "title": "EspressoLab real-shot capture record",
+  "description": "One physically brewed espresso shot, recorded for validating the simulator against reality. Deliberately NOT the measured-shot document that `espressolab_cli calibrate` reads (assets/measured_shots/, engine/calibration/calibration_io.cpp): a capture record describes the shot and its provenance in full, including everything the machine did not measure. A capture is promoted to a measured shot only after the fields the solver needs are all present and non-null.",
+  "$comment": "Kept synchronized with tests/schemas/real_shot_capture_check.py, which is the executable contract (stdlib-only, run in CI). Missing values are ALWAYS null, never a placeholder string and never an estimate. See docs/real-shot-validation.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "kind", "id", "status", "capture", "provenance", "machine", "grinder", "grind", "coffee", "preparation", "water", "temperature", "pressure", "timing", "result", "telemetry", "observations", "attachments", "simulation_link"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "kind": { "const": "real_shot_capture" },
+    "id": {
+      "type": "string", "minLength": 1,
+      "description": "Stable shot ID. Convention: YYYY-MM-DD-<machine-slug>-<nn>."
+    },
+    "status": {
+      "enum": ["measured", "external_public", "pending_capture"],
+      "description": "`measured` = brewed and recorded under this repository's protocol. `external_public` = transcribed from a public third-party record; check `provenance.license` before redistributing. `pending_capture` = a slot reserved by the protocol with no shot brewed yet; every observable is null."
+    },
+
+    "capture": {
+      "type": "object", "additionalProperties": false,
+      "required": ["utc_timestamp", "operator", "protocol_version"],
+      "properties": {
+        "utc_timestamp": {
+          "type": ["string", "null"],
+          "description": "RFC 3339 UTC instant the shot started (pump-on), e.g. 2026-09-01T08:14:03Z. Null only while status is pending_capture."
+        },
+        "operator": { "type": ["string", "null"] },
+        "protocol_version": { "type": "string", "description": "Version of the capture protocol in docs/real-shot-validation.md that this shot followed." }
+      }
+    },
+
+    "provenance": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source", "source_url", "license", "retrieved_at", "data_quality_flags", "calibration_eligible", "validation_eligible"],
+      "properties": {
+        "source": { "type": ["string", "null"], "description": "Who produced the numbers, e.g. 'first-party capture' or 'visualizer.coffee'." },
+        "source_url": { "type": ["string", "null"] },
+        "license": { "type": ["string", "null"], "description": "Verbatim license of the underlying data. Null means unknown, which forbids redistribution of the raw record." },
+        "retrieved_at": { "type": ["string", "null"] },
+        "data_quality_flags": {
+          "type": "array", "items": { "type": "string" },
+          "description": "Known defects, e.g. 'pressure sensor measures pump not puck', 'single TDS reading', 'grind setting is a dial number, no PSD'."
+        },
+        "calibration_eligible": { "type": "boolean", "description": "May this shot be used to FIT coefficients? Never true for external_public or pending_capture." },
+        "validation_eligible": { "type": "boolean", "description": "May this shot be scored as a held-out validation case? Mutually exclusive with calibration_eligible for any one fit." }
+      }
+    },
+
+    "machine": {
+      "type": "object", "additionalProperties": false,
+      "required": ["model", "firmware", "basket", "portafilter_diameter_mm", "pressure_sensor_measures", "pressure_sensor_location", "temperature_sensor_location"],
+      "properties": {
+        "model": { "type": ["string", "null"] },
+        "firmware": { "type": ["string", "null"] },
+        "basket": { "type": ["string", "null"], "description": "Basket make, nominal dose and hole pattern, e.g. 'VST 18 g ridgeless'." },
+        "portafilter_diameter_mm": { "type": ["number", "null"], "minimum": 30, "maximum": 90 },
+        "pressure_sensor_measures": {
+          "enum": ["pump", "group", "puck", "unknown", null],
+          "description": "Pump pressure is not puck pressure. Recording which one was logged is mandatory; `unknown` is an honest answer, a guess is not."
+        },
+        "pressure_sensor_location": { "type": ["string", "null"] },
+        "temperature_sensor_location": {
+          "type": ["string", "null"],
+          "description": "Physical location of the logged temperature probe, e.g. 'group head thermofilter, 2 mm above shower screen'. A boiler or PID setpoint is NOT a sensor location."
+        }
+      }
+    },
+
+    "grinder": {
+      "type": "object", "additionalProperties": false,
+      "required": ["model", "burrs", "dial_setting", "rpm"],
+      "properties": {
+        "model": { "type": ["string", "null"] },
+        "burrs": { "type": ["string", "null"] },
+        "dial_setting": {
+          "type": ["string", "null"],
+          "description": "Recorded verbatim as text, e.g. '6.5 @ 1500 rpm'. A string on purpose: a dial number is not a length and must never be converted into microns."
+        },
+        "rpm": { "type": ["number", "null"] }
+      }
+    },
+
+    "grind": {
+      "type": "object", "additionalProperties": false,
+      "required": ["measured", "method", "d10_um", "d50_um", "d90_um", "sauter_mean_d32_um", "distribution"],
+      "properties": {
+        "measured": { "type": "boolean", "description": "True only if a particle size distribution was physically measured for THIS grind setting." },
+        "method": { "type": ["string", "null"], "description": "e.g. 'laser diffraction, wet dispersion, Malvern Mastersizer 3000'. Required whenever measured is true." },
+        "d10_um": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "d50_um": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "d90_um": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "sauter_mean_d32_um": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "distribution": {
+          "type": "array",
+          "description": "Binned PSD in the same shape as a recipe's puck.grind, so a measured grind can be fed to the solver without reinterpretation. Empty when nothing was measured.",
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["diameter_um", "mass_fraction"],
+            "properties": {
+              "diameter_um": { "type": "number", "exclusiveMinimum": 0 },
+              "mass_fraction": { "type": "number", "minimum": 0, "maximum": 1 }
+            }
+          }
+        }
+      }
+    },
+
+    "coffee": {
+      "type": "object", "additionalProperties": false,
+      "required": ["roaster", "name", "origin", "process", "roast_level", "roast_date", "days_off_roast", "storage"],
+      "properties": {
+        "roaster": { "type": ["string", "null"] },
+        "name": { "type": ["string", "null"] },
+        "origin": { "type": ["string", "null"] },
+        "process": { "type": ["string", "null"] },
+        "roast_level": { "type": ["string", "null"] },
+        "roast_date": { "type": ["string", "null"], "description": "ISO date. Never inferred from a bag photo or a purchase date." },
+        "days_off_roast": { "type": ["integer", "null"], "minimum": 0 },
+        "storage": { "type": ["string", "null"], "description": "e.g. 'one-way valve bag, sealed, 21 C, opened 4 days before'." }
+      }
+    },
+
+    "preparation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["dose_g", "dose_scale_resolution_g", "basket", "distribution_technique", "tamp", "filter_paper", "puck_screen", "puck_depth_mm"],
+      "properties": {
+        "dose_g": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "dose_scale_resolution_g": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "basket": { "type": ["string", "null"] },
+        "distribution_technique": { "type": ["string", "null"], "description": "e.g. 'WDT 8 needles, 20 s, then levelled'." },
+        "tamp": { "type": ["string", "null"] },
+        "filter_paper": { "type": ["string", "null"], "description": "Below-puck paper filter, or null if none used." },
+        "puck_screen": { "type": ["string", "null"] },
+        "puck_depth_mm": {
+          "type": ["number", "null"], "exclusiveMinimum": 0,
+          "description": "Tamped bed depth. A solver input the machine never reports -- measure it (basket depth minus headspace) or leave it null."
+        }
+      }
+    },
+
+    "water": {
+      "type": "object", "additionalProperties": false,
+      "required": ["recipe_name", "source", "tds_ppm", "general_hardness_ppm_caco3", "alkalinity_ppm_caco3"],
+      "properties": {
+        "recipe_name": { "type": ["string", "null"], "description": "e.g. 'Rao/Perger Ideal', 'third-wave water espresso profile', 'municipal, unfiltered'." },
+        "source": { "type": ["string", "null"] },
+        "tds_ppm": { "type": ["number", "null"], "minimum": 0 },
+        "general_hardness_ppm_caco3": { "type": ["number", "null"], "minimum": 0 },
+        "alkalinity_ppm_caco3": { "type": ["number", "null"], "minimum": 0 }
+      }
+    },
+
+    "temperature": {
+      "type": "object", "additionalProperties": false,
+      "required": ["setpoint_c", "measured_c", "measurement_point", "measurement_method", "note"],
+      "properties": {
+        "setpoint_c": {
+          "type": ["number", "null"], "minimum": 0, "maximum": 130,
+          "description": "What the machine was told to do. NOT an observation: never copy this into measured_c."
+        },
+        "measured_c": {
+          "type": ["number", "null"], "minimum": 0, "maximum": 130,
+          "description": "Physically measured brew-water temperature. Non-null requires measurement_point and measurement_method."
+        },
+        "measurement_point": { "type": ["string", "null"] },
+        "measurement_method": { "type": ["string", "null"] },
+        "note": { "type": ["string", "null"] }
+      }
+    },
+
+    "pressure": {
+      "type": "object", "additionalProperties": false,
+      "required": ["profile_name", "profile_description", "nominal_peak_bar", "preinfusion"],
+      "properties": {
+        "profile_name": { "type": ["string", "null"] },
+        "profile_description": { "type": ["string", "null"], "description": "The commanded profile in words. The telemetry CSV carries what actually happened." },
+        "nominal_peak_bar": { "type": ["number", "null"], "minimum": 0, "maximum": 20 },
+        "preinfusion": { "type": ["string", "null"] }
+      }
+    },
+
+    "timing": {
+      "type": "object", "additionalProperties": false,
+      "required": ["convention", "first_drip_s", "end_condition", "total_shot_time_s"],
+      "properties": {
+        "convention": {
+          "enum": ["pump_on", "first_drip", "other", null],
+          "description": "What t=0 means, for both this record and the telemetry CSV. Comparing a pump-on shot time against a first-drip one is the single easiest way to invent a two-second error."
+        },
+        "first_drip_s": { "type": ["number", "null"], "minimum": 0 },
+        "end_condition": { "type": ["string", "null"], "description": "e.g. 'stopped by scale at 36.0 g target', 'stopped by hand at 30 s'." },
+        "total_shot_time_s": { "type": ["number", "null"], "exclusiveMinimum": 0 }
+      }
+    },
+
+    "result": {
+      "type": "object", "additionalProperties": false,
+      "required": ["beverage_yield_g", "yield_scale_resolution_g", "tds_percent", "tds_method", "extraction_yield_percent", "extraction_yield_source"],
+      "properties": {
+        "beverage_yield_g": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "yield_scale_resolution_g": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "tds_percent": { "type": ["number", "null"], "minimum": 0, "maximum": 30 },
+        "tds_method": {
+          "type": "object", "additionalProperties": false,
+          "required": ["instrument", "filtered", "sample_temperature_c", "repeats", "readings_percent"],
+          "properties": {
+            "instrument": { "type": ["string", "null"] },
+            "filtered": { "type": ["boolean", "null"], "description": "Whether the sample was syringe-filtered before reading. Unfiltered espresso reads high." },
+            "sample_temperature_c": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
+            "repeats": { "type": ["integer", "null"], "minimum": 1 },
+            "readings_percent": { "type": "array", "items": { "type": "number" }, "description": "Every individual reading, not just the mean." }
+          }
+        },
+        "extraction_yield_percent": { "type": ["number", "null"], "minimum": 0, "maximum": 40 },
+        "extraction_yield_source": {
+          "enum": ["computed", "measured", null],
+          "description": "`computed` = tds_percent * beverage_yield_g / dose_g, checked by the contract test. `measured` = the cup was dried and weighed."
+        }
+      }
+    },
+
+    "telemetry": {
+      "type": "object", "additionalProperties": false,
+      "required": ["csv", "columns", "sample_rate_hz", "row_count", "time_origin"],
+      "properties": {
+        "csv": { "type": ["string", "null"], "description": "Path relative to this file. Null when no telemetry was logged." },
+        "columns": {
+          "type": "array", "items": { "type": "string" },
+          "description": "Must be exactly the target column set when csv is non-null."
+        },
+        "sample_rate_hz": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "row_count": { "type": ["integer", "null"], "minimum": 0 },
+        "time_origin": { "enum": ["pump_on", "first_drip", "other", null], "description": "Must equal timing.convention." }
+      }
+    },
+
+    "observations": {
+      "type": "object", "additionalProperties": false,
+      "required": ["taste", "channeling", "puck_condition", "anomalies", "notes"],
+      "properties": {
+        "taste": { "type": ["string", "null"], "description": "Recorded for the log only. Taste is never a calibration target (assets/measured_shots/README.md)." },
+        "channeling": { "type": ["string", "null"] },
+        "puck_condition": { "type": ["string", "null"] },
+        "anomalies": { "type": "array", "items": { "type": "string" } },
+        "notes": { "type": ["string", "null"] }
+      }
+    },
+
+    "attachments": {
+      "type": "object", "additionalProperties": false,
+      "required": ["raw_shot_file", "telemetry_csv", "photos", "video"],
+      "properties": {
+        "raw_shot_file": { "type": ["string", "null"], "description": "Untouched machine export (Decent .shot, Visualizer JSON, Gaggiuino CSV) kept verbatim beside the record." },
+        "telemetry_csv": { "type": ["string", "null"], "description": "Same path as telemetry.csv; repeated here so the attachment list is complete." },
+        "photos": { "type": "array", "items": { "type": "string" } },
+        "video": { "type": ["string", "null"] }
+      }
+    },
+
+    "simulation_link": {
+      "type": "object", "additionalProperties": false,
+      "required": ["recipe", "unavailable_model_inputs", "comparable_observables"],
+      "properties": {
+        "recipe": { "type": ["string", "null"], "description": "Path to the EspressoLab recipe that reproduces this shot's inputs. Null until every required model input is measured." },
+        "unavailable_model_inputs": {
+          "type": "array", "items": { "type": "string" },
+          "description": "Solver inputs this capture cannot supply. Non-empty means the shot is not simulable without inventing a number, so `recipe` stays null."
+        },
+        "comparable_observables": {
+          "type": "array",
+          "items": { "enum": ["beverage_yield_g", "total_shot_time_s", "first_drip_s", "tds_percent", "extraction_yield_percent", "pressure_curve", "flow_curve", "temperature_curve", "cumulative_mass_curve"] },
+          "description": "Exactly what may be scored against a simulation. Curve entries are permitted only when the telemetry CSV shares timing.convention with the simulation."
+        }
+      }
+    }
+  }
+}

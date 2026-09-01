@@ -8,6 +8,10 @@ stored measured-shot telemetry.
 Deterministic C++20 simulation core, React/TypeScript dashboard, interactive
 terminal UI, no AI, and separate experimental 2D and Cartesian 3D CFD solvers.
 
+**Live dashboard:** [espressolab-dashboard.fly.dev](https://espressolab-dashboard.fly.dev/)
+— the real native solver behind a hosted container (see `Dockerfile`), not a
+static demo; every control runs the same C++ core as the local build.
+
 ## Quick start
 
 ```bash

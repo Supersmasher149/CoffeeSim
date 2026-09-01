@@ -41,6 +41,23 @@ TEST_CASE("default_fields preserves existing command defaults and units", "[tui]
     REQUIRE(default_fields(Command::version).empty());
 }
 
+// Regression: these three fields (simulate's --bean, sweep's
+// --workers/--ring-capacity, synthesize's --recipe-path) exist on the CLI
+// but were missing from the TUI forms entirely. Their defaults must stay
+// empty, matching the CLI's "unset" behaviour (whatever bean the recipe
+// carries, sequential sweep execution, provenance = recipe_path).
+TEST_CASE("simulate/sweep/synthesize expose the fields the CLI has for them", "[tui][unit]") {
+    const auto simulate = default_fields(Command::simulate);
+    REQUIRE(field_value(simulate, "bean").empty());
+
+    const auto sweep = default_fields(Command::sweep);
+    REQUIRE(field_value(sweep, "workers").empty());
+    REQUIRE(field_value(sweep, "ring-capacity").empty());
+
+    const auto synthesize = default_fields(Command::synthesize);
+    REQUIRE(field_value(synthesize, "recipe-path").empty());
+}
+
 TEST_CASE("cfd3d defaults leave recipe empty so a loaded case's own recipe is not silently overwritten",
          "[tui][unit]") {
     // Regression: "recipe" used to default to baseline.json here, so
@@ -95,6 +112,17 @@ TEST_CASE("parse_bool accepts the documented spellings only", "[tui][unit]") {
     REQUIRE_FALSE(parse_bool({{"x", "false"}}, "x"));
     REQUIRE_FALSE(parse_bool({{"x", ""}}, "x"));
     REQUIRE_THROWS_AS(parse_bool({{"x", "maybe"}}, "x"), InputError);
+}
+
+TEST_CASE("parse_optional_ulong treats an empty field as unset, like an absent CLI flag", "[tui][unit]") {
+    REQUIRE_FALSE(parse_optional_ulong({{"workers", ""}}, "workers").has_value());
+    REQUIRE(parse_optional_ulong({{"workers", "4"}}, "workers") == std::optional<std::size_t>{4});
+    try {
+        parse_optional_ulong({{"workers", "not-a-number"}}, "workers");
+        FAIL("expected InputError");
+    } catch (const InputError& error) {
+        REQUIRE(error.field == "workers");
+    }
 }
 
 TEST_CASE("make_job runs the same native workflow the legacy CLI uses", "[tui][unit]") {
@@ -158,6 +186,48 @@ TEST_CASE("a cancelled simulate job never reaches the artifact writer", "[tui][u
     REQUIRE_FALSE(std::filesystem::exists(out_dir));
 
     std::filesystem::remove_all(out_dir, ignored);
+}
+
+TEST_CASE("sweep rejects ring-capacity without workers, matching the CLI", "[tui][unit]") {
+    std::vector<Field> fields = default_fields(Command::sweep);
+    for (auto& field : fields) {
+        if (field.label == "ring-capacity") field.value = "8";
+    }
+    const JobFunction job = make_job(Command::sweep, fields);
+    try {
+        job({}, {});
+        FAIL("expected InputError");
+    } catch (const InputError& error) {
+        REQUIRE(error.field == "ring-capacity");
+    }
+}
+
+TEST_CASE("sweep rejects a ring-capacity of zero, matching the CLI", "[tui][unit]") {
+    std::vector<Field> fields = default_fields(Command::sweep);
+    for (auto& field : fields) {
+        if (field.label == "workers") field.value = "2";
+        if (field.label == "ring-capacity") field.value = "0";
+    }
+    const JobFunction job = make_job(Command::sweep, fields);
+    try {
+        job({}, {});
+        FAIL("expected InputError");
+    } catch (const InputError& error) {
+        REQUIRE(error.field == "ring-capacity");
+    }
+}
+
+TEST_CASE("simulate threads the bean field through to the shared workflow", "[tui][unit]") {
+    // A nonexistent bean path must surface as a load failure rather than
+    // being silently ignored -- proof the TUI's "bean" field actually
+    // reaches SimulateRequest::bean_path instead of being dropped.
+    std::vector<Field> fields = default_fields(Command::simulate);
+    use_absolute_baseline_paths(fields);
+    for (auto& field : fields) {
+        if (field.label == "bean") field.value = "assets/beans/does-not-exist.json";
+    }
+    const JobFunction job = make_job(Command::simulate, fields);
+    REQUIRE_THROWS(job({}, {}));
 }
 
 TEST_CASE("calibrate rejects leave-one-out combined with holdout, matching the CLI", "[tui][unit]") {

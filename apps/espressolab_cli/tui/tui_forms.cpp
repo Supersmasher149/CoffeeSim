@@ -93,6 +93,7 @@ JobResult run_simulate(const std::vector<Field>& fields, const CancellationCallb
     cli_workflows::SimulateRequest request;
     request.recipe_path = field_value(fields, "recipe");
     request.coefficients_path = field_value(fields, "coefficients");
+    request.bean_path = field_value(fields, "bean");
     request.dt_s = parse_double(fields, "dt");
     request.sample_interval_s = parse_double(fields, "sample interval");
     request.out_dir = field_value(fields, "out");
@@ -112,6 +113,18 @@ JobResult run_sweep(const std::vector<Field>& fields, const CancellationCallback
     cli_workflows::SweepRequest request;
     request.spec_path = field_value(fields, "spec");
     request.out_dir = field_value(fields, "out");
+    // Mirrors command_sweep in main.cpp: --workers opts into the parallel
+    // batch runner, --ring-capacity overrides its worker_count*4 heuristic
+    // and requires --workers to also be set. No env-var equivalent here --
+    // ESPRESSOLAB_SWEEP_WORKERS/_RING_CAPACITY stay CLI/env-only.
+    request.workers = parse_optional_ulong(fields, "workers");
+    request.ring_capacity = parse_optional_ulong(fields, "ring-capacity");
+    if (request.ring_capacity && !request.workers) {
+        throw InputError("ring-capacity", "requires workers to also be set");
+    }
+    if (request.ring_capacity && *request.ring_capacity == 0) {
+        throw InputError("ring-capacity", "must be at least 1");
+    }
 
     const cli_workflows::SweepOutcome outcome =
         cli_workflows::run_sweep(request, [&](int completed, int total) {
@@ -199,6 +212,7 @@ JobResult run_synthesize(const std::vector<Field>& fields, const CancellationCal
     request.noise_g = parse_double(fields, "noise");
     request.seed = static_cast<unsigned int>(parse_int(fields, "seed"));
     request.out_path = field_value(fields, "out");
+    request.recipe_path_for_provenance = field_value(fields, "recipe-path");
 
     const cli_workflows::SynthesizeOutcome outcome = cli_workflows::run_synthesize(request, cancel);
     return JobResult{false,
@@ -373,6 +387,7 @@ const std::vector<CommandSpec>& commands() {
          "Run the deterministic standard shot solver",
          {{"recipe", "assets/recipes/baseline.json"},
           {"coefficients", "assets/coefficients/default-v1.json"},
+          {"bean", ""},
           {"dt", "0.01"},
           {"sample interval", "0.05"},
           {"out", ""}},
@@ -380,7 +395,7 @@ const std::vector<CommandSpec>& commands() {
         CommandSpec{Command::sweep,
          "sweep",
          "Run a Cartesian recipe parameter sweep",
-         {{"spec", "assets/sweeps/grind-size.json"}, {"out", ""}},
+         {{"spec", "assets/sweeps/grind-size.json"}, {"out", ""}, {"workers", ""}, {"ring-capacity", ""}},
          run_sweep},
         CommandSpec{Command::calibrate,
          "calibrate",
@@ -403,7 +418,8 @@ const std::vector<CommandSpec>& commands() {
           {"coefficients", ""},
           {"noise", "0"},
           {"seed", "1"},
-          {"out", "outputs/measured-shot.json"}},
+          {"out", "outputs/measured-shot.json"},
+          {"recipe-path", ""}},
          run_synthesize},
         CommandSpec{Command::bench,
          "bench",
@@ -510,6 +526,19 @@ bool parse_bool(const std::vector<Field>& fields, const std::string& label) {
     if (value.empty() || value == "false" || value == "0" || value == "no") return false;
     if (value == "true" || value == "1" || value == "yes") return true;
     throw InputError(label, "must be true or false");
+}
+
+std::optional<std::size_t> parse_optional_ulong(const std::vector<Field>& fields, const std::string& label) {
+    const std::string value = field_value(fields, label);
+    if (value.empty()) return std::nullopt;
+    try {
+        std::size_t consumed = 0;
+        const unsigned long parsed = std::stoul(value, &consumed);
+        if (consumed != value.size()) throw std::invalid_argument("not an integer");
+        return static_cast<std::size_t>(parsed);
+    } catch (const std::exception&) {
+        throw InputError(label, "must be a non-negative integer");
+    }
 }
 
 std::vector<Field> default_fields(Command command) {

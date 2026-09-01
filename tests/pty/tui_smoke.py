@@ -193,7 +193,7 @@ def run(binary):
     )
 
     # -- run a guided command that actually has form fields (`simulate`, the
-    # first menu entry): open it, Tab past all 5 fields to the trailing Run
+    # first menu entry): open it, Tab past all 6 fields to the trailing Run
     # action without editing any of them (so it runs on its file defaults),
     # and confirm Enter on Run submits the job rather than just re-entering
     # edit mode on the last field. This is the path every other check here
@@ -208,7 +208,7 @@ def run(binary):
             form_screen[-300:],
         )
     )
-    for _ in range(5):  # recipe, coefficients, dt, sample interval, out -> Run
+    for _ in range(6):  # recipe, coefficients, bean, dt, sample interval, out -> Run
         session.send(b"\t")
         time.sleep(0.05)
     on_run_screen = plain(session.read(0.3).decode(errors="replace"))

@@ -230,6 +230,107 @@ TEST_CASE("simulate threads the bean field through to the shared workflow", "[tu
     REQUIRE_THROWS(job({}, {}));
 }
 
+TEST_CASE("append_shot_report shows manifest and region/axial-cell detail", "[tui][unit]") {
+    std::vector<Field> fields = default_fields(Command::simulate);
+    use_absolute_baseline_paths(fields);
+    const JobFunction job = make_job(Command::simulate, fields);
+    const JobResult result = job({}, {});
+
+    const auto has = [&](const std::string& needle) {
+        return std::any_of(result.lines.begin(), result.lines.end(),
+                           [&](const std::string& line) { return line.find(needle) != std::string::npos; });
+    };
+    REQUIRE(has("coefficient hash"));
+    REQUIRE(has("result schema"));
+    REQUIRE(has("timestamp"));
+    REQUIRE(has("regions ("));
+    REQUIRE(has("region 0"));
+    REQUIRE(has("cell 0"));
+
+    // Regression: diagnostics.max_flow_m3_s is assigned 1:1 from
+    // summary.peak_flow_m3_s -- must not become a second, duplicate line.
+    const auto peak_flow_lines =
+        std::count_if(result.lines.begin(), result.lines.end(),
+                      [](const std::string& line) { return line.find("peak flow") != std::string::npos; });
+    REQUIRE(peak_flow_lines == 1);
+}
+
+TEST_CASE("run_sweep reports coordinates, warning count, and result hash per run", "[tui][unit]") {
+    std::vector<Field> fields = default_fields(Command::sweep);
+    for (auto& field : fields) {
+        if (field.label == "spec") field.value = (testing::asset_dir() / "sweeps" / "grind-size.json").string();
+    }
+    const JobFunction job = make_job(Command::sweep, fields);
+    // Unlike simulate/cfd/cfd3d, run_sweep calls `progress(...)` unconditionally
+    // once per run (tui_forms.cpp), so an empty ProgressCallback (fine for the
+    // other commands' job({}, {}) tests above) would throw std::bad_function_call.
+    const JobResult result = job({}, [](int, int, std::string) {});
+
+    REQUIRE_FALSE(result.lines.empty());
+    const auto run0 = std::find_if(result.lines.begin(), result.lines.end(), [](const std::string& line) {
+        return line.rfind("run 0 ", 0) == 0;
+    });
+    REQUIRE(run0 != result.lines.end());
+    REQUIRE(run0->find("puck.particle_diameter_um=") != std::string::npos);
+    REQUIRE(run0->find("warnings ") != std::string::npos);
+    const auto hash_pos = run0->find("hash ");
+    REQUIRE(hash_pos != std::string::npos);
+    REQUIRE(run0->size() - (hash_pos + 5) == 16);  // truncated to 16 hex characters
+}
+
+TEST_CASE("run_cfd3d reports coefficient hash, schema, and timestamp only when artifacts are written",
+         "[tui][unit]") {
+    std::vector<Field> fields = default_fields(Command::cfd3d);
+    for (auto& field : fields) {
+        if (field.label == "recipe") field.value = (testing::asset_dir() / "recipes" / "baseline.json").string();
+        if (field.label == "nx") field.value = "6";
+        if (field.label == "ny") field.value = "6";
+        if (field.label == "nz") field.value = "8";
+        if (field.label == "dt") field.value = "0.02";
+    }
+    const auto has = [](const JobResult& result, const std::string& needle) {
+        return std::any_of(result.lines.begin(), result.lines.end(),
+                           [&](const std::string& line) { return line.find(needle) != std::string::npos; });
+    };
+
+    // No `out`: no artifacts, so no manifest to report -- must not appear.
+    const JobResult without_out = make_job(Command::cfd3d, fields)({}, {});
+    REQUIRE_FALSE(has(without_out, "coefficient hash"));
+
+    const std::filesystem::path out_dir =
+        std::filesystem::temp_directory_path() / "espressolab_tui_forms_cfd3d_manifest_test";
+    std::error_code ignored;
+    std::filesystem::remove_all(out_dir, ignored);
+    for (auto& field : fields) {
+        if (field.label == "out") field.value = out_dir.string();
+    }
+    const JobResult with_out = make_job(Command::cfd3d, fields)({}, {});
+    REQUIRE(has(with_out, "coefficient hash"));
+    REQUIRE(has(with_out, "result schema"));
+    REQUIRE(has(with_out, "timestamp"));
+    std::filesystem::remove_all(out_dir, ignored);
+}
+
+TEST_CASE("is_recipe_path_field identifies only the recipe-picking fields", "[tui][unit]") {
+    REQUIRE(is_recipe_path_field("recipe"));
+    REQUIRE(is_recipe_path_field("recipe-path"));
+    REQUIRE_FALSE(is_recipe_path_field("coefficients"));
+    REQUIRE_FALSE(is_recipe_path_field("bean"));
+    REQUIRE_FALSE(is_recipe_path_field("spec"));
+}
+
+TEST_CASE("compatible_recipes lists loadable recipes and skips non-recipe files", "[tui][unit]") {
+    const std::vector<std::string> found = compatible_recipes(testing::asset_dir() / "recipes");
+    REQUIRE_FALSE(found.empty());
+    const auto is_baseline = [](const std::string& path) {
+        return std::filesystem::path(path).filename() == "baseline.json";
+    };
+    REQUIRE(std::any_of(found.begin(), found.end(), is_baseline));
+    for (const auto& path : found) REQUIRE(std::filesystem::path(path).extension() == ".json");
+
+    REQUIRE(compatible_recipes(testing::asset_dir() / "does-not-exist").empty());
+}
+
 TEST_CASE("calibrate rejects leave-one-out combined with holdout, matching the CLI", "[tui][unit]") {
     std::vector<Field> fields = default_fields(Command::calibrate);
     for (auto& field : fields) {

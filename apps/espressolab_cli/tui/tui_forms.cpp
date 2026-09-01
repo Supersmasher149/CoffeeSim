@@ -4,9 +4,11 @@
 #include <cctype>
 #include <cmath>
 #include <cstddef>
+#include <filesystem>
 #include <iomanip>
 #include <sstream>
 #include <stdexcept>
+#include <system_error>
 #include <utility>
 
 #include "../workflows.hpp"
@@ -26,6 +28,9 @@ void append_shot_report(std::vector<std::string>& lines, const ShotResult& resul
     lines.push_back("beverage mass " + format_number(units::kg_to_grams(summary.beverage_mass_kg)) + " g");
     lines.push_back("brew ratio    1:" + format_number(summary.brew_ratio));
     lines.push_back("average flow  " + format_number(units::m3_s_to_ml_s(summary.average_flow_m3_s)) + " ml/s");
+    // == diagnostics.max_flow_m3_s: simulator.cpp assigns
+    // summary.peak_flow_m3_s = diag.max_flow_m3_s 1:1, so there is no
+    // separate "max flow" line to add -- it would just duplicate this one.
     lines.push_back("peak flow     " + format_number(units::m3_s_to_ml_s(summary.peak_flow_m3_s)) + " ml/s");
     lines.push_back("TDS           " + format_number(summary.tds_fraction * 100.0) + " %");
     lines.push_back("extraction    " + format_number(summary.extraction_yield_fraction * 100.0) + " %");
@@ -33,8 +38,34 @@ void append_shot_report(std::vector<std::string>& lines, const ShotResult& resul
     lines.push_back("clamps        " + std::to_string(result.diagnostics.clamp_count));
     lines.push_back("samples       " + std::to_string(result.samples.size()));
     lines.push_back("result hash   " + result.manifest.result_hash);
-    // Mirrors print_shot_report() in main.cpp. The two frontends must report the
-    // same run identically, so a change to one belongs in the other.
+    lines.push_back("coefficient hash " + result.manifest.coefficient_hash);
+    lines.push_back("result schema " + result.manifest.result_schema_version);
+    lines.push_back("timestamp     " + result.manifest.timestamp_utc);
+
+    lines.push_back("");
+    lines.push_back("regions (" + std::to_string(result.regions.size()) + ")");
+    for (std::size_t r = 0; r < result.regions.size(); ++r) {
+        const RegionSummary& region = result.regions[r];
+        lines.push_back("  region " + std::to_string(r) + " area " +
+                        format_number(region.area_fraction * 100.0, 1) + " %, perm x" +
+                        format_number(region.permeability_multiplier, 2));
+        lines.push_back("    mass " + format_number(units::kg_to_grams(region.beverage_mass_kg)) +
+                        " g, flow share " + format_number(region.flow_fraction * 100.0, 1) +
+                        " %, TDS " + format_number(region.tds_fraction * 100.0) + " %, extraction " +
+                        format_number(region.extraction_yield_fraction * 100.0) + " %");
+        for (std::size_t c = 0; c < region.cells.size(); ++c) {
+            const AxialCellSummary& cell = region.cells[c];
+            lines.push_back("      cell " + std::to_string(c) + " sat " +
+                            format_number(cell.saturation, 3) + ", " +
+                            format_number(units::kelvin_to_celsius(cell.temperature_k), 1) +
+                            " C, pore TDS " + format_number(cell.pore_tds_fraction * 100.0) +
+                            " %, extraction " + format_number(cell.extraction_yield_fraction * 100.0) + " %");
+        }
+    }
+    // Unlike print_shot_report() in main.cpp (still the legacy CLI's plain
+    // report), this includes manifest and per-region/per-axial-cell detail
+    // the CLI does not print. The two are no longer required to match line
+    // for line -- the TUI's report is a strict superset.
     if (result.flavor.has_value()) {
         const espressolab::FlavorSummary& flavor = result.flavor->summary;
         lines.push_back("");
@@ -140,8 +171,14 @@ JobResult run_sweep(const std::vector<Field>& fields, const CancellationCallback
     output.lines.push_back("wall time: " + format_number(outcome.wall_time_ms, 1) + " ms");
     for (const auto& run : outcome.result.runs) {
         std::ostringstream line;
-        line << "run " << run.index << " mass " << format_number(units::kg_to_grams(run.summary.beverage_mass_kg))
-             << " g, time " << format_number(run.summary.elapsed_time_s) << " s, " << to_string(run.summary.termination);
+        line << "run " << run.index;
+        for (std::size_t axis = 0;
+            axis < outcome.result.axes.size() && axis < run.coordinates.size(); ++axis) {
+            line << ' ' << outcome.result.axes[axis].parameter_path << '=' << format_number(run.coordinates[axis]);
+        }
+        line << " mass " << format_number(units::kg_to_grams(run.summary.beverage_mass_kg))
+             << " g, time " << format_number(run.summary.elapsed_time_s) << " s, " << to_string(run.summary.termination)
+             << ", warnings " << run.warning_count << ", hash " << run.result_hash.substr(0, 16);
         output.lines.push_back(line.str());
     }
     if (!outcome.artifacts_dir.empty()) output.lines.push_back("artifacts: " + outcome.artifacts_dir.string());
@@ -290,7 +327,12 @@ JobResult run_cfd3d(const std::vector<Field>& fields, const CancellationCallback
     append_cfd3d_report(output.lines, outcome.result, outcome.snapshots.size());
     if (!outcome.artifacts_dir.empty()) {
         output.lines.push_back("artifacts: " + outcome.artifacts_dir.string());
-        if (outcome.manifest.has_value()) output.lines.push_back("result hash: " + outcome.manifest->result_hash);
+        if (outcome.manifest.has_value()) {
+            output.lines.push_back("result hash: " + outcome.manifest->result_hash);
+            output.lines.push_back("coefficient hash: " + outcome.manifest->coefficient_hash);
+            output.lines.push_back("result schema: " + outcome.manifest->result_schema_version);
+            output.lines.push_back("timestamp: " + outcome.manifest->timestamp_utc);
+        }
     }
     return output;
 }
@@ -539,6 +581,26 @@ std::optional<std::size_t> parse_optional_ulong(const std::vector<Field>& fields
     } catch (const std::exception&) {
         throw InputError(label, "must be a non-negative integer");
     }
+}
+
+bool is_recipe_path_field(const std::string& label) { return label == "recipe" || label == "recipe-path"; }
+
+std::vector<std::string> compatible_recipes(const std::filesystem::path& directory) {
+    std::vector<std::string> paths;
+    std::error_code listing_error;
+    if (!std::filesystem::is_directory(directory, listing_error) || listing_error) return paths;
+    for (const auto& entry : std::filesystem::directory_iterator(directory, listing_error)) {
+        if (listing_error) break;
+        if (!entry.is_regular_file() || entry.path().extension() != ".json") continue;
+        try {
+            artifact_io::load_recipe_file(entry.path());
+        } catch (const artifact_io::LoadError&) {
+            continue;  // Present in the directory but not a loadable recipe -- not "compatible".
+        }
+        paths.push_back(entry.path().string());
+    }
+    std::sort(paths.begin(), paths.end());
+    return paths;
 }
 
 std::vector<Field> default_fields(Command command) {

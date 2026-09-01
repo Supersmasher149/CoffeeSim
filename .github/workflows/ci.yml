@@ -36,6 +36,12 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: python3 tests/server/measured_shots_smoke.py
 
+      # Real-shot capture records must keep unmeasured values null and stay out
+      # of the calibrate directory (docs/real-shot-validation.md). Stdlib only.
+      - name: Real-shot capture contract check
+        if: matrix.os == 'ubuntu-latest'
+        run: python3 tests/schemas/real_shot_capture_check.py
+
       # Definition of done (section 2.2): baseline recipe, grind sweep, both
       # artifacts exported, identical result hash on rerun.
       - name: Acceptance demo

@@ -26,6 +26,21 @@ describe("MetricStrip", () => {
     expect(screen.getByText("target mass reached")).toBeInTheDocument(); // underscores -> spaces
   });
 
+  it("sets the stop reason in body type, not the numeric display face", () => {
+    // The strip's .value face is 27px Cormorant, sized for figures. Left in
+    // that face, "target mass reached" wrapped onto three lines and set the
+    // height of every other tile in the row; .metric-prose opts the one
+    // non-numeric tile out of it.
+    const result = makeShotResult({ termination: "target_mass_reached" });
+    const { container } = render(<MetricStrip result={result} />);
+
+    const prose = container.querySelectorAll(".metric-prose");
+    expect(prose).toHaveLength(1);
+    expect(prose[0]).toHaveTextContent("target mass reached");
+    // Every figure tile keeps the display face.
+    expect(container.querySelectorAll(".metric")).toHaveLength(7);
+  });
+
   it("replaces every underscore in the termination reason, not just the first", () => {
     const result = makeShotResult({ termination: "maximum_time_reached_safely" });
     render(<MetricStrip result={result} />);

@@ -193,7 +193,7 @@ def run(binary):
     )
 
     # -- run a guided command that actually has form fields (`simulate`, the
-    # first menu entry): open it, Tab past all 5 fields to the trailing Run
+    # first menu entry): open it, Tab past all 6 fields to the trailing Run
     # action without editing any of them (so it runs on its file defaults),
     # and confirm Enter on Run submits the job rather than just re-entering
     # edit mode on the last field. This is the path every other check here
@@ -208,7 +208,21 @@ def run(binary):
             form_screen[-300:],
         )
     )
-    for _ in range(5):  # recipe, coefficients, dt, sample interval, out -> Run
+    session.send(b"\r")  # Enter on the focused `recipe` field opens the recipe picker
+    time.sleep(0.3)
+    picker_screen = plain(session.read(0.3).decode(errors="replace"))
+    results.append(
+        check(
+            "Enter on the recipe field opens a picker listing assets/recipes",
+            "Select a recipe" in picker_screen and "baseline.json" in picker_screen,
+            picker_screen[-400:],
+        )
+    )
+    session.send(b"\x1b")  # cancel the picker without changing the field
+    time.sleep(0.2)
+    session.read(0.2)
+
+    for _ in range(6):  # recipe, coefficients, bean, dt, sample interval, out -> Run
         session.send(b"\t")
         time.sleep(0.05)
     on_run_screen = plain(session.read(0.3).decode(errors="replace"))
@@ -227,6 +241,17 @@ def run(binary):
             "Enter on Run actually runs `simulate` and shows its result",
             "result hash" in simulate_result and "beverage mass" in simulate_result,
             simulate_result[-400:],
+        )
+    )
+    for _ in range(12):  # scroll past the manifest lines to the region block
+        session.send(b"\x1b[B")
+        time.sleep(0.03)
+    scrolled_result = plain(session.read(0.3).decode(errors="replace"))
+    results.append(
+        check(
+            "the result screen renders the region/axial-cell breakdown",
+            "regions (" in scrolled_result,
+            scrolled_result[-400:],
         )
     )
     session.send(b"\x1b")  # back to the menu for the next check

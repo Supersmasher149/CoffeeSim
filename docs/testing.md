@@ -188,10 +188,13 @@ completed runs than its total; and `RunStore`'s 128-shot FIFO retention,
 exercised by posting 129 distinct shots (varying dose_g -- run_id is
 deterministic over the recipe, so identical requests would just overwrite
 one entry rather than growing the store) and confirming the first is
-evicted. It joins the other `tests/server/*.py` and `tests/cli/*.py`
-black-box scripts as a registered (`ctest --test-dir build -L server`),
-not-in-`test.sh` layer: each starts a real built binary as a subprocess,
-since neither `main.cpp` is linked into `espressolab_tests`.
+evicted. It joins the other `tests/server/*.py` (`ctest --test-dir build -L
+server`) and `tests/cli/*.py` (`ctest --test-dir build -L cli`) black-box
+scripts as a registered, not-in-`test.sh` layer: each starts a real built
+binary as a subprocess, since neither `apps/espressolab_server/main.cpp` nor
+`apps/espressolab_cli/main.cpp` is linked into `espressolab_tests`.
+`tests/cli/malformed_flags_check.py` covers `main.cpp`'s numeric flag
+parsing, which `test_cli_workflows.cpp` cannot reach.
 
 **TUI tests** (`[tui]`, `[cli_workflows]`) are pure and terminal-free: they
 call `tui_forms.cpp`'s navigation, field defaults, and validation directly

@@ -1,6 +1,9 @@
 #pragma once
 
+#include <cstddef>
+#include <filesystem>
 #include <functional>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -55,10 +58,25 @@ std::string format_number(double value, int precision = 2);
 double parse_double(const std::vector<Field>& fields, const std::string& label, bool required = true);
 int parse_int(const std::vector<Field>& fields, const std::string& label, bool required = true);
 bool parse_bool(const std::vector<Field>& fields, const std::string& label);
+// Empty field => nullopt, mirroring an unset CLI flag (e.g. --workers).
+std::optional<std::size_t> parse_optional_ulong(const std::vector<Field>& fields, const std::string& label);
 
 // The command's existing CLI defaults and units, shown as editable field
 // values (issue #24: "preserve the existing command defaults and units").
 std::vector<Field> default_fields(Command command);
+
+// True for a field the interactive form should offer a recipe-file picker
+// for, rather than plain text entry ("recipe" on simulate/cfd/cfd3d,
+// "recipe-path" on synthesize's provenance field).
+bool is_recipe_path_field(const std::string& label);
+
+// Every file in `directory` that loads as a valid Recipe (via the same
+// `artifact_io::load_recipe_file` every recipe-consuming workflow already
+// calls), sorted by path. Not a schema re-implementation -- a file is
+// "compatible" exactly when the run itself would accept it. A missing or
+// unreadable directory yields an empty list rather than throwing, since an
+// empty picker is a normal, displayable state.
+std::vector<std::string> compatible_recipes(const std::filesystem::path& directory = "assets/recipes");
 
 struct JobResult {
     bool cancelled = false;

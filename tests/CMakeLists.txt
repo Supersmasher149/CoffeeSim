@@ -78,3 +78,24 @@ if(TARGET espressolab_server)
     endforeach()
   endif()
 endif()
+
+# apps/espressolab_cli/main.cpp -- like apps/espressolab_server/main.cpp
+# above -- is not linked into espressolab_tests, so a bug in its own argv
+# handling (as opposed to the cli_workflows services it calls, which
+# test_cli_workflows.cpp already covers) has no Catch2 target to catch it.
+# These start the real built espressolab_cli binary as a subprocess; see
+# each script's own docstring for what it covers.
+if(TARGET espressolab_cli)
+  find_package(Python3 COMPONENTS Interpreter)
+  if(Python3_Interpreter_FOUND)
+    foreach(smoke_script
+        malformed_flags_check)
+      add_test(
+        NAME cli_${smoke_script}
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/cli/${smoke_script}.py
+                $<TARGET_FILE:espressolab_cli>)
+      set_tests_properties(cli_${smoke_script} PROPERTIES LABELS "integration;cli")
+    endforeach()
+  endif()
+endif()

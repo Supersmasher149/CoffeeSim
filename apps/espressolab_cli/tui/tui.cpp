@@ -36,9 +36,11 @@ using namespace ftxui;
 using espressolab::CancellationCallback;
 using espressolab::tui::Command;
 using espressolab::tui::commands;
+using espressolab::tui::compatible_recipes;
 using espressolab::tui::default_fields;
 using espressolab::tui::Field;
 using espressolab::tui::InputError;
+using espressolab::tui::is_recipe_path_field;
 using espressolab::tui::JobFunction;
 using espressolab::tui::JobResult;
 using espressolab::tui::make_job;
@@ -51,7 +53,7 @@ std::string seconds_text(std::chrono::steady_clock::time_point started) {
         std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count());
 }
 
-enum class View { menu, form, running, result };
+enum class View { menu, form, picker, running, result };
 
 class TuiComponent final : public ComponentBase {
 public:
@@ -82,6 +84,7 @@ public:
         std::vector<Element> body;
         if (view_ == View::menu) render_menu(body);
         if (view_ == View::form) render_form(body);
+        if (view_ == View::picker) render_picker(body);
         if (view_ == View::running) render_running(body);
         if (view_ == View::result) render_result(body);
         rows.push_back(vbox(std::move(body)) | yframe | yflex);
@@ -105,6 +108,7 @@ public:
         }
         if (view_ == View::menu) return handle_menu(event);
         if (view_ == View::form) return handle_form(event);
+        if (view_ == View::picker) return handle_picker(event);
         if (view_ == View::running) return handle_running(event);
         return handle_result(event);
     }
@@ -124,6 +128,9 @@ private:
     void render_form(std::vector<Element>& rows) const {
         rows.push_back(text("Configure " + commands()[selected_].title) | bold);
         rows.push_back(text("Enter edits the focused field. Empty values use command defaults."));
+        if (!editing_ && field_index_ < fields_.size() && is_recipe_path_field(fields_[field_index_].label)) {
+            rows.push_back(text("Enter browses assets/recipes for this field; press e to type a path instead."));
+        }
         for (std::size_t i = 0; i < fields_.size(); ++i) {
             const bool active = i == field_index_;
             const std::string marker = active ? (editing_ ? "* " : "> ") : "  ";
@@ -137,6 +144,21 @@ private:
         if (run_active) run_row = focus(std::move(run_row));
         rows.push_back(std::move(run_row));
         rows.push_back(text("Enter on Run starts the job."));
+    }
+
+    void render_picker(std::vector<Element>& rows) const {
+        rows.push_back(text("Select a recipe for \"" + fields_[field_index_].label + "\"") | bold);
+        if (picker_options_.empty()) {
+            rows.push_back(
+                focus(text("no recipes found in assets/recipes -- press e to type a path, Esc to cancel")));
+            return;
+        }
+        for (std::size_t i = 0; i < picker_options_.size(); ++i) {
+            const bool active = i == picker_index_;
+            Element row = text((active ? "> " : "  ") + picker_options_[i]);
+            if (active) row = focus(std::move(row));
+            rows.push_back(std::move(row));
+        }
     }
 
     void render_running(std::vector<Element>& rows) const {
@@ -169,6 +191,7 @@ private:
     std::string help_text() const {
         if (view_ == View::menu) return "Up/Down select   Enter open   q exit";
         if (view_ == View::form) return "Up/Down move   Enter edit field / run on Run   Esc back";
+        if (view_ == View::picker) return "Up/Down select   Enter choose   e type a path   Esc cancel";
         if (view_ == View::running) return "c cancel   Esc return when complete";
         return "Up/Down scroll   Enter/Esc return to commands   q exit";
     }
@@ -233,9 +256,47 @@ private:
             field_index_ = (field_index_ + 1) % stop_count;
             return true;
         }
+        if (event == Event::Character("e") && field_index_ < fields_.size() &&
+            is_recipe_path_field(fields_[field_index_].label)) {
+            editing_ = true;
+            return true;
+        }
         if (event == Event::Return) {
-            if (field_index_ == fields_.size()) start_job_locked();
-            else editing_ = true;
+            if (field_index_ == fields_.size()) {
+                start_job_locked();
+            } else if (is_recipe_path_field(fields_[field_index_].label)) {
+                picker_options_ = compatible_recipes();
+                picker_index_ = 0;
+                view_ = View::picker;
+            } else {
+                editing_ = true;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    bool handle_picker(Event event) {
+        if (event == Event::ArrowUp) {
+            if (picker_index_ > 0) --picker_index_;
+            return true;
+        }
+        if (event == Event::ArrowDown) {
+            if (!picker_options_.empty() && picker_index_ + 1 < picker_options_.size()) ++picker_index_;
+            return true;
+        }
+        if (event == Event::Return) {
+            if (!picker_options_.empty()) fields_[field_index_].value = picker_options_[picker_index_];
+            view_ = View::form;
+            return true;
+        }
+        if (event == Event::Character("e")) {
+            view_ = View::form;
+            editing_ = true;
+            return true;
+        }
+        if (event == Event::Escape) {
+            view_ = View::form;
             return true;
         }
         return false;
@@ -334,6 +395,8 @@ private:
     std::vector<Field> fields_;
     std::size_t field_index_ = 0;
     bool editing_ = false;
+    std::vector<std::string> picker_options_;
+    std::size_t picker_index_ = 0;
     std::string status_;
     std::string result_title_;
     std::vector<std::string> result_lines_;

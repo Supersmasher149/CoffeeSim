@@ -283,6 +283,18 @@ button.tertiary:hover:not(:disabled), .button.tertiary:hover { background: rgba(
   margin-top: 6px;
 }
 .metric .unit { font-family: var(--font-body); font-size: 13px; color: var(--muted); margin-left: 4px; }
+/* A metric whose value is a word, not a figure (the stop reason). The display
+   face at 27px wrapped "target mass reached" onto three lines and set the
+   height of the whole strip; body type keeps the tile the size of its
+   neighbours. */
+.metric-prose { flex: 1 1 150px; }
+.metric-prose .value {
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.35;
+  margin-top: 9px;
+  color: var(--text);
+}
 
 .chart-card {
   background: var(--panel);
@@ -290,8 +302,15 @@ button.tertiary:hover:not(:disabled), .button.tertiary:hover { background: rgba(
   border-radius: var(--radius-md);
   padding: 13px 14px 6px;
   margin-bottom: 14px;
-  /* Audit #10: reserve the chart's settled height so mounting a result does
-     not reflow controls the user may be reaching for. */
+}
+/* Audit #10 reserved a chart's settled height so mounting a result does not
+   reflow controls the reader may be reaching for. That belongs on the cards
+   that actually hold a plot: every chart in the app now sizes its own plot
+   area (AnalysisCanvas's well, the sweep chart's ResponsiveContainer), while
+   the blanket rule left ~300px of dead space under the short cards that share
+   the surface -- the comparison tray, the sweep form, the calibration panel. */
+.chart-card.analysis-canvas,
+.chart-card.measured-comparison {
   min-height: 300px;
 }
 .chart-card h3 { margin: 0 0 6px; font-size: 12px; color: var(--muted); font-weight: 600; }

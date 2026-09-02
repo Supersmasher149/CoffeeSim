@@ -1,8 +1,22 @@
 import type { ShotResult } from "../../api/types";
 
-function Metric({ label, value, unit }: { label: string; value: string; unit?: string }) {
+function Metric({
+  label,
+  value,
+  unit,
+  // The strip's display face is sized for figures. A metric whose value is
+  // prose rather than a number (the stop reason) sets in body type instead --
+  // at 27 px Cormorant "target mass reached" wrapped onto three lines and
+  // stretched every other tile in the row to match.
+  prose = false,
+}: {
+  label: string;
+  value: string;
+  unit?: string;
+  prose?: boolean;
+}) {
   return (
-    <div className="metric">
+    <div className={prose ? "metric metric-prose" : "metric"}>
       <div className="label">{label}</div>
       <div className="value">
         {value}
@@ -22,7 +36,7 @@ export function MetricStrip({ result }: { result: ShotResult }) {
       <Metric label="TDS" value={result.tds_percent.toFixed(2)} unit="%" />
       <Metric label="Extraction" value={result.extraction_yield_percent.toFixed(2)} unit="%" />
       <Metric label="Brew ratio" value={`1:${result.brew_ratio.toFixed(2)}`} />
-      <Metric label="Stop" value={result.termination.replace(/_/g, " ")} />
+      <Metric label="Stop" value={result.termination.replace(/_/g, " ")} prose />
     </div>
   );
 }

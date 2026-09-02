@@ -41,6 +41,29 @@ test("edits a recipe and runs a simulation, showing metrics and diagnostics", as
   await expect(page.getByText(/run id/)).toBeVisible();
 });
 
+test("the shot analysis chart appears while the puck transport is still playing", async ({ page }) => {
+  // Regression: ChartStack used to be a lazy import behind a Suspense
+  // boundary that sat beside PuckView. A completed run auto-plays PuckView's
+  // transport, which sets state from requestAnimationFrame on every frame for
+  // the length of the shot; those default-priority updates starved React's
+  // retry of the suspended boundary, so the charts stayed behind
+  // "Loading charts..." until playback ended (29 s on the baseline recipe) or
+  // the reader hit Pause. The assertions below all run while the transport is
+  // still playing, which is what made the old code fail.
+  await page.goto("/");
+  await openRecipeEditor(page);
+  await page.getByRole("button", { name: "Run simulation" }).click();
+  await expect(page.locator(".metric-strip")).toBeVisible({ timeout: 15000 });
+
+  // "Pause" is the transport's label only while it is playing.
+  await expect(page.getByRole("button", { name: "Pause" })).toBeVisible();
+  await expect(page.locator(".analysis-canvas-well")).toBeVisible({ timeout: 5000 });
+  await expect(page.getByText("Loading charts...")).toHaveCount(0);
+  await expect(page.locator(".analysis-canvas-svg path[data-series='pressure']")).toHaveCount(1);
+  // Still playing: the chart arrived without the animation having to finish.
+  await expect(page.getByRole("button", { name: "Pause" })).toBeVisible();
+});
+
 test("two runs of the identical recipe produce the identical result hash (determinism)", async ({ page }) => {
   await page.goto("/");
   await openRecipeEditor(page);

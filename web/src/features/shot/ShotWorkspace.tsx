@@ -1,19 +1,25 @@
-import { Suspense, lazy, useState } from "react";
+import { useState } from "react";
 
 import type { Recipe, RecipeCatalogueEntry, ShotResult, ValidationIssue } from "../../api/types";
 import { preInfusionEnd } from "../../state/workspace";
 import { ComparisonTray } from "../comparison/ComparisonTray";
+import { ChartStack } from "./ChartStack";
 import { ControlRail } from "./ControlRail";
 import { DiagnosticsDrawer } from "./DiagnosticsDrawer";
 import { FlavorPanel } from "./FlavorPanel";
 import { MetricStrip } from "./MetricStrip";
 import { PuckView } from "./PuckView";
 
-// ChartStack now draws through AnalysisCanvas rather than recharts, so it no
-// longer carries that dependency's weight -- but it still only ever renders
-// once a shot has run, so a dynamic import keeps its own chunk out of what's
-// needed just to open the workbench and edit a recipe.
-const ChartStack = lazy(() => import("./ChartStack").then((mod) => ({ default: mod.ChartStack })));
+// ChartStack is imported statically. It used to be lazy to keep recharts out
+// of the initial bundle, but it now draws through AnalysisCanvas and its own
+// chunk had shrunk to ~3.6 kB -- far too little to be worth a Suspense
+// boundary here, because that boundary sat next to PuckView. A fresh run
+// auto-plays PuckView's transport, which drives setPlayhead from
+// requestAnimationFrame every frame for the whole shot; those default-priority
+// updates starve React's lower-priority retry of a suspended boundary, so the
+// charts stayed behind "Loading charts..." until the playback ended (29 s for
+// the baseline recipe) or the reader hit Pause. Rendering ChartStack
+// synchronously removes the boundary, and with it the starvation.
 
 interface Props {
   recipes: RecipeCatalogueEntry[];
@@ -84,15 +90,13 @@ export function ShotWorkspace({
               targetBeverageG={activeRecipe?.stop.target_beverage_g ?? null}
               cursorTimeSeconds={cursorTimeSeconds}
             />
-            <Suspense fallback={<p className="note" aria-live="polite">Loading charts...</p>}>
-              <ChartStack
-                result={active}
-                comparisons={comparisons}
-                preInfusionEnd={activeRecipe ? preInfusionEnd(activeRecipe) : undefined}
-                cursorTimeSeconds={cursorTimeSeconds}
-                onCursorChange={setCursorTimeSeconds}
-              />
-            </Suspense>
+            <ChartStack
+              result={active}
+              comparisons={comparisons}
+              preInfusionEnd={activeRecipe ? preInfusionEnd(activeRecipe) : undefined}
+              cursorTimeSeconds={cursorTimeSeconds}
+              onCursorChange={setCursorTimeSeconds}
+            />
             <ComparisonTray
               runs={pinned}
               activeId={active.manifest.run_id}

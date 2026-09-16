@@ -17,6 +17,16 @@ namespace {
 
 constexpr double kMassEpsilon = 1.0e-12;
 constexpr double kSaturationTolerance = 1.0e-6;
+// dt_s and maximum_time_s each validate individually (finite, positive;
+// 10-60 s), but nothing bounded their ratio. A syntactically valid dt_s of
+// 1e-7 s with maximum_time_s at its 60 s ceiling implies ~6e8 fixed steps,
+// and neither the CLI nor the REST server passes a cancellation callback
+// into Simulator::run, so that step loop was an unbounded, uncancellable
+// hang reachable from a single request. This caps the implied step count
+// comfortably above every dt_s used anywhere in the repo today (smallest is
+// 0.005 s, tests/integration/test_convergence.cpp) while keeping worst-case
+// blocking time on the synchronous REST path bounded.
+constexpr double kMaxSolverSteps = 2'000'000.0;
 
 struct Boundaries {
     double pressure_pa = 0.0;
@@ -311,6 +321,16 @@ void validate_inputs(const Recipe& recipe, const ModelCoefficients& coeff,
     // non-finite values first and reports the field that actually failed.
     require_positive(validation, config.dt_s, "config.dt_s");
     require_positive(validation, config.sample_interval_s, "config.sample_interval_s");
+    // Only check the dt_s/maximum_time_s ratio once both are known
+    // individually valid -- dividing by an already-rejected dt_s (e.g. 0)
+    // would just add a confusing second issue on top of the real one.
+    if (validation.ok() && recipe.maximum_time_s / config.dt_s > kMaxSolverSteps) {
+        validation.add("STEP_COUNT_EXCEEDS_LIMIT",
+                       "config.dt_s is too small for recipe.maximum_time_s: implies more than " +
+                           std::to_string(static_cast<long long>(kMaxSolverSteps)) +
+                           " fixed steps",
+                       "config.dt_s");
+    }
     if (!validation.ok()) throw InvalidInputError(validation);
 }
 

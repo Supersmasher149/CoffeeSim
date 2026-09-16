@@ -100,6 +100,43 @@ TEST_CASE("non-finite sample_interval_s is rejected before stepping", "[integrat
     }
 }
 
+// dt_s and maximum_time_s each validated individually but their ratio
+// didn't -- dt_s=1e-7 with maximum_time_s at its 60 s ceiling implied ~6e8
+// fixed steps and hung the CLI/server (confirmed manually: `simulate --dt
+// 1e-7` on a maximum_time_s=60 recipe was still running after 20 s under
+// `timeout`, with no cancellation callback to stop it).
+TEST_CASE("dt_s implying an excessive step count is rejected before stepping",
+         "[integration]") {
+    Recipe recipe = testing::baseline_recipe();
+    recipe.target_beverage_mass_kg.reset();
+    recipe.maximum_time_s = 60.0;
+    SimulationConfig config;
+    config.dt_s = 1.0e-7;
+    try {
+        const ShotResult result = Simulator().run(recipe, testing::baseline_coefficients(), config);
+        (void)result;
+        FAIL("expected InvalidInputError for dt_s = " << config.dt_s);
+    } catch (const InvalidInputError& e) {
+        REQUIRE(e.validation().issues().front().path == "config.dt_s");
+        REQUIRE(e.validation().issues().front().code == "STEP_COUNT_EXCEEDS_LIMIT");
+    }
+}
+
+// The smallest dt_s used anywhere else in the repo (convergence tests) at
+// maximum_time_s's ceiling must still run -- guards the new cap against
+// being set too tight.
+TEST_CASE("dt_s at the smallest value used elsewhere in the repo still runs",
+         "[integration]") {
+    Recipe recipe = testing::baseline_recipe();
+    recipe.target_beverage_mass_kg.reset();
+    recipe.maximum_time_s = 60.0;
+    SimulationConfig config;
+    config.dt_s = 0.005;
+    config.sample_interval_s = 0.05;
+    const ShotResult result = Simulator().run(recipe, testing::baseline_coefficients(), config);
+    REQUIRE(result.samples.size() > 0);
+}
+
 TEST_CASE("a very coarse puck runs fast and weak", "[integration]") {
     const ShotResult result =
         Simulator().run(testing::gusher_recipe(), testing::baseline_coefficients());

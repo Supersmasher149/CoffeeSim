@@ -330,10 +330,17 @@ class SweepJobStore {
 public:
     ~SweepJobStore() { join_all(); }
 
+    // Mirrors the Cfd3dJobStore fix from Audit P2, issue #13: start() used to
+    // spawn a worker thread unconditionally, with no bound on how many ran
+    // concurrently (kMaxRetained only bounds finished jobs kept in memory).
+    // Returns nullptr, registering nothing, when already at capacity, so a
+    // rejected request costs no thread and the caller can answer with a
+    // stable, synchronous overload response instead of an unbounded queue.
     std::shared_ptr<SweepJob> start(const std::string& id, SweepSpec spec, int total) {
         reap_finished();
-        auto job = std::make_shared<SweepJob>(id, std::move(spec), total);
         const std::lock_guard<std::mutex> lock(mutex_);
+        if (workers_.size() >= kMaxConcurrent) return nullptr;
+        auto job = std::make_shared<SweepJob>(id, std::move(spec), total);
         jobs_[id] = job;
         order_.push_back(id);
         // Keep the store from growing without bound over a long session.
@@ -400,6 +407,7 @@ private:
     }
 
     static constexpr std::size_t kMaxRetained = 32;
+    static constexpr std::size_t kMaxConcurrent = 4;
     mutable std::mutex mutex_;
     std::unordered_map<std::string, std::shared_ptr<SweepJob>> jobs_;
     std::deque<std::string> order_;
@@ -1307,7 +1315,11 @@ int main(int argc, char** argv) {
 
             const std::string id = "sweep-" + route_safe_slug(spec.name) + "-" +
                                    std::to_string(next_sweep_serial++);
-            sweeps.start(id, std::move(spec), static_cast<int>(total));
+            if (sweeps.start(id, std::move(spec), static_cast<int>(total)) == nullptr) {
+                send_error(response, 429, "TOO_MANY_ACTIVE_RUNS",
+                           "too many sweeps are already in progress; retry shortly", "sweeps");
+                return;
+            }
 
             response.status = 202;  // accepted, running in the background
             response.set_content(json({{"sweep_id", id},

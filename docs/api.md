@@ -215,7 +215,9 @@ instead. As with CFD3D, the original `202` only means that the job was accepted.
 `POST /api/v1/sweeps/{id}/cancel` stops a running sweep and **keeps every run it
 already finished** — the partial result is a normal sweep result, exportable as
 CSV. A single sweep is limited to 20000 runs. The server retains the 32 most
-recent sweeps and 128 most recent shots in memory; older IDs return 404.
+recent sweeps and 128 most recent shots in memory; older IDs return 404. At
+most 4 sweeps run concurrently; a start request past that limit returns
+`429 TOO_MANY_ACTIVE_RUNS` and creates no job.
 
 The server does not enable CORS. The development dashboard uses Vite's local
 same-origin proxy, and direct API clients are expected to run locally.
@@ -272,7 +274,7 @@ Every failure answers with the shape from section 12.2:
 | 409 | Artifact requested for a sweep that has not finished |
 | 413 | Sweep larger than the 20000-run limit |
 | 422 | Well-formed but nonphysical or out-of-range input |
-| 429 | Two CFD3D jobs are already active; retry after one finishes |
+| 429 | Two CFD3D jobs, or 4 sweeps, are already active; retry after one finishes |
 | 500 | Configured stored asset is missing/malformed, or an unhandled server error occurs |
 
 Codes are stable and safe to switch on: `MALFORMED_JSON`, `MISSING_FIELD`,

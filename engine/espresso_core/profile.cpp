@@ -6,6 +6,18 @@
 #include <string>
 
 namespace espressolab {
+namespace {
+
+// PiecewiseLinearProfile::sample() is a linear scan over every point, called
+// at least once per fixed solver step (Simulator::run's evaluate_regions).
+// With no cap, a profile's point count multiplies the per-step cost of every
+// shot that uses it with no ceiling -- e.g. a 2,000,000-point profile spent
+// ~500ms rescanning itself inside a 60s shot that otherwise runs in ~1ms.
+// 1000 points is generous headroom over every profile shipped in
+// assets/recipes/ (1-5 points) while keeping that per-step cost bounded.
+constexpr std::size_t kMaxProfilePoints = 1000;
+
+}  // namespace
 
 PiecewiseLinearProfile::PiecewiseLinearProfile(std::vector<ProfilePoint> points)
     : points_(std::move(points)) {
@@ -40,6 +52,13 @@ ValidationResult PiecewiseLinearProfile::validate(const char* path) const {
     ValidationResult result;
     if (points_.empty()) {
         result.add("EMPTY_PROFILE", std::string(path) + " requires at least one point", path);
+        return result;
+    }
+    if (points_.size() > kMaxProfilePoints) {
+        result.add("PROFILE_TOO_LARGE",
+                   std::string(path) + " must have at most " +
+                       std::to_string(kMaxProfilePoints) + " points",
+                   path);
         return result;
     }
     for (std::size_t i = 0; i < points_.size(); ++i) {

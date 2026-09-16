@@ -43,6 +43,23 @@ TEST_CASE("profile validation rejects empty and unordered inputs", "[profile]") 
     REQUIRE(negative.issues().front().code == "NONPHYSICAL_INPUT");
 }
 
+// sample() is a linear scan over every point, called at least once per fixed
+// solver step -- an unbounded point count let a single profile multiply the
+// per-step cost of every shot with no ceiling (a 2,000,000-point profile
+// measurably slowed a 60s shot that otherwise runs in ~1ms).
+TEST_CASE("profile validation rejects an excessive point count", "[profile]") {
+    std::vector<ProfilePoint> points;
+    points.reserve(1001);
+    for (int i = 0; i < 1001; ++i) points.push_back({static_cast<double>(i), 5.0});
+    const ValidationResult oversized = PiecewiseLinearProfile(points).validate("p");
+    REQUIRE_FALSE(oversized.ok());
+    REQUIRE(oversized.issues().front().code == "PROFILE_TOO_LARGE");
+
+    points.pop_back();
+    REQUIRE(points.size() == 1000);
+    REQUIRE(PiecewiseLinearProfile(points).validate("p").ok());
+}
+
 TEST_CASE("min and max report the extreme declared values", "[profile]") {
     const PiecewiseLinearProfile profile({{0.0, 2.0}, {6.0, 9.0}, {12.0, 6.0}});
     REQUIRE(profile.min_value() == Catch::Approx(2.0));

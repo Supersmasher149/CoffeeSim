@@ -201,7 +201,8 @@
     "profile_pressure": {
       "type": "array",
       "minItems": 1,
-      "$comment": "Ordered [time_s, bar] points, linearly interpolated and held flat outside the range (section 5.2). Time is checked here only for non-negativity; PiecewiseLinearProfile::validate() additionally requires each point's time strictly greater than the previous one, which a JSON Schema array constraint cannot express item-to-item.",
+      "maxItems": 1000,
+      "$comment": "Ordered [time_s, bar] points, linearly interpolated and held flat outside the range (section 5.2). Time is checked here only for non-negativity; PiecewiseLinearProfile::validate() additionally requires each point's time strictly greater than the previous one, which a JSON Schema array constraint cannot express item-to-item. maxItems mirrors PiecewiseLinearProfile::validate()'s point-count cap (engine/espresso_core/profile.cpp), which exists because sample() is a linear scan over every point on every solver step.",
       "items": {
         "type": "array",
         "prefixItems": [
@@ -225,7 +226,8 @@
     "profile_temperature": {
       "type": "array",
       "minItems": 1,
-      "$comment": "Ordered [time_s, celsius] points, linearly interpolated and held flat outside the range (section 5.2). Time is checked here only for non-negativity; PiecewiseLinearProfile::validate() additionally requires each point's time strictly greater than the previous one, which a JSON Schema array constraint cannot express item-to-item.",
+      "maxItems": 1000,
+      "$comment": "Ordered [time_s, celsius] points, linearly interpolated and held flat outside the range (section 5.2). Time is checked here only for non-negativity; PiecewiseLinearProfile::validate() additionally requires each point's time strictly greater than the previous one, which a JSON Schema array constraint cannot express item-to-item. maxItems mirrors PiecewiseLinearProfile::validate()'s point-count cap (engine/espresso_core/profile.cpp), which exists because sample() is a linear scan over every point on every solver step.",
       "items": {
         "type": "array",
         "prefixItems": [

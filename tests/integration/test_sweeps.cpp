@@ -96,6 +96,43 @@ TEST_CASE("duplicate sweep axes are rejected before any run", "[sweep]") {
         }));
 }
 
+// apps/espressolab_server/main.cpp's REST sweep endpoint rejects a Cartesian
+// product over 20,000 runs before starting, but espressolab_cli sweep had no
+// equivalent cap on either its sequential or parallel path: a spec whose
+// axes multiply past a reasonable size reserve()s a std::vector<SweepRun>
+// sized to the full product before any validation of individual runs. Three
+// "range" axes at steps=10000 each -- a plausible typo, not a contrived
+// attack -- is a 10^12-run product that std::bad_alloc'd immediately when
+// this was still unguarded.
+TEST_CASE("a sweep whose axes multiply past the run limit is rejected before any run",
+         "[sweep]") {
+    SweepSpec spec;
+    spec.baseline = testing::baseline_recipe();
+    spec.coefficients = testing::baseline_coefficients();
+
+    std::vector<double> many_values(1001);
+    for (std::size_t i = 0; i < many_values.size(); ++i) many_values[i] = 300.0 + i * 0.1;
+    spec.axes = {{"puck.particle_diameter_um", many_values}, {"puck.dose_g", many_values}};
+
+    REQUIRE_THROWS_MATCHES(
+        ExperimentRunner().run(spec), InvalidInputError,
+        Catch::Matchers::Predicate<InvalidInputError>([](const InvalidInputError& e) {
+            return e.validation().issues().front().code == "SWEEP_TOO_LARGE";
+        }));
+}
+
+TEST_CASE("a sweep at the run limit is not rejected for size", "[sweep]") {
+    SweepSpec spec;
+    spec.baseline = testing::baseline_recipe();
+    spec.coefficients = testing::baseline_coefficients();
+
+    std::vector<double> values(1000);
+    for (std::size_t i = 0; i < values.size(); ++i) values[i] = 300.0 + i * 0.1;
+    spec.axes = {{"puck.particle_diameter_um", values}, {"puck.dose_g", values}};
+
+    REQUIRE_NOTHROW(validate_sweep_spec(spec));
+}
+
 TEST_CASE("sweep parameters apply in the recipe's own units", "[sweep]") {
     const Recipe baseline = testing::baseline_recipe();
 

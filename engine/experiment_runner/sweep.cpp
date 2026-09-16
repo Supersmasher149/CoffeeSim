@@ -1,5 +1,6 @@
 #include "espressolab/experiment.hpp"
 
+#include <limits>
 #include <map>
 #include <set>
 
@@ -12,6 +13,23 @@ namespace {
 // Sweep axes address the recipe by its dashboard-facing path and unit, so a
 // sweep file reads the same way as the recipe file it perturbs (11.2).
 using Setter = void (*)(Recipe&, double);
+
+// apps/espressolab_server/main.cpp's POST /api/v1/sweeps rejects a sweep
+// whose Cartesian product exceeds 20,000 runs, but that check lives only in
+// the REST handler -- espressolab_cli sweep calls ExperimentRunner::run (or
+// the parallel batch runner) with no equivalent limit, and
+// ExperimentRunner::run reserves a std::vector<SweepRun> sized to the full
+// product up front. Three "range" axes at steps=10000 each -- a plausible
+// typo, not even a deliberately adversarial spec -- is a 10^12-run product
+// that reserve() immediately fails to allocate (caught, but reported as an
+// opaque "INTERNAL_ERROR: std::bad_alloc"); a somewhat smaller product would
+// instead succeed and run for an unbounded, unannounced amount of wall time.
+// Both CLI paths call validate_sweep_spec() first, so one cap here protects
+// both. Kept well above REST's tighter 20,000 (a local CLI sweep is a
+// legitimate place to run a much larger batch than a shared server request
+// should be allowed to start) but far below what the reserve()/compute cost
+// of a genuinely pathological spec would need.
+constexpr std::size_t kMaxSweepRuns = 1'000'000;
 
 const std::map<std::string, Setter>& setters() {
     static const std::map<std::string, Setter> table{
@@ -116,6 +134,11 @@ void validate_sweep_spec(const SweepSpec& spec) {
         throw InvalidInputError(result);
     }
     std::set<std::string> parameter_paths;
+    // Accumulated the overflow-safe way (checked before each multiply, not
+    // after) so a product that wraps std::size_t can't slip under
+    // kMaxSweepRuns and look small.
+    std::size_t total_runs = 1;
+    bool total_runs_overflowed = false;
     for (const auto& axis : spec.axes) {
         if (axis.values.empty()) {
             ValidationResult result;
@@ -132,6 +155,27 @@ void validate_sweep_spec(const SweepSpec& spec) {
         }
         // Fail before running a hundred simulations rather than after.
         (void)apply_parameter(spec.baseline, axis.parameter_path, axis.values.front());
+
+        if (!total_runs_overflowed) {
+            if (axis.values.size() != 0 &&
+                total_runs > std::numeric_limits<std::size_t>::max() / axis.values.size()) {
+                total_runs_overflowed = true;
+            } else {
+                total_runs *= axis.values.size();
+            }
+        }
+    }
+    if (total_runs_overflowed || total_runs > kMaxSweepRuns) {
+        ValidationResult result;
+        result.add("SWEEP_TOO_LARGE",
+                   total_runs_overflowed
+                       ? "sweep's axes multiply to more runs than can be counted, exceeding the " +
+                             std::to_string(kMaxSweepRuns) + "-run limit"
+                       : "sweep requests " + std::to_string(total_runs) +
+                             " runs, exceeding the " + std::to_string(kMaxSweepRuns) +
+                             "-run limit",
+                   "sweep.axes");
+        throw InvalidInputError(result);
     }
 }
 

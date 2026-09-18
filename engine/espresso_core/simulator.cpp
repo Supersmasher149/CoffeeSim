@@ -443,9 +443,28 @@ std::vector<RegionState> initialize_regions(const Recipe& recipe, const ModelCoe
     return regions;
 }
 
+// What one step leaves the solver: the read-only inputs every stage shares,
+// and the sinks it reports into.
+struct StepContext {
+    const Recipe& recipe;
+    const ModelCoefficients& coeff;
+    const SimulationConfig& config;
+    const WaterProperties& water;
+    const std::vector<GrindBin>& bins;
+    double dt;
+};
+
+struct StepOutputs {
+    ShotResult& result;
+    WarningLog& warn;
+    ShotDiagnostics& diag;
+};
+
 std::pair<Boundaries, std::vector<Derived>> evaluate_regions(
-    const std::vector<RegionState>& states, const Recipe& recipe,
-    const ModelCoefficients& coeff, const WaterProperties& water, double area_m2) {
+    const std::vector<RegionState>& states, const StepContext& ctx, double area_m2) {
+    const Recipe& recipe = ctx.recipe;
+    const ModelCoefficients& coeff = ctx.coeff;
+    const WaterProperties& water = ctx.water;
     Boundaries boundaries;
     boundaries.pressure_pa = recipe.pressure_pa.sample(states.front().shot.time_s);
     boundaries.inlet_temperature_k =
@@ -511,22 +530,17 @@ std::pair<Boundaries, std::vector<Derived>> evaluate_regions(
     return {boundaries, derived};
 }
 
-// What one step leaves the solver: the read-only inputs every stage shares,
-// and the sinks it reports into.
-struct StepContext {
-    const Recipe& recipe;
-    const ModelCoefficients& coeff;
-    const SimulationConfig& config;
-    const WaterProperties& water;
-    const std::vector<GrindBin>& bins;
-    double dt;
-};
-
-struct StepOutputs {
-    ShotResult& result;
-    WarningLog& warn;
-    ShotDiagnostics& diag;
-};
+// evaluate_regions() plus the write-back every caller needs: each region's
+// reported permeability, which the step itself does not produce.
+std::pair<Boundaries, std::vector<Derived>> evaluate_and_stamp(std::vector<RegionState>& regions,
+                                                               const StepContext& ctx,
+                                                               double area_m2) {
+    auto evaluated = evaluate_regions(regions, ctx, area_m2);
+    for (std::size_t i = 0; i < regions.size(); ++i) {
+        regions[i].shot.permeability_m2 = evaluated.second[i].permeability_m2;
+    }
+    return evaluated;
+}
 
 // The liquid one cell passes to the next in the axial sweep: the inlet water
 // for cell 0, and what leaves the last cell is beverage. class_kg is the
@@ -848,10 +862,7 @@ void append_interpolated_samples(SampleClock& clock, const std::vector<RegionSta
             sampled_regions.push_back(interpolate_region(before[i], after[i], clock.next_s()));
         }
         const auto [sampled_boundaries, sampled_derived] =
-            evaluate_regions(sampled_regions, ctx.recipe, ctx.coeff, ctx.water, area_m2);
-        for (std::size_t i = 0; i < sampled_regions.size(); ++i) {
-            sampled_regions[i].shot.permeability_m2 = sampled_derived[i].permeability_m2;
-        }
+            evaluate_and_stamp(sampled_regions, ctx, area_m2);
         const ShotState sampled =
             aggregate_state(sampled_regions, sampled_derived, ctx.recipe, ctx.coeff);
         append_sample(result, sampled, sampled_boundaries, total_flow(sampled_derived), ctx.recipe);
@@ -859,15 +870,12 @@ void append_interpolated_samples(SampleClock& clock, const std::vector<RegionSta
     }
 }
 
-void finalize_result(ShotResult& result, std::vector<RegionState>& regions,
+void finalize_result(ShotResult& result, const std::vector<RegionState>& regions,
                     const Boundaries& final_boundaries,
                     const std::vector<Derived>& final_derived, const Recipe& recipe,
                     const ModelCoefficients& coeff, const SimulationConfig& config,
                     TerminationReason termination, double initial_extractable_kg,
                     ShotDiagnostics& diag) {
-    for (std::size_t i = 0; i < regions.size(); ++i) {
-        regions[i].shot.permeability_m2 = final_derived[i].permeability_m2;
-    }
     const ShotState final_state = aggregate_state(regions, final_derived, recipe, coeff);
 
     const double solids_total_kg =
@@ -1005,10 +1013,8 @@ ShotResult Simulator::run(const Recipe& recipe, const ModelCoefficients& coeff,
 
     for (long long step = 0;; ++step) {
         throw_if_cancelled(is_cancelled);
-        const auto [boundaries, derived] =
-            evaluate_regions(regions, recipe, coeff, *water_, area_m2);
+        const auto [boundaries, derived] = evaluate_and_stamp(regions, step_context, area_m2);
         for (std::size_t i = 0; i < regions.size(); ++i) {
-            regions[i].shot.permeability_m2 = derived[i].permeability_m2;
             diag.min_permeability_m2 = std::min(diag.min_permeability_m2, derived[i].permeability_m2);
             if (derived[i].flow.clamped_by_max_flow) {
                 ++diag.clamp_count;
@@ -1066,7 +1072,7 @@ ShotResult Simulator::run(const Recipe& recipe, const ModelCoefficients& coeff,
     }
 
     const auto [final_boundaries, final_derived] =
-        evaluate_regions(regions, recipe, coeff, *water_, area_m2);
+        evaluate_and_stamp(regions, step_context, area_m2);
     throw_if_cancelled(is_cancelled);
     finalize_result(result, regions, final_boundaries, final_derived, recipe, coeff, config,
                     termination, initial_extractable_kg, diag);

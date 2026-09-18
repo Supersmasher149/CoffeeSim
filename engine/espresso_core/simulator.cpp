@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <vector>
 
 #include "espressolab/extraction.hpp"
@@ -17,6 +18,9 @@ namespace {
 
 constexpr double kMassEpsilon = 1.0e-12;
 constexpr double kSaturationTolerance = 1.0e-6;
+// A puck temperature change larger than this in one step means dt_s is too
+// coarse for the heat balance; the solver warns rather than refusing.
+constexpr double kLargeTemperatureStepK = 5.0;
 // dt_s and maximum_time_s each validate individually (finite, positive;
 // 10-60 s), but nothing bounded their ratio. A syntactically valid dt_s of
 // 1e-7 s with maximum_time_s at its 60 s ceiling implies ~6e8 fixed steps,
@@ -34,6 +38,13 @@ struct Boundaries {
     double inlet_temperature_k = 0.0;
 };
 
+// The per-cell closure values evaluate_regions() derives from one cell's state.
+struct CellDerived {
+    double permeability_m2 = 0.0;
+    double pore_capacity_kg = 0.0;
+    double water_heat_capacity_j_kg_k = 0.0;
+};
+
 struct Derived {
     PuckGeometry geometry;
     FlowSolution flow;
@@ -45,9 +56,7 @@ struct Derived {
     double permeability_m2 = 0.0;
     double pore_capacity_kg = 0.0;
     double cell_depth_m = 0.0;
-    std::vector<double> cell_permeability_m2;
-    std::vector<double> cell_pore_capacity_kg;
-    std::vector<double> cell_water_heat_capacity_j_kg_k;
+    std::vector<CellDerived> cells;
 };
 
 // One axial finite-volume cell. Level 2 is this vector with a single entry.
@@ -79,6 +88,14 @@ struct RegionState {
     std::vector<CellState> cells;
     double integrated_flow_m3 = 0.0;
 };
+
+// Sensible heat capacity of a coffee mass plus the water it holds. The water
+// term is floored so a dry puck still has a finite, non-zero capacity.
+double thermal_capacity_j_k(double coffee_kg, const ModelCoefficients& coeff,
+                            double water_kg, double water_heat_capacity_j_kg_k) {
+    return coffee_kg * coeff.coffee_heat_capacity_j_kg_k +
+           std::max(water_kg, kMassEpsilon) * water_heat_capacity_j_kg_k;
+}
 
 bool all_finite(const CellState& cell) {
     for (double bin_kg : cell.bin_remaining_kg) {
@@ -127,12 +144,11 @@ void roll_up(RegionState& region, const Derived& derived, double region_dose_kg,
         shot.retained_water_kg += cell.retained_water_kg;
 
         const double thermal_capacity =
-            cell_dose_kg * coeff.coffee_heat_capacity_j_kg_k +
-            std::max(cell.retained_water_kg, kMassEpsilon) *
-                derived.cell_water_heat_capacity_j_kg_k[i];
+            thermal_capacity_j_k(cell_dose_kg, coeff, cell.retained_water_kg,
+                                 derived.cells[i].water_heat_capacity_j_kg_k);
         thermal_capacity_sum += thermal_capacity;
         weighted_temperature += cell.temperature_k * thermal_capacity;
-        capacity_sum += derived.cell_pore_capacity_kg[i];
+        capacity_sum += derived.cells[i].pore_capacity_kg;
     }
     shot.puck_temperature_k = thermal_capacity_sum > kMassEpsilon
                                   ? weighted_temperature / thermal_capacity_sum
@@ -278,10 +294,9 @@ ShotState aggregate_state(const std::vector<RegionState>& regions, const std::ve
             aggregate.class_in_cup_kg[k] += state.class_in_cup_kg[k];
         }
 
-        const double thermal_capacity =
-            recipe.dose_kg * recipe.parallel_regions[i].area_fraction *
-                coeff.coffee_heat_capacity_j_kg_k +
-            std::max(state.retained_water_kg, kMassEpsilon) * region.water_heat_capacity_j_kg_k;
+        const double thermal_capacity = thermal_capacity_j_k(
+            recipe.dose_kg * recipe.parallel_regions[i].area_fraction, coeff,
+            state.retained_water_kg, region.water_heat_capacity_j_kg_k);
         thermal_capacity_sum += thermal_capacity;
         weighted_temperature += state.puck_temperature_k * thermal_capacity;
         pore_capacity_sum += region.pore_capacity_kg;
@@ -419,18 +434,14 @@ std::pair<Boundaries, std::vector<Derived>> evaluate_regions(
 
         std::vector<AxialCell> column;
         column.reserve(cells.size());
-        d.cell_permeability_m2.reserve(cells.size());
-        d.cell_pore_capacity_kg.reserve(cells.size());
-        d.cell_water_heat_capacity_j_kg_k.reserve(cells.size());
+        d.cells.reserve(cells.size());
         for (const CellState& cell : cells) {
             const double permeability =
                 shape * wetting_factor(cell.liquid_saturation, coeff.dry_permeability_multiplier);
-            d.cell_permeability_m2.push_back(permeability);
-            d.cell_pore_capacity_kg.push_back(region_area_m2 * d.cell_depth_m *
-                                               d.geometry.porosity *
-                                               water.density_kg_m3(cell.temperature_k));
-            d.cell_water_heat_capacity_j_kg_k.push_back(
-                water.heat_capacity_j_kg_k(cell.temperature_k));
+            d.cells.push_back({permeability,
+                               region_area_m2 * d.cell_depth_m * d.geometry.porosity *
+                                   water.density_kg_m3(cell.temperature_k),
+                               water.heat_capacity_j_kg_k(cell.temperature_k)});
             column.push_back({permeability, water.viscosity_pa_s(cell.temperature_k),
                               d.cell_depth_m});
         }
@@ -438,14 +449,14 @@ std::pair<Boundaries, std::vector<Derived>> evaluate_regions(
         d.flow = darcy_flow_series(column, region_area_m2, boundaries.delta_p_pa,
                                    coeff.maximum_flow_m3_s);
         d.pore_capacity_kg = 0.0;
-        for (double capacity : d.cell_pore_capacity_kg) d.pore_capacity_kg += capacity;
+        for (const CellDerived& cell : d.cells) d.pore_capacity_kg += cell.pore_capacity_kg;
 
         // A single cell reports its own permeability; a column reports the
         // series-equivalent at the region's rolled-up viscosity, so the
         // chart field stays comparable across cell counts.
         d.permeability_m2 =
             cells.size() == 1
-                ? d.cell_permeability_m2.front()
+                ? d.cells.front().permeability_m2
                 : (d.flow.resistance_pa_s_m3 > 0.0
                        ? (d.viscosity_pa_s * d.geometry.depth_m) /
                              (d.flow.resistance_pa_s_m3 * region_area_m2)
@@ -455,13 +466,187 @@ std::pair<Boundaries, std::vector<Derived>> evaluate_regions(
     return {boundaries, derived};
 }
 
-bool advance_regions(std::vector<RegionState>& regions, const std::vector<Derived>& derived,
-                     const Boundaries& boundaries, const Recipe& recipe,
-                     const ModelCoefficients& coeff, const SimulationConfig& config,
-                     const WaterProperties& water, double dt, long long step,
-                     ShotResult& result, WarningLog& warn, ShotDiagnostics& diag,
-                     TerminationReason& termination) {
-    bool saturation_invalid = false;
+// What one step leaves the solver: the read-only inputs every stage shares,
+// and the sinks it reports into.
+struct StepContext {
+    const Recipe& recipe;
+    const ModelCoefficients& coeff;
+    const SimulationConfig& config;
+    const WaterProperties& water;
+    double dt;
+};
+
+struct StepOutputs {
+    ShotResult& result;
+    WarningLog& warn;
+    ShotDiagnostics& diag;
+};
+
+// The liquid one cell passes to the next in the axial sweep: the inlet water
+// for cell 0, and what leaves the last cell is beverage. class_kg is the
+// sensory overlay's breakdown of solids_kg and stays empty without a bean.
+struct Parcel {
+    double mass_kg = 0.0;
+    double solids_kg = 0.0;
+    double temperature_k = 0.0;
+    std::vector<double> class_kg;
+};
+
+void receive(CellState& cell, const Parcel& in) {
+    cell.retained_water_kg += in.mass_kg;
+    cell.dissolved_solids_kg += in.solids_kg;
+    for (std::size_t k = 0; k < cell.class_dissolved_kg.size(); ++k) {
+        cell.class_dissolved_kg[k] += in.class_kg[k];
+    }
+}
+
+// Rate of temperature change of one cell: advection from the incoming
+// parcel against a share of the region's ambient loss.
+double heat_rate_k_s(const CellState& cell, const CellDerived& cd, const Parcel& in,
+                 double cell_dose_kg, double cell_heat_loss_w_k, const StepContext& ctx) {
+    const double capacity_j_k = thermal_capacity_j_k(cell_dose_kg, ctx.coeff,
+                                                     cell.retained_water_kg,
+                                                     cd.water_heat_capacity_j_kg_k);
+    const double mass_flow_kg_s = in.mass_kg / ctx.dt;
+    const double heat_in_w = mass_flow_kg_s * cd.water_heat_capacity_j_kg_k *
+                             (in.temperature_k - cell.temperature_k);
+    const double heat_loss_w =
+        cell_heat_loss_w_k * (cell.temperature_k - ctx.coeff.ambient_temperature_k);
+    return (heat_in_w - heat_loss_w) / capacity_j_k;
+}
+
+// Moves solids from the cell's extractable store(s) into its pore liquid and
+// returns the mass moved. Reads this cell's own temperature and saturation.
+double extract_step(CellState& cell, double flow_m3_s, const StepContext& ctx) {
+    ShotState cell_view;
+    cell_view.puck_temperature_k = cell.temperature_k;
+    cell_view.liquid_saturation = cell.liquid_saturation;
+    double extracted_kg = 0.0;
+    if (cell.bin_remaining_kg.empty()) {
+        const double k_ext =
+            extraction_rate_coefficient(cell_view, ctx.recipe, ctx.coeff, flow_m3_s);
+        extracted_kg = k_ext * cell.remaining_extractable_solids_kg * ctx.dt;
+        extracted_kg = std::clamp(extracted_kg, 0.0, cell.remaining_extractable_solids_kg);
+        cell.remaining_extractable_solids_kg -= extracted_kg;
+    } else {
+        // Size-resolved: each class extracts at its own rate, so the
+        // fines exhaust while the coarse mode is still producing. That
+        // ordering is the whole reason for carrying a distribution --
+        // a single mean diameter cannot express it.
+        const std::vector<GrindBin>& bins = ctx.recipe.grind->bins;
+        double remaining_total_kg = 0.0;
+        for (std::size_t b = 0; b < cell.bin_remaining_kg.size(); ++b) {
+            const double k_ext = extraction_rate_coefficient_at(cell_view, ctx.coeff, flow_m3_s,
+                                                                bins[b].diameter_m);
+            double bin_extracted_kg = k_ext * cell.bin_remaining_kg[b] * ctx.dt;
+            bin_extracted_kg = std::clamp(bin_extracted_kg, 0.0, cell.bin_remaining_kg[b]);
+            cell.bin_remaining_kg[b] -= bin_extracted_kg;
+            extracted_kg += bin_extracted_kg;
+            remaining_total_kg += cell.bin_remaining_kg[b];
+        }
+        cell.remaining_extractable_solids_kg = remaining_total_kg;
+    }
+    cell.dissolved_solids_kg += extracted_kg;
+    cell.retained_water_kg += extracted_kg;
+    return extracted_kg;
+}
+
+// The sensory overlay. It reads extracted_kg and writes only the class pools:
+// nothing in the physics observes them, so the lumped arithmetic in
+// extract_step() is the authority and stays untouched. Returns how many
+// classes hit their floor.
+//
+// Each class takes a share of the mass the solver already extracted, in
+// proportion to how much of it is left times how readily it leaves. The
+// shares sum to extracted_kg by construction rather than by a corrective
+// renormalisation, so total dissolved solids cannot drift. Deliberately no
+// second call to extraction_rate_coefficient(): only the ratio between
+// classes matters, which also means the scalar and PSD branches need no
+// separate treatment here.
+int partition_classes(CellState& cell, const BeanProfile& bean, double extracted_kg) {
+    int clamp_count = 0;
+    double propensity_sum = 0.0;
+    std::array<double, kSoluteClassCount> propensity{};
+    for (std::size_t k = 0; k < kSoluteClassCount; ++k) {
+        propensity[k] = bean.classes[k].relative_rate * cell.class_remaining_kg[k];
+        propensity_sum += propensity[k];
+    }
+    if (propensity_sum <= 0.0) return clamp_count;
+
+    double placed_kg = 0.0;
+    for (std::size_t k = 0; k < kSoluteClassCount; ++k) {
+        double take_kg = extracted_kg * propensity[k] / propensity_sum;
+        if (take_kg > cell.class_remaining_kg[k]) {
+            take_kg = cell.class_remaining_kg[k];
+            ++clamp_count;
+        }
+        cell.class_remaining_kg[k] -= take_kg;
+        cell.class_dissolved_kg[k] += take_kg;
+        placed_kg += take_kg;
+    }
+    // A class that hit its floor leaves a shortfall. Spread it over the
+    // classes that still have mass so the overlay keeps accounting for
+    // exactly extracted_kg; if none do, the residual is reported rather than
+    // silently dropped.
+    const double shortfall_kg = extracted_kg - placed_kg;
+    if (shortfall_kg > 0.0) {
+        double available_kg = 0.0;
+        for (double remaining_kg : cell.class_remaining_kg) available_kg += remaining_kg;
+        if (available_kg > 0.0) {
+            const double fill = std::min(shortfall_kg / available_kg, 1.0);
+            for (std::size_t k = 0; k < kSoluteClassCount; ++k) {
+                const double extra_kg = cell.class_remaining_kg[k] * fill;
+                cell.class_remaining_kg[k] -= extra_kg;
+                cell.class_dissolved_kg[k] += extra_kg;
+            }
+        }
+    }
+    return clamp_count;
+}
+
+// Releases whatever pore liquid exceeds the cell's capacity, at the cell's
+// pore concentration, overwriting `out` with it for the next cell down.
+void drain(CellState& cell, double capacity_kg, Parcel& out) {
+    // Read only, for the overlay below: which fraction of the pore solids
+    // the transport is about to move.
+    const double solids_before_out_kg = cell.dissolved_solids_kg;
+    double out_kg = std::max(cell.retained_water_kg - capacity_kg, 0.0);
+    out_kg = std::min(out_kg, cell.retained_water_kg);
+    double solids_out_kg = 0.0;
+    if (out_kg > 0.0) {
+        const double c_pore =
+            cell.dissolved_solids_kg / std::max(cell.retained_water_kg, kMassEpsilon);
+        solids_out_kg = std::min(out_kg * c_pore, cell.dissolved_solids_kg);
+        cell.dissolved_solids_kg -= solids_out_kg;
+        cell.retained_water_kg -= out_kg;
+    }
+    if (!cell.class_dissolved_kg.empty()) {
+        // The tracer travels with the pore liquid at exactly the fraction of
+        // solids the solver actually moved, so the overlay invents no second
+        // transport rule of its own.
+        const double moved_fraction =
+            solids_before_out_kg > 0.0 ? solids_out_kg / solids_before_out_kg : 0.0;
+        for (std::size_t k = 0; k < cell.class_dissolved_kg.size(); ++k) {
+            const double moved_kg = cell.class_dissolved_kg[k] * moved_fraction;
+            cell.class_dissolved_kg[k] -= moved_kg;
+            out.class_kg[k] = moved_kg;
+        }
+    }
+    out.mass_kg = out_kg;
+    out.solids_kg = solids_out_kg;
+    out.temperature_k = cell.temperature_k;
+}
+
+// Advances every region one step. Returns a termination reason only when a
+// strict invariant stops the run; otherwise the step completed.
+std::optional<TerminationReason> advance_regions(std::vector<RegionState>& regions,
+                                                 const std::vector<Derived>& derived,
+                                                 const Boundaries& boundaries,
+                                                 const StepContext& ctx, long long step,
+                                                 StepOutputs& out) {
+    const Recipe& recipe = ctx.recipe;
+    const ModelCoefficients& coeff = ctx.coeff;
+    const double dt = ctx.dt;
     int flavor_clamp_count = 0;
     for (std::size_t i = 0; i < regions.size(); ++i) {
         RegionState& region = regions[i];
@@ -481,198 +666,71 @@ bool advance_regions(std::vector<RegionState>& regions, const std::vector<Derive
         // The axial sweep: cell 0 takes the inlet, every cell below takes
         // what the cell above it released, at that cell's temperature and
         // pore concentration. What leaves the last cell is beverage.
-        double inflow_mass_kg = water_in_kg;
-        double inflow_solids_kg = 0.0;
-        double inflow_temperature_k = boundaries.inlet_temperature_k;
-        // Sensory overlay: the class breakdown of inflow_solids_kg, carried down
-        // the column beside it. Stays empty without a bean.
-        std::vector<double> inflow_class_kg;
-        if (recipe.bean.has_value()) inflow_class_kg.assign(kSoluteClassCount, 0.0);
+        Parcel parcel;
+        parcel.mass_kg = water_in_kg;
+        parcel.temperature_k = boundaries.inlet_temperature_k;
+        if (recipe.bean.has_value()) parcel.class_kg.assign(kSoluteClassCount, 0.0);
 
         for (std::size_t c = 0; c < region.cells.size(); ++c) {
             CellState& cell = region.cells[c];
-            cell.retained_water_kg += inflow_mass_kg;
-            cell.dissolved_solids_kg += inflow_solids_kg;
-            for (std::size_t k = 0; k < cell.class_dissolved_kg.size(); ++k) {
-                cell.class_dissolved_kg[k] += inflow_class_kg[k];
-            }
+            const CellDerived& cd = d.cells[c];
+            receive(cell, parcel);
 
-            const double thermal_capacity_j_k =
-                cell_dose_kg * coeff.coffee_heat_capacity_j_kg_k +
-                std::max(cell.retained_water_kg, kMassEpsilon) *
-                    d.cell_water_heat_capacity_j_kg_k[c];
-            const double mass_flow_kg_s = inflow_mass_kg / dt;
-            const double heat_in_w = mass_flow_kg_s * d.cell_water_heat_capacity_j_kg_k[c] *
-                                     (inflow_temperature_k - cell.temperature_k);
-            const double heat_loss_w =
-                cell_heat_loss_w_k * (cell.temperature_k - coeff.ambient_temperature_k);
-            const double dT_dt = (heat_in_w - heat_loss_w) / thermal_capacity_j_k;
+            // Kept as one multiply-add: the compiler may fuse it, and splitting
+            // the product out would change the last ulp and the result hash.
+            const double dT_dt = heat_rate_k_s(cell, cd, parcel, cell_dose_kg, cell_heat_loss_w_k, ctx);
             cell.temperature_k += dT_dt * dt;
-            if (std::abs(dT_dt * dt) > 5.0) {
-                warn.once(result.warnings, "TEMPERATURE_STEP_LARGE",
-                          "puck temperature moved more than 5 K in one step; reduce dt_s",
-                          state.time_s, WarningSeverity::soft);
+            if (std::abs(dT_dt * dt) > kLargeTemperatureStepK) {
+                out.warn.once(out.result.warnings, "TEMPERATURE_STEP_LARGE",
+                              "puck temperature moved more than 5 K in one step; reduce dt_s",
+                              state.time_s, WarningSeverity::soft);
             }
-            cell.temperature_k = std::clamp(cell.temperature_k, water.min_temperature_k(),
-                                            water.max_temperature_k());
-            diag.min_puck_temperature_k =
-                std::min(diag.min_puck_temperature_k, cell.temperature_k);
-            diag.max_puck_temperature_k =
-                std::max(diag.max_puck_temperature_k, cell.temperature_k);
+            cell.temperature_k = std::clamp(cell.temperature_k, ctx.water.min_temperature_k(),
+                                            ctx.water.max_temperature_k());
+            out.diag.min_puck_temperature_k =
+                std::min(out.diag.min_puck_temperature_k, cell.temperature_k);
+            out.diag.max_puck_temperature_k =
+                std::max(out.diag.max_puck_temperature_k, cell.temperature_k);
 
-            // Extraction reads this cell's own temperature and saturation.
-            ShotState cell_view;
-            cell_view.puck_temperature_k = cell.temperature_k;
-            cell_view.liquid_saturation = cell.liquid_saturation;
-            double extracted_kg = 0.0;
-            if (cell.bin_remaining_kg.empty()) {
-                const double k_ext =
-                    extraction_rate_coefficient(cell_view, recipe, coeff, d.flow.flow_m3_s);
-                extracted_kg = k_ext * cell.remaining_extractable_solids_kg * dt;
-                extracted_kg = std::clamp(extracted_kg, 0.0, cell.remaining_extractable_solids_kg);
-                cell.remaining_extractable_solids_kg -= extracted_kg;
-            } else {
-                // Size-resolved: each class extracts at its own rate, so the
-                // fines exhaust while the coarse mode is still producing. That
-                // ordering is the whole reason for carrying a distribution --
-                // a single mean diameter cannot express it.
-                const std::vector<GrindBin>& bins = recipe.grind->bins;
-                double remaining_total_kg = 0.0;
-                for (std::size_t b = 0; b < cell.bin_remaining_kg.size(); ++b) {
-                    const double k_ext = extraction_rate_coefficient_at(
-                        cell_view, coeff, d.flow.flow_m3_s, bins[b].diameter_m);
-                    double bin_extracted_kg = k_ext * cell.bin_remaining_kg[b] * dt;
-                    bin_extracted_kg =
-                        std::clamp(bin_extracted_kg, 0.0, cell.bin_remaining_kg[b]);
-                    cell.bin_remaining_kg[b] -= bin_extracted_kg;
-                    extracted_kg += bin_extracted_kg;
-                    remaining_total_kg += cell.bin_remaining_kg[b];
-                }
-                cell.remaining_extractable_solids_kg = remaining_total_kg;
-            }
+            const double extracted_kg = extract_step(cell, d.flow.flow_m3_s, ctx);
             if (!cell.class_remaining_kg.empty()) {
-                // The sensory overlay. It reads extracted_kg and writes only the
-                // class pools: nothing below observes them, so the lumped
-                // arithmetic above is the authority and stays untouched.
-                //
-                // Each class takes a share of the mass the solver already
-                // extracted, in proportion to how much of it is left times how
-                // readily it leaves. The shares sum to extracted_kg by
-                // construction rather than by a corrective renormalisation, so
-                // total dissolved solids cannot drift. Deliberately no second
-                // call to extraction_rate_coefficient(): only the ratio between
-                // classes matters, which also means the scalar and PSD branches
-                // above need no separate treatment here.
-                double propensity_sum = 0.0;
-                std::array<double, kSoluteClassCount> propensity{};
-                for (std::size_t k = 0; k < kSoluteClassCount; ++k) {
-                    propensity[k] =
-                        recipe.bean->classes[k].relative_rate * cell.class_remaining_kg[k];
-                    propensity_sum += propensity[k];
-                }
-                if (propensity_sum > 0.0) {
-                    double placed_kg = 0.0;
-                    for (std::size_t k = 0; k < kSoluteClassCount; ++k) {
-                        double take_kg = extracted_kg * propensity[k] / propensity_sum;
-                        if (take_kg > cell.class_remaining_kg[k]) {
-                            take_kg = cell.class_remaining_kg[k];
-                            ++flavor_clamp_count;
-                        }
-                        cell.class_remaining_kg[k] -= take_kg;
-                        cell.class_dissolved_kg[k] += take_kg;
-                        placed_kg += take_kg;
-                    }
-                    // A class that hit its floor leaves a shortfall. Spread it
-                    // over the classes that still have mass so the overlay keeps
-                    // accounting for exactly extracted_kg; if none do, the
-                    // residual is reported rather than silently dropped.
-                    double shortfall_kg = extracted_kg - placed_kg;
-                    if (shortfall_kg > 0.0) {
-                        double available_kg = 0.0;
-                        for (double remaining_kg : cell.class_remaining_kg) {
-                            available_kg += remaining_kg;
-                        }
-                        if (available_kg > 0.0) {
-                            const double fill = std::min(shortfall_kg / available_kg, 1.0);
-                            for (std::size_t k = 0; k < kSoluteClassCount; ++k) {
-                                const double extra_kg = cell.class_remaining_kg[k] * fill;
-                                cell.class_remaining_kg[k] -= extra_kg;
-                                cell.class_dissolved_kg[k] += extra_kg;
-                            }
-                        }
-                    }
-                }
+                flavor_clamp_count += partition_classes(cell, *recipe.bean, extracted_kg);
             }
-            cell.dissolved_solids_kg += extracted_kg;
-            cell.retained_water_kg += extracted_kg;
 
-            // Read only, for the overlay below: which fraction of the pore
-            // solids the existing transport block is about to move.
-            const double solids_before_out_kg = cell.dissolved_solids_kg;
-            const double capacity_kg = std::max(d.cell_pore_capacity_kg[c], kMassEpsilon);
-            double out_kg = std::max(cell.retained_water_kg - capacity_kg, 0.0);
-            out_kg = std::min(out_kg, cell.retained_water_kg);
-            double solids_out_kg = 0.0;
-            if (out_kg > 0.0) {
-                const double c_pore =
-                    cell.dissolved_solids_kg /
-                    std::max(cell.retained_water_kg, kMassEpsilon);
-                solids_out_kg = std::min(out_kg * c_pore, cell.dissolved_solids_kg);
-                cell.dissolved_solids_kg -= solids_out_kg;
-                cell.retained_water_kg -= out_kg;
-            }
-            if (!cell.class_dissolved_kg.empty()) {
-                // The tracer travels with the pore liquid at exactly the
-                // fraction of solids the solver actually moved, so the overlay
-                // invents no second transport rule of its own.
-                const double moved_fraction =
-                    solids_before_out_kg > 0.0 ? solids_out_kg / solids_before_out_kg : 0.0;
-                for (std::size_t k = 0; k < cell.class_dissolved_kg.size(); ++k) {
-                    const double moved_kg = cell.class_dissolved_kg[k] * moved_fraction;
-                    cell.class_dissolved_kg[k] -= moved_kg;
-                    inflow_class_kg[k] = moved_kg;
-                }
-            }
+            const double capacity_kg = std::max(cd.pore_capacity_kg, kMassEpsilon);
+            drain(cell, capacity_kg, parcel);
 
             cell.liquid_saturation = cell.retained_water_kg / capacity_kg;
             if (cell.liquid_saturation > 1.0 + kSaturationTolerance ||
                 cell.liquid_saturation < -kSaturationTolerance) {
-                if (config.strict_invariants) {
-                    termination = TerminationReason::invalid_state;
-                    result.warnings.push_back({"SATURATION_INVARIANT",
-                                               "liquid saturation left [0, 1] beyond tolerance",
-                                               state.time_s, WarningSeverity::hard});
-                    saturation_invalid = true;
-                    break;
+                if (ctx.config.strict_invariants) {
+                    out.result.warnings.push_back({"SATURATION_INVARIANT",
+                                                   "liquid saturation left [0, 1] beyond tolerance",
+                                                   state.time_s, WarningSeverity::hard});
+                    return TerminationReason::invalid_state;
                 }
-                ++diag.clamp_count;
+                ++out.diag.clamp_count;
             }
             cell.liquid_saturation = std::clamp(cell.liquid_saturation, 0.0, 1.0);
-
-            inflow_mass_kg = out_kg;
-            inflow_solids_kg = solids_out_kg;
-            inflow_temperature_k = cell.temperature_k;
         }
-        if (saturation_invalid) break;
 
         // Whatever the last cell released has left the puck.
-        state.beverage_mass_kg += inflow_mass_kg;
-        state.dissolved_solids_in_cup_kg += inflow_solids_kg;
+        state.beverage_mass_kg += parcel.mass_kg;
+        state.dissolved_solids_in_cup_kg += parcel.solids_kg;
         for (std::size_t k = 0; k < state.class_in_cup_kg.size(); ++k) {
-            state.class_in_cup_kg[k] += inflow_class_kg[k];
+            state.class_in_cup_kg[k] += parcel.class_kg[k];
         }
         roll_up(region, d, region_dose_kg, coeff);
     }
-    if (saturation_invalid) return false;
 
     for (RegionState& region : regions) {
         region.shot.time_s = static_cast<double>(step + 1) * dt;
     }
-    diag.step_count = step + 1;
-    if (result.flavor.has_value()) {
-        result.flavor->summary.class_clamp_count += flavor_clamp_count;
+    out.diag.step_count = step + 1;
+    if (out.result.flavor.has_value()) {
+        out.result.flavor->summary.class_clamp_count += flavor_clamp_count;
     }
-    return true;
+    return std::nullopt;
 }
 
 // The flavour view of one cup state: what fraction of the solids in the cup
@@ -845,6 +903,8 @@ ShotResult Simulator::run(const Recipe& recipe, const ModelCoefficients& coeff,
     const double dt = config.dt_s;
     TerminationReason termination = TerminationReason::not_terminated;
     double next_sample_time_s = 0.0;
+    const StepContext step_context{recipe, coeff, config, *water_, dt};
+    StepOutputs step_outputs{result, warn, diag};
 
     for (long long step = 0;; ++step) {
         throw_if_cancelled(is_cancelled);
@@ -902,8 +962,9 @@ ShotResult Simulator::run(const Recipe& recipe, const ModelCoefficients& coeff,
             next_sample_time_s <= regions.front().shot.time_s + dt + 1.0e-9;
         const std::vector<RegionState> states_before_step =
             crosses_sample_boundary ? regions : std::vector<RegionState>{};
-        if (!advance_regions(regions, derived, boundaries, recipe, coeff, config, *water_, dt,
-                             step, result, warn, diag, termination)) {
+        if (const auto stop = advance_regions(regions, derived, boundaries, step_context, step,
+                                              step_outputs)) {
+            termination = *stop;
             break;
         }
 

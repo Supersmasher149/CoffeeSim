@@ -78,12 +78,10 @@ struct CellState {
     double retained_water_kg = 0.0;
     double dissolved_solids_kg = 0.0;
     double remaining_extractable_solids_kg = 0.0;
-    // One extractable pool per PSD bin, when the recipe supplies a
-    // distribution. Empty on the scalar path, where
-    // remaining_extractable_solids_kg is the only store. When it is populated
-    // that scalar stays authoritative -- it is recomputed as the sum of the
-    // bins each step, so aggregation, the mass balances and the sample series
-    // all keep reading one number and need no knowledge of the bins.
+    // One extractable pool per extraction bin (see extraction_bins()). The
+    // scalar above is their sum, recomputed each step, so aggregation, the
+    // mass balances and the sample series keep reading one number and need no
+    // knowledge of the bins.
     std::vector<double> bin_remaining_kg;
     SoluteClassPools classes;
 };
@@ -356,8 +354,17 @@ void validate_inputs(const Recipe& recipe, const ModelCoefficients& coeff,
     if (!validation.ok()) throw InvalidInputError(validation);
 }
 
-std::vector<RegionState> initialize_regions(const Recipe& recipe,
-                                            const ModelCoefficients& coeff) {
+// The size classes extraction runs over: the recipe's distribution when it has
+// one, otherwise a single bin at the scalar diameter holding all the mass. A
+// single bin is bit-identical to a dedicated scalar path: the split multiplies
+// by exactly 1 and the per-bin sums start from exactly 0.
+std::vector<GrindBin> extraction_bins(const Recipe& recipe) {
+    if (recipe.grind.has_value()) return recipe.grind->bins;
+    return {GrindBin{recipe.particle_diameter_m, 1.0}};
+}
+
+std::vector<RegionState> initialize_regions(const Recipe& recipe, const ModelCoefficients& coeff,
+                                            const std::vector<GrindBin>& bins) {
     std::vector<RegionState> regions(recipe.parallel_regions.size());
     const std::size_t cell_count = static_cast<std::size_t>(recipe.axial_cells);
     for (std::size_t i = 0; i < regions.size(); ++i) {
@@ -376,16 +383,13 @@ std::vector<RegionState> initialize_regions(const Recipe& recipe,
             // column; the sum over cells is the region's share exactly.
             cell.remaining_extractable_solids_kg =
                 region_extractable_kg / static_cast<double>(cell_count);
-            if (recipe.grind.has_value()) {
-                // Extractable mass splits across the size classes in proportion
-                // to the mass each class holds, so the bins sum to the cell's
-                // share exactly and the scalar total is unchanged at t = 0.
-                const auto& bins = recipe.grind->bins;
-                cell.bin_remaining_kg.reserve(bins.size());
-                for (const GrindBin& bin : bins) {
-                    cell.bin_remaining_kg.push_back(cell.remaining_extractable_solids_kg *
-                                                    bin.mass_fraction);
-                }
+            // Extractable mass splits across the size classes in proportion
+            // to the mass each class holds, so the bins sum to the cell's
+            // share exactly and the scalar total is unchanged at t = 0.
+            cell.bin_remaining_kg.reserve(bins.size());
+            for (const GrindBin& bin : bins) {
+                cell.bin_remaining_kg.push_back(cell.remaining_extractable_solids_kg *
+                                                bin.mass_fraction);
             }
             if (recipe.bean.has_value()) {
                 // The same split, along a second and independent axis: solute
@@ -480,6 +484,7 @@ struct StepContext {
     const ModelCoefficients& coeff;
     const SimulationConfig& config;
     const WaterProperties& water;
+    const std::vector<GrindBin>& bins;
     double dt;
 };
 
@@ -527,37 +532,27 @@ double heat_rate_k_s(const CellState& cell, const CellDerived& cd, const Parcel&
     return (heat_in_w - heat_loss_w) / capacity_j_k;
 }
 
-// Moves solids from the cell's extractable store(s) into its pore liquid and
+// Moves solids from the cell's extractable bins into its pore liquid and
 // returns the mass moved. Reads this cell's own temperature and saturation.
+// Each size class extracts at its own rate, so the fines exhaust while the
+// coarse mode is still producing -- the ordering a single mean diameter
+// cannot express.
 double extract_step(CellState& cell, double flow_m3_s, const StepContext& ctx) {
     ShotState cell_view;
     cell_view.puck_temperature_k = cell.temperature_k;
     cell_view.liquid_saturation = cell.liquid_saturation;
     double extracted_kg = 0.0;
-    if (cell.bin_remaining_kg.empty()) {
-        const double k_ext =
-            extraction_rate_coefficient(cell_view, ctx.recipe, ctx.coeff, flow_m3_s);
-        extracted_kg = k_ext * cell.remaining_extractable_solids_kg * ctx.dt;
-        extracted_kg = std::clamp(extracted_kg, 0.0, cell.remaining_extractable_solids_kg);
-        cell.remaining_extractable_solids_kg -= extracted_kg;
-    } else {
-        // Size-resolved: each class extracts at its own rate, so the
-        // fines exhaust while the coarse mode is still producing. That
-        // ordering is the whole reason for carrying a distribution --
-        // a single mean diameter cannot express it.
-        const std::vector<GrindBin>& bins = ctx.recipe.grind->bins;
-        double remaining_total_kg = 0.0;
-        for (std::size_t b = 0; b < cell.bin_remaining_kg.size(); ++b) {
-            const double k_ext = extraction_rate_coefficient_at(cell_view, ctx.coeff, flow_m3_s,
-                                                                bins[b].diameter_m);
-            double bin_extracted_kg = k_ext * cell.bin_remaining_kg[b] * ctx.dt;
-            bin_extracted_kg = std::clamp(bin_extracted_kg, 0.0, cell.bin_remaining_kg[b]);
-            cell.bin_remaining_kg[b] -= bin_extracted_kg;
-            extracted_kg += bin_extracted_kg;
-            remaining_total_kg += cell.bin_remaining_kg[b];
-        }
-        cell.remaining_extractable_solids_kg = remaining_total_kg;
+    double remaining_total_kg = 0.0;
+    for (std::size_t b = 0; b < cell.bin_remaining_kg.size(); ++b) {
+        const double k_ext = extraction_rate_coefficient_at(cell_view, ctx.coeff, flow_m3_s,
+                                                            ctx.bins[b].diameter_m);
+        double bin_extracted_kg = k_ext * cell.bin_remaining_kg[b] * ctx.dt;
+        bin_extracted_kg = std::clamp(bin_extracted_kg, 0.0, cell.bin_remaining_kg[b]);
+        cell.bin_remaining_kg[b] -= bin_extracted_kg;
+        extracted_kg += bin_extracted_kg;
+        remaining_total_kg += cell.bin_remaining_kg[b];
     }
+    cell.remaining_extractable_solids_kg = remaining_total_kg;
     cell.dissolved_solids_kg += extracted_kg;
     cell.retained_water_kg += extracted_kg;
     return extracted_kg;
@@ -572,9 +567,8 @@ double extract_step(CellState& cell, double flow_m3_s, const StepContext& ctx) {
 // proportion to how much of it is left times how readily it leaves. The
 // shares sum to extracted_kg by construction rather than by a corrective
 // renormalisation, so total dissolved solids cannot drift. Deliberately no
-// second call to extraction_rate_coefficient(): only the ratio between
-// classes matters, which also means the scalar and PSD branches need no
-// separate treatment here.
+// second call to extraction_rate_coefficient_at(): only the ratio between
+// classes matters, so the size bins need no separate treatment here.
 int partition_classes(SoluteClassPools& pools, const BeanProfile& bean, double extracted_kg) {
     int clamp_count = 0;
     double propensity_sum = 0.0;
@@ -959,7 +953,8 @@ ShotResult Simulator::run(const Recipe& recipe, const ModelCoefficients& coeff,
         flavor.flavor_model_version = std::string(version::kFlavorModel);
         result.flavor = flavor;
     }
-    std::vector<RegionState> regions = initialize_regions(recipe, coeff);
+    const std::vector<GrindBin> bins = extraction_bins(recipe);
+    std::vector<RegionState> regions = initialize_regions(recipe, coeff, bins);
     const double initial_extractable_kg = recipe.dose_kg * coeff.extractable_solids_fraction;
 
     ShotDiagnostics& diag = result.diagnostics;
@@ -971,7 +966,7 @@ ShotResult Simulator::run(const Recipe& recipe, const ModelCoefficients& coeff,
     const double dt = config.dt_s;
     TerminationReason termination = TerminationReason::not_terminated;
     SampleClock sample_clock(config.sample_interval_s);
-    const StepContext step_context{recipe, coeff, config, *water_, dt};
+    const StepContext step_context{recipe, coeff, config, *water_, bins, dt};
     StepOutputs step_outputs{result, warn, diag};
 
     for (long long step = 0;; ++step) {

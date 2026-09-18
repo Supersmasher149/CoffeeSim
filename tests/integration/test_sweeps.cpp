@@ -111,7 +111,7 @@ TEST_CASE("a sweep whose axes multiply past the run limit is rejected before any
     spec.coefficients = testing::baseline_coefficients();
 
     std::vector<double> many_values(1001);
-    for (std::size_t i = 0; i < many_values.size(); ++i) many_values[i] = 300.0 + i * 0.1;
+    for (std::size_t i = 0; i < many_values.size(); ++i) many_values[i] = 300.0 + static_cast<double>(i) * 0.1;
     spec.axes = {{"puck.particle_diameter_um", many_values}, {"puck.dose_g", many_values}};
 
     REQUIRE_THROWS_MATCHES(
@@ -127,7 +127,7 @@ TEST_CASE("a sweep at the run limit is not rejected for size", "[sweep]") {
     spec.coefficients = testing::baseline_coefficients();
 
     std::vector<double> values(1000);
-    for (std::size_t i = 0; i < values.size(); ++i) values[i] = 300.0 + i * 0.1;
+    for (std::size_t i = 0; i < values.size(); ++i) values[i] = 300.0 + static_cast<double>(i) * 0.1;
     spec.axes = {{"puck.particle_diameter_um", values}, {"puck.dose_g", values}};
 
     REQUIRE_NOTHROW(validate_sweep_spec(spec));

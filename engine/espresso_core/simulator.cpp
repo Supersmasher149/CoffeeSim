@@ -96,6 +96,26 @@ struct RegionState {
     double integrated_flow_m3 = 0.0;
 };
 
+// A region's fixed share of the puck, derived once per run from the recipe.
+// The dose divides by area fraction and then evenly down the axial column.
+struct RegionLayout {
+    double dose_kg = 0.0;
+    double cell_dose_kg = 0.0;
+    double area_m2 = 0.0;
+};
+
+std::vector<RegionLayout> region_layout(const Recipe& recipe) {
+    const double basket_area_m2 = recipe.basket_area_m2();
+    const double cell_count = static_cast<double>(recipe.axial_cells);
+    std::vector<RegionLayout> layout;
+    layout.reserve(recipe.parallel_regions.size());
+    for (const ParallelRegion& region : recipe.parallel_regions) {
+        const double dose_kg = recipe.dose_kg * region.area_fraction;
+        layout.push_back({dose_kg, dose_kg / cell_count, basket_area_m2 * region.area_fraction});
+    }
+    return layout;
+}
+
 // Sensible heat capacity of a coffee mass plus the water it holds. The water
 // term is floored so a dry puck still has a finite, non-zero capacity.
 double thermal_capacity_j_k(double coffee_kg, const ModelCoefficients& coeff,
@@ -159,7 +179,7 @@ bool all_finite(const CellState& cell) {
 // reads. Totals are sums; saturation is the pore-capacity weighted mean, which
 // total retained over total capacity gives directly; temperature is weighted by
 // each cell's thermal capacity.
-void roll_up(RegionState& region, const Derived& derived, double region_dose_kg,
+void roll_up(RegionState& region, const Derived& derived, const RegionLayout& layout,
              const ModelCoefficients& coeff) {
     ShotState& shot = region.shot;
     shot.remaining_extractable_solids_kg = 0.0;
@@ -176,7 +196,7 @@ void roll_up(RegionState& region, const Derived& derived, double region_dose_kg,
         return;
     }
 
-    const double cell_dose_kg = region_dose_kg / static_cast<double>(region.cells.size());
+    const double cell_dose_kg = layout.cell_dose_kg;
     double thermal_capacity_sum = 0.0;
     double weighted_temperature = 0.0;
     double capacity_sum = 0.0;
@@ -313,7 +333,8 @@ RegionState interpolate_region(const RegionState& lower, const RegionState& uppe
 }
 
 ShotState aggregate_state(const std::vector<RegionState>& regions, const std::vector<Derived>& derived,
-                          const Recipe& recipe, const ModelCoefficients& coeff) {
+                          const Recipe& recipe, const ModelCoefficients& coeff,
+                          const std::vector<RegionLayout>& layout) {
     ShotState aggregate;
     aggregate.time_s = regions.front().shot.time_s;
 
@@ -334,8 +355,7 @@ ShotState aggregate_state(const std::vector<RegionState>& regions, const std::ve
         }
 
         const double thermal_capacity = thermal_capacity_j_k(
-            recipe.dose_kg * recipe.parallel_regions[i].area_fraction, coeff,
-            state.retained_water_kg, region.water_heat_capacity_j_kg_k);
+            layout[i].dose_kg, coeff, state.retained_water_kg, region.water_heat_capacity_j_kg_k);
         thermal_capacity_sum += thermal_capacity;
         weighted_temperature += state.puck_temperature_k * thermal_capacity;
         pore_capacity_sum += region.pore_capacity_kg;
@@ -398,13 +418,13 @@ std::vector<GrindBin> extraction_bins(const Recipe& recipe) {
 }
 
 std::vector<RegionState> initialize_regions(const Recipe& recipe, const ModelCoefficients& coeff,
-                                            const std::vector<GrindBin>& bins) {
+                                            const std::vector<GrindBin>& bins,
+                                            const std::vector<RegionLayout>& layout) {
     std::vector<RegionState> regions(recipe.parallel_regions.size());
     const std::size_t cell_count = static_cast<std::size_t>(recipe.axial_cells);
     for (std::size_t i = 0; i < regions.size(); ++i) {
-        const double region_extractable_kg = recipe.dose_kg *
-                                             recipe.parallel_regions[i].area_fraction *
-                                             coeff.extractable_solids_fraction;
+        const double region_extractable_kg =
+            layout[i].dose_kg * coeff.extractable_solids_fraction;
         regions[i].shot.puck_temperature_k = coeff.initial_puck_temperature_k;
         regions[i].shot.remaining_extractable_solids_kg = region_extractable_kg;
         if (recipe.bean.has_value()) {
@@ -451,6 +471,7 @@ struct StepContext {
     const SimulationConfig& config;
     const WaterProperties& water;
     const std::vector<GrindBin>& bins;
+    const std::vector<RegionLayout>& layout;
     double dt;
 };
 
@@ -461,7 +482,7 @@ struct StepOutputs {
 };
 
 std::pair<Boundaries, std::vector<Derived>> evaluate_regions(
-    const std::vector<RegionState>& states, const StepContext& ctx, double area_m2) {
+    const std::vector<RegionState>& states, const StepContext& ctx) {
     const Recipe& recipe = ctx.recipe;
     const ModelCoefficients& coeff = ctx.coeff;
     const WaterProperties& water = ctx.water;
@@ -470,6 +491,16 @@ std::pair<Boundaries, std::vector<Derived>> evaluate_regions(
     boundaries.inlet_temperature_k =
         recipe.inlet_temperature_k.sample(states.front().shot.time_s);
     boundaries.delta_p_pa = boundaries.pressure_pa - coeff.outlet_pressure_pa;
+
+    // Compression, the inlet density and the regions' shared permeability
+    // shape depend only on the boundaries and the recipe, never on a region,
+    // so they are evaluated once per call. Only the multiplier differs.
+    const PuckGeometry geometry = compress_puck(recipe, coeff, boundaries.delta_p_pa);
+    const double inlet_density_kg_m3 = water.density_kg_m3(boundaries.inlet_temperature_k);
+    const double base_shape =
+        kozeny_carman_permeability(recipe.particle_diameter_m, geometry.porosity,
+                                   coeff.kozeny_constant) *
+        distribution_factor(recipe.particle_spread_factor, coeff.distribution_factor_floor);
 
     std::vector<Derived> derived;
     derived.reserve(states.size());
@@ -481,17 +512,12 @@ std::pair<Boundaries, std::vector<Derived>> evaluate_regions(
 
         Derived d;
         d.viscosity_pa_s = water.viscosity_pa_s(state.puck_temperature_k);
-        d.inlet_density_kg_m3 = water.density_kg_m3(boundaries.inlet_temperature_k);
+        d.inlet_density_kg_m3 = inlet_density_kg_m3;
         d.water_heat_capacity_j_kg_k = water.heat_capacity_j_kg_k(state.puck_temperature_k);
-        d.geometry = compress_puck(recipe, coeff, boundaries.delta_p_pa);
+        d.geometry = geometry;
 
-        const double region_area_m2 = area_m2 * region.area_fraction;
-        const double k0 = kozeny_carman_permeability(recipe.particle_diameter_m,
-                                                      d.geometry.porosity,
-                                                      coeff.kozeny_constant);
-        const double shape =
-            k0 * distribution_factor(recipe.particle_spread_factor, coeff.distribution_factor_floor) *
-            region.permeability_multiplier;
+        const double region_area_m2 = ctx.layout[i].area_m2;
+        const double shape = base_shape * region.permeability_multiplier;
         // The compressed depth is split evenly; every cell shares the
         // region's porosity and cross-section and differs only by state.
         d.cell_depth_m = d.geometry.depth_m / cell_count;
@@ -533,9 +559,8 @@ std::pair<Boundaries, std::vector<Derived>> evaluate_regions(
 // evaluate_regions() plus the write-back every caller needs: each region's
 // reported permeability, which the step itself does not produce.
 std::pair<Boundaries, std::vector<Derived>> evaluate_and_stamp(std::vector<RegionState>& regions,
-                                                               const StepContext& ctx,
-                                                               double area_m2) {
-    auto evaluated = evaluate_regions(regions, ctx, area_m2);
+                                                               const StepContext& ctx) {
+    auto evaluated = evaluate_regions(regions, ctx);
     for (std::size_t i = 0; i < regions.size(); ++i) {
         regions[i].shot.permeability_m2 = evaluated.second[i].permeability_m2;
     }
@@ -710,8 +735,8 @@ std::optional<TerminationReason> advance_regions(std::vector<RegionState>& regio
         ShotState& state = region.shot;
         const Derived& d = derived[i];
         const double cells_in_region = static_cast<double>(region.cells.size());
-        const double region_dose_kg = recipe.dose_kg * recipe.parallel_regions[i].area_fraction;
-        const double cell_dose_kg = region_dose_kg / cells_in_region;
+        const RegionLayout& layout = ctx.layout[i];
+        const double cell_dose_kg = layout.cell_dose_kg;
         // Ambient loss is a property of the region, not of the grid, so it
         // is divided across cells rather than applied once per cell.
         const double cell_heat_loss_w_k = coeff.ambient_heat_loss_w_k / cells_in_region;
@@ -783,7 +808,7 @@ std::optional<TerminationReason> advance_regions(std::vector<RegionState>& regio
         for (std::size_t k = 0; k < state.class_in_cup_kg.size(); ++k) {
             state.class_in_cup_kg[k] += parcel.class_kg[k];
         }
-        roll_up(region, d, region_dose_kg, coeff);
+        roll_up(region, d, layout, coeff);
     }
 
     for (RegionState& region : regions) {
@@ -854,7 +879,7 @@ private:
 // fields match the interpolated state.
 void append_interpolated_samples(SampleClock& clock, const std::vector<RegionState>& before,
                                  const std::vector<RegionState>& after, const StepContext& ctx,
-                                 double area_m2, ShotResult& result) {
+                                 ShotResult& result) {
     while (clock.passed_by(after.front().shot.time_s)) {
         std::vector<RegionState> sampled_regions;
         sampled_regions.reserve(after.size());
@@ -862,9 +887,9 @@ void append_interpolated_samples(SampleClock& clock, const std::vector<RegionSta
             sampled_regions.push_back(interpolate_region(before[i], after[i], clock.next_s()));
         }
         const auto [sampled_boundaries, sampled_derived] =
-            evaluate_and_stamp(sampled_regions, ctx, area_m2);
+            evaluate_and_stamp(sampled_regions, ctx);
         const ShotState sampled =
-            aggregate_state(sampled_regions, sampled_derived, ctx.recipe, ctx.coeff);
+            aggregate_state(sampled_regions, sampled_derived, ctx.recipe, ctx.coeff, ctx.layout);
         append_sample(result, sampled, sampled_boundaries, total_flow(sampled_derived), ctx.recipe);
         clock.advance();
     }
@@ -874,9 +899,9 @@ void finalize_result(ShotResult& result, const std::vector<RegionState>& regions
                     const Boundaries& final_boundaries,
                     const std::vector<Derived>& final_derived, const Recipe& recipe,
                     const ModelCoefficients& coeff, const SimulationConfig& config,
-                    TerminationReason termination, double initial_extractable_kg,
-                    ShotDiagnostics& diag) {
-    const ShotState final_state = aggregate_state(regions, final_derived, recipe, coeff);
+                    const std::vector<RegionLayout>& layout, TerminationReason termination,
+                    double initial_extractable_kg, ShotDiagnostics& diag) {
+    const ShotState final_state = aggregate_state(regions, final_derived, recipe, coeff, layout);
 
     const double solids_total_kg =
         final_state.dissolved_solids_kg + final_state.dissolved_solids_in_cup_kg;
@@ -897,9 +922,8 @@ void finalize_result(ShotResult& result, const std::vector<RegionState>& regions
     for (std::size_t i = 0; i < regions.size(); ++i) {
         const ShotState& state = regions[i].shot;
         const ParallelRegion& config_region = recipe.parallel_regions[i];
-        const double region_dose_kg = recipe.dose_kg * config_region.area_fraction;
-        const double cell_dose_kg =
-            region_dose_kg / static_cast<double>(regions[i].cells.size());
+        const double region_dose_kg = layout[i].dose_kg;
+        const double cell_dose_kg = layout[i].cell_dose_kg;
         std::vector<AxialCellSummary> cells;
         cells.reserve(regions[i].cells.size());
         for (const CellState& cell : regions[i].cells) {
@@ -996,7 +1020,8 @@ ShotResult Simulator::run(const Recipe& recipe, const ModelCoefficients& coeff,
         result.flavor = flavor;
     }
     const std::vector<GrindBin> bins = extraction_bins(recipe);
-    std::vector<RegionState> regions = initialize_regions(recipe, coeff, bins);
+    const std::vector<RegionLayout> layout = region_layout(recipe);
+    std::vector<RegionState> regions = initialize_regions(recipe, coeff, bins, layout);
     const double initial_extractable_kg = recipe.dose_kg * coeff.extractable_solids_fraction;
 
     ShotDiagnostics& diag = result.diagnostics;
@@ -1004,16 +1029,15 @@ ShotResult Simulator::run(const Recipe& recipe, const ModelCoefficients& coeff,
     diag.min_puck_temperature_k = coeff.initial_puck_temperature_k;
     diag.max_puck_temperature_k = coeff.initial_puck_temperature_k;
 
-    const double area_m2 = recipe.basket_area_m2();
     const double dt = config.dt_s;
     TerminationReason termination = TerminationReason::not_terminated;
     SampleClock sample_clock(config.sample_interval_s);
-    const StepContext step_context{recipe, coeff, config, *water_, bins, dt};
+    const StepContext step_context{recipe, coeff, config, *water_, bins, layout, dt};
     StepOutputs step_outputs{result, warn, diag};
 
     for (long long step = 0;; ++step) {
         throw_if_cancelled(is_cancelled);
-        const auto [boundaries, derived] = evaluate_and_stamp(regions, step_context, area_m2);
+        const auto [boundaries, derived] = evaluate_and_stamp(regions, step_context);
         for (std::size_t i = 0; i < regions.size(); ++i) {
             diag.min_permeability_m2 = std::min(diag.min_permeability_m2, derived[i].permeability_m2);
             if (derived[i].flow.clamped_by_max_flow) {
@@ -1034,7 +1058,7 @@ ShotResult Simulator::run(const Recipe& recipe, const ModelCoefficients& coeff,
                       regions.front().shot.time_s, WarningSeverity::hard);
         }
 
-        const ShotState aggregate = aggregate_state(regions, derived, recipe, coeff);
+        const ShotState aggregate = aggregate_state(regions, derived, recipe, coeff, layout);
         if (sample_clock.due(aggregate.time_s)) {
             append_sample(result, aggregate, boundaries, flow_m3_s, recipe);
             sample_clock.advance();
@@ -1067,15 +1091,15 @@ ShotResult Simulator::run(const Recipe& recipe, const ModelCoefficients& coeff,
         }
         if (crosses_sample_boundary) {
             append_interpolated_samples(sample_clock, states_before_step, regions, step_context,
-                                        area_m2, result);
+                                        result);
         }
     }
 
     const auto [final_boundaries, final_derived] =
-        evaluate_and_stamp(regions, step_context, area_m2);
+        evaluate_and_stamp(regions, step_context);
     throw_if_cancelled(is_cancelled);
     finalize_result(result, regions, final_boundaries, final_derived, recipe, coeff, config,
-                    termination, initial_extractable_kg, diag);
+                    layout, termination, initial_extractable_kg, diag);
     return result;
 }
 

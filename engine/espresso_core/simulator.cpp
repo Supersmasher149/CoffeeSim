@@ -17,6 +17,8 @@ namespace espressolab {
 namespace {
 
 constexpr double kMassEpsilon = 1.0e-12;
+// Slack for comparing accumulated sample times against step times.
+constexpr double kTimeEpsilonS = 1.0e-9;
 constexpr double kSaturationTolerance = 1.0e-6;
 // A puck temperature change larger than this in one step means dt_s is too
 // coarse for the heat balance; the solver warns rather than refusing.
@@ -59,6 +61,16 @@ struct Derived {
     std::vector<CellDerived> cells;
 };
 
+// Sensory overlay only (docs/model.md). One pool per solute class, tracking
+// the same solids the cell's physical stores already account for -- these
+// divide that mass, they never add to it. Empty unless the recipe carries a
+// bean. Only the tracer_* functions and partition_classes() write them, and
+// they read nothing but physics values, so the overlay cannot feed back.
+struct SoluteClassPools {
+    std::vector<double> remaining_kg;
+    std::vector<double> dissolved_kg;
+};
+
 // One axial finite-volume cell. Level 2 is this vector with a single entry.
 struct CellState {
     double temperature_k = 0.0;
@@ -73,12 +85,7 @@ struct CellState {
     // bins each step, so aggregation, the mass balances and the sample series
     // all keep reading one number and need no knowledge of the bins.
     std::vector<double> bin_remaining_kg;
-    // Sensory overlay only (docs/model.md). One pool per solute class, tracking
-    // the same solids the two stores above already account for -- these divide
-    // that mass, they never add to it. Empty unless the recipe carries a bean,
-    // which is what makes every loop over them a no-op on the default path.
-    std::vector<double> class_remaining_kg;
-    std::vector<double> class_dissolved_kg;
+    SoluteClassPools classes;
 };
 
 struct RegionState {
@@ -101,10 +108,10 @@ bool all_finite(const CellState& cell) {
     for (double bin_kg : cell.bin_remaining_kg) {
         if (!std::isfinite(bin_kg)) return false;
     }
-    for (double class_kg : cell.class_remaining_kg) {
+    for (double class_kg : cell.classes.remaining_kg) {
         if (!std::isfinite(class_kg)) return false;
     }
-    for (double class_kg : cell.class_dissolved_kg) {
+    for (double class_kg : cell.classes.dissolved_kg) {
         if (!std::isfinite(class_kg)) return false;
     }
     return std::isfinite(cell.temperature_k) && std::isfinite(cell.liquid_saturation) &&
@@ -386,12 +393,12 @@ std::vector<RegionState> initialize_regions(const Recipe& recipe,
                 // holds the fractions to a sum of 1, so the classes sum to the
                 // cell's share exactly and the scalar total is untouched at
                 // t = 0 -- exactly as the bins above are.
-                cell.class_remaining_kg.reserve(kSoluteClassCount);
+                cell.classes.remaining_kg.reserve(kSoluteClassCount);
                 for (const SoluteClassShare& share : recipe.bean->classes) {
-                    cell.class_remaining_kg.push_back(cell.remaining_extractable_solids_kg *
-                                                      share.mass_fraction);
+                    cell.classes.remaining_kg.push_back(cell.remaining_extractable_solids_kg *
+                                                        share.mass_fraction);
                 }
-                cell.class_dissolved_kg.assign(kSoluteClassCount, 0.0);
+                cell.classes.dissolved_kg.assign(kSoluteClassCount, 0.0);
             }
         }
     }
@@ -495,8 +502,13 @@ struct Parcel {
 void receive(CellState& cell, const Parcel& in) {
     cell.retained_water_kg += in.mass_kg;
     cell.dissolved_solids_kg += in.solids_kg;
-    for (std::size_t k = 0; k < cell.class_dissolved_kg.size(); ++k) {
-        cell.class_dissolved_kg[k] += in.class_kg[k];
+}
+
+// Overlay counterpart of receive(): the incoming class breakdown joins the
+// cell's dissolved pools.
+void tracer_receive(SoluteClassPools& pools, const std::vector<double>& in_class_kg) {
+    for (std::size_t k = 0; k < pools.dissolved_kg.size(); ++k) {
+        pools.dissolved_kg[k] += in_class_kg[k];
     }
 }
 
@@ -563,12 +575,12 @@ double extract_step(CellState& cell, double flow_m3_s, const StepContext& ctx) {
 // second call to extraction_rate_coefficient(): only the ratio between
 // classes matters, which also means the scalar and PSD branches need no
 // separate treatment here.
-int partition_classes(CellState& cell, const BeanProfile& bean, double extracted_kg) {
+int partition_classes(SoluteClassPools& pools, const BeanProfile& bean, double extracted_kg) {
     int clamp_count = 0;
     double propensity_sum = 0.0;
     std::array<double, kSoluteClassCount> propensity{};
     for (std::size_t k = 0; k < kSoluteClassCount; ++k) {
-        propensity[k] = bean.classes[k].relative_rate * cell.class_remaining_kg[k];
+        propensity[k] = bean.classes[k].relative_rate * pools.remaining_kg[k];
         propensity_sum += propensity[k];
     }
     if (propensity_sum <= 0.0) return clamp_count;
@@ -576,12 +588,12 @@ int partition_classes(CellState& cell, const BeanProfile& bean, double extracted
     double placed_kg = 0.0;
     for (std::size_t k = 0; k < kSoluteClassCount; ++k) {
         double take_kg = extracted_kg * propensity[k] / propensity_sum;
-        if (take_kg > cell.class_remaining_kg[k]) {
-            take_kg = cell.class_remaining_kg[k];
+        if (take_kg > pools.remaining_kg[k]) {
+            take_kg = pools.remaining_kg[k];
             ++clamp_count;
         }
-        cell.class_remaining_kg[k] -= take_kg;
-        cell.class_dissolved_kg[k] += take_kg;
+        pools.remaining_kg[k] -= take_kg;
+        pools.dissolved_kg[k] += take_kg;
         placed_kg += take_kg;
     }
     // A class that hit its floor leaves a shortfall. Spread it over the
@@ -591,13 +603,13 @@ int partition_classes(CellState& cell, const BeanProfile& bean, double extracted
     const double shortfall_kg = extracted_kg - placed_kg;
     if (shortfall_kg > 0.0) {
         double available_kg = 0.0;
-        for (double remaining_kg : cell.class_remaining_kg) available_kg += remaining_kg;
+        for (double remaining_kg : pools.remaining_kg) available_kg += remaining_kg;
         if (available_kg > 0.0) {
             const double fill = std::min(shortfall_kg / available_kg, 1.0);
             for (std::size_t k = 0; k < kSoluteClassCount; ++k) {
-                const double extra_kg = cell.class_remaining_kg[k] * fill;
-                cell.class_remaining_kg[k] -= extra_kg;
-                cell.class_dissolved_kg[k] += extra_kg;
+                const double extra_kg = pools.remaining_kg[k] * fill;
+                pools.remaining_kg[k] -= extra_kg;
+                pools.dissolved_kg[k] += extra_kg;
             }
         }
     }
@@ -605,10 +617,10 @@ int partition_classes(CellState& cell, const BeanProfile& bean, double extracted
 }
 
 // Releases whatever pore liquid exceeds the cell's capacity, at the cell's
-// pore concentration, overwriting `out` with it for the next cell down.
-void drain(CellState& cell, double capacity_kg, Parcel& out) {
-    // Read only, for the overlay below: which fraction of the pore solids
-    // the transport is about to move.
+// pore concentration, overwriting `out`'s physical fields with it for the next
+// cell down. Returns the pore solids held before the release, which is all the
+// overlay needs to follow it.
+double drain(CellState& cell, double capacity_kg, Parcel& out) {
     const double solids_before_out_kg = cell.dissolved_solids_kg;
     double out_kg = std::max(cell.retained_water_kg - capacity_kg, 0.0);
     out_kg = std::min(out_kg, cell.retained_water_kg);
@@ -620,21 +632,24 @@ void drain(CellState& cell, double capacity_kg, Parcel& out) {
         cell.dissolved_solids_kg -= solids_out_kg;
         cell.retained_water_kg -= out_kg;
     }
-    if (!cell.class_dissolved_kg.empty()) {
-        // The tracer travels with the pore liquid at exactly the fraction of
-        // solids the solver actually moved, so the overlay invents no second
-        // transport rule of its own.
-        const double moved_fraction =
-            solids_before_out_kg > 0.0 ? solids_out_kg / solids_before_out_kg : 0.0;
-        for (std::size_t k = 0; k < cell.class_dissolved_kg.size(); ++k) {
-            const double moved_kg = cell.class_dissolved_kg[k] * moved_fraction;
-            cell.class_dissolved_kg[k] -= moved_kg;
-            out.class_kg[k] = moved_kg;
-        }
-    }
     out.mass_kg = out_kg;
     out.solids_kg = solids_out_kg;
     out.temperature_k = cell.temperature_k;
+    return solids_before_out_kg;
+}
+
+// Overlay counterpart of drain(). The tracer travels with the pore liquid at
+// exactly the fraction of solids the solver actually moved, so the overlay
+// invents no second transport rule of its own.
+void tracer_drain(SoluteClassPools& pools, double solids_before_out_kg, double solids_out_kg,
+                  std::vector<double>& out_class_kg) {
+    const double moved_fraction =
+        solids_before_out_kg > 0.0 ? solids_out_kg / solids_before_out_kg : 0.0;
+    for (std::size_t k = 0; k < pools.dissolved_kg.size(); ++k) {
+        const double moved_kg = pools.dissolved_kg[k] * moved_fraction;
+        pools.dissolved_kg[k] -= moved_kg;
+        out_class_kg[k] = moved_kg;
+    }
 }
 
 // Advances every region one step. Returns a termination reason only when a
@@ -669,12 +684,14 @@ std::optional<TerminationReason> advance_regions(std::vector<RegionState>& regio
         Parcel parcel;
         parcel.mass_kg = water_in_kg;
         parcel.temperature_k = boundaries.inlet_temperature_k;
-        if (recipe.bean.has_value()) parcel.class_kg.assign(kSoluteClassCount, 0.0);
+        const bool traced = recipe.bean.has_value();
+        if (traced) parcel.class_kg.assign(kSoluteClassCount, 0.0);
 
         for (std::size_t c = 0; c < region.cells.size(); ++c) {
             CellState& cell = region.cells[c];
             const CellDerived& cd = d.cells[c];
             receive(cell, parcel);
+            if (traced) tracer_receive(cell.classes, parcel.class_kg);
 
             // Kept as one multiply-add: the compiler may fuse it, and splitting
             // the product out would change the last ulp and the result hash.
@@ -693,12 +710,16 @@ std::optional<TerminationReason> advance_regions(std::vector<RegionState>& regio
                 std::max(out.diag.max_puck_temperature_k, cell.temperature_k);
 
             const double extracted_kg = extract_step(cell, d.flow.flow_m3_s, ctx);
-            if (!cell.class_remaining_kg.empty()) {
-                flavor_clamp_count += partition_classes(cell, *recipe.bean, extracted_kg);
+            if (traced) {
+                flavor_clamp_count += partition_classes(cell.classes, *recipe.bean, extracted_kg);
             }
 
             const double capacity_kg = std::max(cd.pore_capacity_kg, kMassEpsilon);
-            drain(cell, capacity_kg, parcel);
+            const double solids_before_out_kg = drain(cell, capacity_kg, parcel);
+            if (traced) {
+                tracer_drain(cell.classes, solids_before_out_kg, parcel.solids_kg,
+                             parcel.class_kg);
+            }
 
             cell.liquid_saturation = cell.retained_water_kg / capacity_kg;
             if (cell.liquid_saturation > 1.0 + kSaturationTolerance ||
@@ -763,6 +784,53 @@ void append_sample(ShotResult& result, const ShotState& state, const Boundaries&
     result.samples.push_back(sample);
 }
 
+// When the next sample falls due. The next time accumulates by repeated
+// addition of the interval; recomputing it as a multiple would move the
+// sample times in the last ulp and with them the result hash.
+class SampleClock {
+public:
+    explicit SampleClock(double interval_s) : interval_s_(interval_s) {}
+
+    bool due(double time_s) const { return time_s + kTimeEpsilonS >= next_s_; }
+    // advance_regions sets shot.time_s to exactly (step + 1) * dt, so a step
+    // starting at time_s crosses the next sample iff this holds -- letting the
+    // (potentially large, per-cell) pre-step snapshot be skipped otherwise.
+    bool crossed_by_step(double time_s, double dt) const {
+        return next_s_ <= time_s + dt + kTimeEpsilonS;
+    }
+    bool passed_by(double time_s) const { return next_s_ <= time_s + kTimeEpsilonS; }
+    double next_s() const { return next_s_; }
+    void advance() { next_s_ += interval_s_; }
+
+private:
+    double interval_s_;
+    double next_s_ = 0.0;
+};
+
+// Records every sample time the last step passed, each interpolated between
+// the pre-step snapshot and the current regions and re-evaluated so derived
+// fields match the interpolated state.
+void append_interpolated_samples(SampleClock& clock, const std::vector<RegionState>& before,
+                                 const std::vector<RegionState>& after, const StepContext& ctx,
+                                 double area_m2, ShotResult& result) {
+    while (clock.passed_by(after.front().shot.time_s)) {
+        std::vector<RegionState> sampled_regions;
+        sampled_regions.reserve(after.size());
+        for (std::size_t i = 0; i < after.size(); ++i) {
+            sampled_regions.push_back(interpolate_region(before[i], after[i], clock.next_s()));
+        }
+        const auto [sampled_boundaries, sampled_derived] =
+            evaluate_regions(sampled_regions, ctx.recipe, ctx.coeff, ctx.water, area_m2);
+        for (std::size_t i = 0; i < sampled_regions.size(); ++i) {
+            sampled_regions[i].shot.permeability_m2 = sampled_derived[i].permeability_m2;
+        }
+        const ShotState sampled =
+            aggregate_state(sampled_regions, sampled_derived, ctx.recipe, ctx.coeff);
+        append_sample(result, sampled, sampled_boundaries, total_flow(sampled_derived), ctx.recipe);
+        clock.advance();
+    }
+}
+
 void finalize_result(ShotResult& result, std::vector<RegionState>& regions,
                     const Boundaries& final_boundaries,
                     const std::vector<Derived>& final_derived, const Recipe& recipe,
@@ -784,7 +852,7 @@ void finalize_result(ShotResult& result, std::vector<RegionState>& regions,
         diag.min_permeability_m2 = 0.0;
     }
 
-    if (result.samples.empty() || result.samples.back().time_s < final_state.time_s - 1.0e-9) {
+    if (result.samples.empty() || result.samples.back().time_s < final_state.time_s - kTimeEpsilonS) {
         append_sample(result, final_state, final_boundaries, total_flow(final_derived), recipe);
     }
 
@@ -902,7 +970,7 @@ ShotResult Simulator::run(const Recipe& recipe, const ModelCoefficients& coeff,
     const double area_m2 = recipe.basket_area_m2();
     const double dt = config.dt_s;
     TerminationReason termination = TerminationReason::not_terminated;
-    double next_sample_time_s = 0.0;
+    SampleClock sample_clock(config.sample_interval_s);
     const StepContext step_context{recipe, coeff, config, *water_, dt};
     StepOutputs step_outputs{result, warn, diag};
 
@@ -932,9 +1000,9 @@ ShotResult Simulator::run(const Recipe& recipe, const ModelCoefficients& coeff,
         }
 
         const ShotState aggregate = aggregate_state(regions, derived, recipe, coeff);
-        if (aggregate.time_s + 1.0e-9 >= next_sample_time_s) {
+        if (sample_clock.due(aggregate.time_s)) {
             append_sample(result, aggregate, boundaries, flow_m3_s, recipe);
-            next_sample_time_s += config.sample_interval_s;
+            sample_clock.advance();
         }
 
         if (!all_finite(regions)) {
@@ -953,13 +1021,8 @@ ShotResult Simulator::run(const Recipe& recipe, const ModelCoefficients& coeff,
             break;
         }
 
-        // advance_regions sets shot.time_s to exactly (step + 1) * dt, so this
-        // step crosses next_sample_time_s iff the same comparison holds now,
-        // one dt early -- letting the (potentially large, per-cell) region
-        // snapshot be skipped on the steps that don't need it for
-        // interpolation below.
         const bool crosses_sample_boundary =
-            next_sample_time_s <= regions.front().shot.time_s + dt + 1.0e-9;
+            sample_clock.crossed_by_step(regions.front().shot.time_s, dt);
         const std::vector<RegionState> states_before_step =
             crosses_sample_boundary ? regions : std::vector<RegionState>{};
         if (const auto stop = advance_regions(regions, derived, boundaries, step_context, step,
@@ -967,23 +1030,9 @@ ShotResult Simulator::run(const Recipe& recipe, const ModelCoefficients& coeff,
             termination = *stop;
             break;
         }
-
-        while (crosses_sample_boundary &&
-              next_sample_time_s <= regions.front().shot.time_s + 1.0e-9) {
-            std::vector<RegionState> sampled_regions;
-            sampled_regions.reserve(regions.size());
-            for (std::size_t i = 0; i < regions.size(); ++i) {
-                sampled_regions.push_back(
-                    interpolate_region(states_before_step[i], regions[i], next_sample_time_s));
-            }
-            const auto [sampled_boundaries, sampled_derived] =
-                evaluate_regions(sampled_regions, recipe, coeff, *water_, area_m2);
-            for (std::size_t i = 0; i < sampled_regions.size(); ++i) {
-                sampled_regions[i].shot.permeability_m2 = sampled_derived[i].permeability_m2;
-            }
-            const ShotState sampled = aggregate_state(sampled_regions, sampled_derived, recipe, coeff);
-            append_sample(result, sampled, sampled_boundaries, total_flow(sampled_derived), recipe);
-            next_sample_time_s += config.sample_interval_s;
+        if (crosses_sample_boundary) {
+            append_interpolated_samples(sample_clock, states_before_step, regions, step_context,
+                                        area_m2, result);
         }
     }
 

@@ -5,6 +5,8 @@
 #include <cmath>
 #include <limits>
 #include <optional>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 #include "espressolab/extraction.hpp"
@@ -78,12 +80,10 @@ struct CellState {
     double retained_water_kg = 0.0;
     double dissolved_solids_kg = 0.0;
     double remaining_extractable_solids_kg = 0.0;
-    // One extractable pool per PSD bin, when the recipe supplies a
-    // distribution. Empty on the scalar path, where
-    // remaining_extractable_solids_kg is the only store. When it is populated
-    // that scalar stays authoritative -- it is recomputed as the sum of the
-    // bins each step, so aggregation, the mass balances and the sample series
-    // all keep reading one number and need no knowledge of the bins.
+    // One extractable pool per extraction bin (see extraction_bins()). The
+    // scalar above is their sum, recomputed each step, so aggregation, the
+    // mass balances and the sample series keep reading one number and need no
+    // knowledge of the bins.
     std::vector<double> bin_remaining_kg;
     SoluteClassPools classes;
 };
@@ -104,19 +104,55 @@ double thermal_capacity_j_k(double coffee_kg, const ModelCoefficients& coeff,
            std::max(water_kg, kMassEpsilon) * water_heat_capacity_j_kg_k;
 }
 
+// Every field of ShotState and CellState, named once. The finiteness checks,
+// the sample interpolation and the region aggregation all iterate these lists
+// rather than spelling the fields out, and the static_asserts stop the build
+// when a field is added to either struct without joining a list here.
+//
+// ShotState: extensive quantities sum across regions; intensive ones are
+// weighted means. With time_s and class_in_cup_kg that is the whole struct.
+constexpr std::array kShotExtensive = {
+    &ShotState::remaining_extractable_solids_kg, &ShotState::dissolved_solids_kg,
+    &ShotState::beverage_mass_kg,                &ShotState::cumulative_water_in_kg,
+    &ShotState::retained_water_kg,               &ShotState::dissolved_solids_in_cup_kg,
+};
+constexpr std::array kShotIntensive = {
+    &ShotState::puck_temperature_k,
+    &ShotState::permeability_m2,
+    &ShotState::liquid_saturation,
+};
+static_assert(sizeof(ShotState) ==
+                  (1 + kShotExtensive.size() + kShotIntensive.size()) * sizeof(double) +
+                      sizeof(std::vector<double>),
+              "ShotState gained a field: add it to kShotExtensive or kShotIntensive");
+
+constexpr std::array kCellScalars = {
+    &CellState::temperature_k,       &CellState::liquid_saturation,
+    &CellState::retained_water_kg,   &CellState::dissolved_solids_kg,
+    &CellState::remaining_extractable_solids_kg,
+};
+// The per-cell series: extraction bins and the overlay's class pools.
+template <class Cell>
+auto cell_series(Cell& cell) {
+    return std::array{&cell.bin_remaining_kg, &cell.classes.remaining_kg,
+                      &cell.classes.dissolved_kg};
+}
+static_assert(sizeof(CellState) == kCellScalars.size() * sizeof(double) +
+                                       std::tuple_size_v<decltype(cell_series(
+                                           std::declval<CellState&>()))> *
+                                           sizeof(std::vector<double>),
+              "CellState gained a field: add it to kCellScalars or cell_series()");
+
 bool all_finite(const CellState& cell) {
-    for (double bin_kg : cell.bin_remaining_kg) {
-        if (!std::isfinite(bin_kg)) return false;
+    for (const auto field : kCellScalars) {
+        if (!std::isfinite(cell.*field)) return false;
     }
-    for (double class_kg : cell.classes.remaining_kg) {
-        if (!std::isfinite(class_kg)) return false;
+    for (const std::vector<double>* series : cell_series(cell)) {
+        for (double value : *series) {
+            if (!std::isfinite(value)) return false;
+        }
     }
-    for (double class_kg : cell.classes.dissolved_kg) {
-        if (!std::isfinite(class_kg)) return false;
-    }
-    return std::isfinite(cell.temperature_k) && std::isfinite(cell.liquid_saturation) &&
-           std::isfinite(cell.retained_water_kg) && std::isfinite(cell.dissolved_solids_kg) &&
-           std::isfinite(cell.remaining_extractable_solids_kg);
+    return true;
 }
 
 // Collapse the axial column back onto the region state the rest of the solver
@@ -176,15 +212,16 @@ public:
 };
 
 bool all_finite(const ShotState& state) {
+    for (const auto field : kShotExtensive) {
+        if (!std::isfinite(state.*field)) return false;
+    }
+    for (const auto field : kShotIntensive) {
+        if (!std::isfinite(state.*field)) return false;
+    }
     for (double class_kg : state.class_in_cup_kg) {
         if (!std::isfinite(class_kg)) return false;
     }
-    return std::isfinite(state.time_s) && std::isfinite(state.puck_temperature_k) &&
-           std::isfinite(state.permeability_m2) && std::isfinite(state.liquid_saturation) &&
-           std::isfinite(state.remaining_extractable_solids_kg) &&
-           std::isfinite(state.dissolved_solids_kg) && std::isfinite(state.beverage_mass_kg) &&
-           std::isfinite(state.cumulative_water_in_kg) && std::isfinite(state.retained_water_kg) &&
-           std::isfinite(state.dissolved_solids_in_cup_kg);
+    return std::isfinite(state.time_s);
 }
 
 bool all_finite(const std::vector<RegionState>& regions) {
@@ -227,18 +264,12 @@ ShotState interpolate_state(const ShotState& lower, const ShotState& upper, doub
     const auto interpolate = [fraction](double a, double b) { return a + fraction * (b - a); };
     ShotState state;
     state.time_s = time_s;
-    state.puck_temperature_k = interpolate(lower.puck_temperature_k, upper.puck_temperature_k);
-    state.permeability_m2 = interpolate(lower.permeability_m2, upper.permeability_m2);
-    state.liquid_saturation = interpolate(lower.liquid_saturation, upper.liquid_saturation);
-    state.remaining_extractable_solids_kg =
-        interpolate(lower.remaining_extractable_solids_kg, upper.remaining_extractable_solids_kg);
-    state.dissolved_solids_kg = interpolate(lower.dissolved_solids_kg, upper.dissolved_solids_kg);
-    state.beverage_mass_kg = interpolate(lower.beverage_mass_kg, upper.beverage_mass_kg);
-    state.cumulative_water_in_kg =
-        interpolate(lower.cumulative_water_in_kg, upper.cumulative_water_in_kg);
-    state.retained_water_kg = interpolate(lower.retained_water_kg, upper.retained_water_kg);
-    state.dissolved_solids_in_cup_kg =
-        interpolate(lower.dissolved_solids_in_cup_kg, upper.dissolved_solids_in_cup_kg);
+    for (const auto field : kShotExtensive) {
+        state.*field = interpolate(lower.*field, upper.*field);
+    }
+    for (const auto field : kShotIntensive) {
+        state.*field = interpolate(lower.*field, upper.*field);
+    }
     if (!lower.class_in_cup_kg.empty()) {
         state.class_in_cup_kg.resize(lower.class_in_cup_kg.size());
         for (std::size_t k = 0; k < lower.class_in_cup_kg.size(); ++k) {
@@ -249,28 +280,34 @@ ShotState interpolate_state(const ShotState& lower, const ShotState& upper, doub
     return state;
 }
 
+// Every field of every cell is interpolated, series included, so a sampled
+// region is a complete state: nothing reading it can find a missing bin or
+// class pool.
 RegionState interpolate_region(const RegionState& lower, const RegionState& upper, double time_s) {
     const double span = upper.shot.time_s - lower.shot.time_s;
     const double fraction = span > 0.0 ? (time_s - lower.shot.time_s) / span : 0.0;
+    const auto blend = [fraction](double a, double b) { return a + fraction * (b - a); };
     RegionState state;
     state.shot = interpolate_state(lower.shot, upper.shot, time_s);
-    state.integrated_flow_m3 =
-        lower.integrated_flow_m3 + fraction * (upper.integrated_flow_m3 - lower.integrated_flow_m3);
+    state.integrated_flow_m3 = blend(lower.integrated_flow_m3, upper.integrated_flow_m3);
     state.cells.reserve(lower.cells.size());
     for (std::size_t i = 0; i < lower.cells.size(); ++i) {
-        const auto blend = [&](double a, double b) { return a + fraction * (b - a); };
+        const CellState& below = lower.cells[i];
+        const CellState& above = upper.cells[i];
         CellState cell;
-        cell.temperature_k = blend(lower.cells[i].temperature_k, upper.cells[i].temperature_k);
-        cell.liquid_saturation =
-            blend(lower.cells[i].liquid_saturation, upper.cells[i].liquid_saturation);
-        cell.retained_water_kg =
-            blend(lower.cells[i].retained_water_kg, upper.cells[i].retained_water_kg);
-        cell.dissolved_solids_kg =
-            blend(lower.cells[i].dissolved_solids_kg, upper.cells[i].dissolved_solids_kg);
-        cell.remaining_extractable_solids_kg =
-            blend(lower.cells[i].remaining_extractable_solids_kg,
-                  upper.cells[i].remaining_extractable_solids_kg);
-        state.cells.push_back(cell);
+        for (const auto field : kCellScalars) {
+            cell.*field = blend(below.*field, above.*field);
+        }
+        const auto from = cell_series(below);
+        const auto to = cell_series(above);
+        const auto into = cell_series(cell);
+        for (std::size_t s = 0; s < into.size(); ++s) {
+            into[s]->resize(from[s]->size());
+            for (std::size_t k = 0; k < from[s]->size(); ++k) {
+                (*into[s])[k] = blend((*from[s])[k], (*to[s])[k]);
+            }
+        }
+        state.cells.push_back(std::move(cell));
     }
     return state;
 }
@@ -291,12 +328,7 @@ ShotState aggregate_state(const std::vector<RegionState>& regions, const std::ve
     for (std::size_t i = 0; i < regions.size(); ++i) {
         const ShotState& state = regions[i].shot;
         const Derived& region = derived[i];
-        aggregate.remaining_extractable_solids_kg += state.remaining_extractable_solids_kg;
-        aggregate.dissolved_solids_kg += state.dissolved_solids_kg;
-        aggregate.beverage_mass_kg += state.beverage_mass_kg;
-        aggregate.cumulative_water_in_kg += state.cumulative_water_in_kg;
-        aggregate.retained_water_kg += state.retained_water_kg;
-        aggregate.dissolved_solids_in_cup_kg += state.dissolved_solids_in_cup_kg;
+        for (const auto field : kShotExtensive) aggregate.*field += state.*field;
         for (std::size_t k = 0; k < aggregate.class_in_cup_kg.size(); ++k) {
             aggregate.class_in_cup_kg[k] += state.class_in_cup_kg[k];
         }
@@ -356,8 +388,17 @@ void validate_inputs(const Recipe& recipe, const ModelCoefficients& coeff,
     if (!validation.ok()) throw InvalidInputError(validation);
 }
 
-std::vector<RegionState> initialize_regions(const Recipe& recipe,
-                                            const ModelCoefficients& coeff) {
+// The size classes extraction runs over: the recipe's distribution when it has
+// one, otherwise a single bin at the scalar diameter holding all the mass. A
+// single bin is bit-identical to a dedicated scalar path: the split multiplies
+// by exactly 1 and the per-bin sums start from exactly 0.
+std::vector<GrindBin> extraction_bins(const Recipe& recipe) {
+    if (recipe.grind.has_value()) return recipe.grind->bins;
+    return {GrindBin{recipe.particle_diameter_m, 1.0}};
+}
+
+std::vector<RegionState> initialize_regions(const Recipe& recipe, const ModelCoefficients& coeff,
+                                            const std::vector<GrindBin>& bins) {
     std::vector<RegionState> regions(recipe.parallel_regions.size());
     const std::size_t cell_count = static_cast<std::size_t>(recipe.axial_cells);
     for (std::size_t i = 0; i < regions.size(); ++i) {
@@ -376,16 +417,13 @@ std::vector<RegionState> initialize_regions(const Recipe& recipe,
             // column; the sum over cells is the region's share exactly.
             cell.remaining_extractable_solids_kg =
                 region_extractable_kg / static_cast<double>(cell_count);
-            if (recipe.grind.has_value()) {
-                // Extractable mass splits across the size classes in proportion
-                // to the mass each class holds, so the bins sum to the cell's
-                // share exactly and the scalar total is unchanged at t = 0.
-                const auto& bins = recipe.grind->bins;
-                cell.bin_remaining_kg.reserve(bins.size());
-                for (const GrindBin& bin : bins) {
-                    cell.bin_remaining_kg.push_back(cell.remaining_extractable_solids_kg *
-                                                    bin.mass_fraction);
-                }
+            // Extractable mass splits across the size classes in proportion
+            // to the mass each class holds, so the bins sum to the cell's
+            // share exactly and the scalar total is unchanged at t = 0.
+            cell.bin_remaining_kg.reserve(bins.size());
+            for (const GrindBin& bin : bins) {
+                cell.bin_remaining_kg.push_back(cell.remaining_extractable_solids_kg *
+                                                bin.mass_fraction);
             }
             if (recipe.bean.has_value()) {
                 // The same split, along a second and independent axis: solute
@@ -405,9 +443,28 @@ std::vector<RegionState> initialize_regions(const Recipe& recipe,
     return regions;
 }
 
+// What one step leaves the solver: the read-only inputs every stage shares,
+// and the sinks it reports into.
+struct StepContext {
+    const Recipe& recipe;
+    const ModelCoefficients& coeff;
+    const SimulationConfig& config;
+    const WaterProperties& water;
+    const std::vector<GrindBin>& bins;
+    double dt;
+};
+
+struct StepOutputs {
+    ShotResult& result;
+    WarningLog& warn;
+    ShotDiagnostics& diag;
+};
+
 std::pair<Boundaries, std::vector<Derived>> evaluate_regions(
-    const std::vector<RegionState>& states, const Recipe& recipe,
-    const ModelCoefficients& coeff, const WaterProperties& water, double area_m2) {
+    const std::vector<RegionState>& states, const StepContext& ctx, double area_m2) {
+    const Recipe& recipe = ctx.recipe;
+    const ModelCoefficients& coeff = ctx.coeff;
+    const WaterProperties& water = ctx.water;
     Boundaries boundaries;
     boundaries.pressure_pa = recipe.pressure_pa.sample(states.front().shot.time_s);
     boundaries.inlet_temperature_k =
@@ -473,21 +530,17 @@ std::pair<Boundaries, std::vector<Derived>> evaluate_regions(
     return {boundaries, derived};
 }
 
-// What one step leaves the solver: the read-only inputs every stage shares,
-// and the sinks it reports into.
-struct StepContext {
-    const Recipe& recipe;
-    const ModelCoefficients& coeff;
-    const SimulationConfig& config;
-    const WaterProperties& water;
-    double dt;
-};
-
-struct StepOutputs {
-    ShotResult& result;
-    WarningLog& warn;
-    ShotDiagnostics& diag;
-};
+// evaluate_regions() plus the write-back every caller needs: each region's
+// reported permeability, which the step itself does not produce.
+std::pair<Boundaries, std::vector<Derived>> evaluate_and_stamp(std::vector<RegionState>& regions,
+                                                               const StepContext& ctx,
+                                                               double area_m2) {
+    auto evaluated = evaluate_regions(regions, ctx, area_m2);
+    for (std::size_t i = 0; i < regions.size(); ++i) {
+        regions[i].shot.permeability_m2 = evaluated.second[i].permeability_m2;
+    }
+    return evaluated;
+}
 
 // The liquid one cell passes to the next in the axial sweep: the inlet water
 // for cell 0, and what leaves the last cell is beverage. class_kg is the
@@ -527,37 +580,27 @@ double heat_rate_k_s(const CellState& cell, const CellDerived& cd, const Parcel&
     return (heat_in_w - heat_loss_w) / capacity_j_k;
 }
 
-// Moves solids from the cell's extractable store(s) into its pore liquid and
+// Moves solids from the cell's extractable bins into its pore liquid and
 // returns the mass moved. Reads this cell's own temperature and saturation.
+// Each size class extracts at its own rate, so the fines exhaust while the
+// coarse mode is still producing -- the ordering a single mean diameter
+// cannot express.
 double extract_step(CellState& cell, double flow_m3_s, const StepContext& ctx) {
     ShotState cell_view;
     cell_view.puck_temperature_k = cell.temperature_k;
     cell_view.liquid_saturation = cell.liquid_saturation;
     double extracted_kg = 0.0;
-    if (cell.bin_remaining_kg.empty()) {
-        const double k_ext =
-            extraction_rate_coefficient(cell_view, ctx.recipe, ctx.coeff, flow_m3_s);
-        extracted_kg = k_ext * cell.remaining_extractable_solids_kg * ctx.dt;
-        extracted_kg = std::clamp(extracted_kg, 0.0, cell.remaining_extractable_solids_kg);
-        cell.remaining_extractable_solids_kg -= extracted_kg;
-    } else {
-        // Size-resolved: each class extracts at its own rate, so the
-        // fines exhaust while the coarse mode is still producing. That
-        // ordering is the whole reason for carrying a distribution --
-        // a single mean diameter cannot express it.
-        const std::vector<GrindBin>& bins = ctx.recipe.grind->bins;
-        double remaining_total_kg = 0.0;
-        for (std::size_t b = 0; b < cell.bin_remaining_kg.size(); ++b) {
-            const double k_ext = extraction_rate_coefficient_at(cell_view, ctx.coeff, flow_m3_s,
-                                                                bins[b].diameter_m);
-            double bin_extracted_kg = k_ext * cell.bin_remaining_kg[b] * ctx.dt;
-            bin_extracted_kg = std::clamp(bin_extracted_kg, 0.0, cell.bin_remaining_kg[b]);
-            cell.bin_remaining_kg[b] -= bin_extracted_kg;
-            extracted_kg += bin_extracted_kg;
-            remaining_total_kg += cell.bin_remaining_kg[b];
-        }
-        cell.remaining_extractable_solids_kg = remaining_total_kg;
+    double remaining_total_kg = 0.0;
+    for (std::size_t b = 0; b < cell.bin_remaining_kg.size(); ++b) {
+        const double k_ext = extraction_rate_coefficient_at(cell_view, ctx.coeff, flow_m3_s,
+                                                            ctx.bins[b].diameter_m);
+        double bin_extracted_kg = k_ext * cell.bin_remaining_kg[b] * ctx.dt;
+        bin_extracted_kg = std::clamp(bin_extracted_kg, 0.0, cell.bin_remaining_kg[b]);
+        cell.bin_remaining_kg[b] -= bin_extracted_kg;
+        extracted_kg += bin_extracted_kg;
+        remaining_total_kg += cell.bin_remaining_kg[b];
     }
+    cell.remaining_extractable_solids_kg = remaining_total_kg;
     cell.dissolved_solids_kg += extracted_kg;
     cell.retained_water_kg += extracted_kg;
     return extracted_kg;
@@ -572,9 +615,8 @@ double extract_step(CellState& cell, double flow_m3_s, const StepContext& ctx) {
 // proportion to how much of it is left times how readily it leaves. The
 // shares sum to extracted_kg by construction rather than by a corrective
 // renormalisation, so total dissolved solids cannot drift. Deliberately no
-// second call to extraction_rate_coefficient(): only the ratio between
-// classes matters, which also means the scalar and PSD branches need no
-// separate treatment here.
+// second call to extraction_rate_coefficient_at(): only the ratio between
+// classes matters, so the size bins need no separate treatment here.
 int partition_classes(SoluteClassPools& pools, const BeanProfile& bean, double extracted_kg) {
     int clamp_count = 0;
     double propensity_sum = 0.0;
@@ -820,10 +862,7 @@ void append_interpolated_samples(SampleClock& clock, const std::vector<RegionSta
             sampled_regions.push_back(interpolate_region(before[i], after[i], clock.next_s()));
         }
         const auto [sampled_boundaries, sampled_derived] =
-            evaluate_regions(sampled_regions, ctx.recipe, ctx.coeff, ctx.water, area_m2);
-        for (std::size_t i = 0; i < sampled_regions.size(); ++i) {
-            sampled_regions[i].shot.permeability_m2 = sampled_derived[i].permeability_m2;
-        }
+            evaluate_and_stamp(sampled_regions, ctx, area_m2);
         const ShotState sampled =
             aggregate_state(sampled_regions, sampled_derived, ctx.recipe, ctx.coeff);
         append_sample(result, sampled, sampled_boundaries, total_flow(sampled_derived), ctx.recipe);
@@ -831,15 +870,12 @@ void append_interpolated_samples(SampleClock& clock, const std::vector<RegionSta
     }
 }
 
-void finalize_result(ShotResult& result, std::vector<RegionState>& regions,
+void finalize_result(ShotResult& result, const std::vector<RegionState>& regions,
                     const Boundaries& final_boundaries,
                     const std::vector<Derived>& final_derived, const Recipe& recipe,
                     const ModelCoefficients& coeff, const SimulationConfig& config,
                     TerminationReason termination, double initial_extractable_kg,
                     ShotDiagnostics& diag) {
-    for (std::size_t i = 0; i < regions.size(); ++i) {
-        regions[i].shot.permeability_m2 = final_derived[i].permeability_m2;
-    }
     const ShotState final_state = aggregate_state(regions, final_derived, recipe, coeff);
 
     const double solids_total_kg =
@@ -959,7 +995,8 @@ ShotResult Simulator::run(const Recipe& recipe, const ModelCoefficients& coeff,
         flavor.flavor_model_version = std::string(version::kFlavorModel);
         result.flavor = flavor;
     }
-    std::vector<RegionState> regions = initialize_regions(recipe, coeff);
+    const std::vector<GrindBin> bins = extraction_bins(recipe);
+    std::vector<RegionState> regions = initialize_regions(recipe, coeff, bins);
     const double initial_extractable_kg = recipe.dose_kg * coeff.extractable_solids_fraction;
 
     ShotDiagnostics& diag = result.diagnostics;
@@ -971,15 +1008,13 @@ ShotResult Simulator::run(const Recipe& recipe, const ModelCoefficients& coeff,
     const double dt = config.dt_s;
     TerminationReason termination = TerminationReason::not_terminated;
     SampleClock sample_clock(config.sample_interval_s);
-    const StepContext step_context{recipe, coeff, config, *water_, dt};
+    const StepContext step_context{recipe, coeff, config, *water_, bins, dt};
     StepOutputs step_outputs{result, warn, diag};
 
     for (long long step = 0;; ++step) {
         throw_if_cancelled(is_cancelled);
-        const auto [boundaries, derived] =
-            evaluate_regions(regions, recipe, coeff, *water_, area_m2);
+        const auto [boundaries, derived] = evaluate_and_stamp(regions, step_context, area_m2);
         for (std::size_t i = 0; i < regions.size(); ++i) {
-            regions[i].shot.permeability_m2 = derived[i].permeability_m2;
             diag.min_permeability_m2 = std::min(diag.min_permeability_m2, derived[i].permeability_m2);
             if (derived[i].flow.clamped_by_max_flow) {
                 ++diag.clamp_count;
@@ -1037,7 +1072,7 @@ ShotResult Simulator::run(const Recipe& recipe, const ModelCoefficients& coeff,
     }
 
     const auto [final_boundaries, final_derived] =
-        evaluate_regions(regions, recipe, coeff, *water_, area_m2);
+        evaluate_and_stamp(regions, step_context, area_m2);
     throw_if_cancelled(is_cancelled);
     finalize_result(result, regions, final_boundaries, final_derived, recipe, coeff, config,
                     termination, initial_extractable_kg, diag);

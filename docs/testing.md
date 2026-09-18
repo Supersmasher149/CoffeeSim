@@ -304,3 +304,21 @@ at commit `347177c` in [run 33508004359](https://github.com/Supersmasher149/Coff
 Future changes need their own hosted run; do not extend this evidence to an
 unrelated branch. See
 [current-state-and-gaps.md](current-state-and-gaps.md) for the evidence status.
+
+## Bit-identity check for refactors
+
+A change meant to be behaviour-neutral (a solver refactor, say) can still move
+the last ulp and pass the whole suite, because the tests check invariants, not
+bits. Splitting an `a * b + c` that the compiler fuses into one FMA is enough.
+`./scripts/solver_hash_matrix.sh` simulates every recipe in `assets/recipes/`
+with no bean and with each bean in `assets/beans/`, and records each case's
+result hash and a digest of its artifacts. Record on the base commit, then
+compare after the change on the same machine:
+
+```bash
+./scripts/solver_hash_matrix.sh > before.txt
+./scripts/solver_hash_matrix.sh --against before.txt
+```
+
+Hashes are per-toolchain, so never commit a recorded file or compare across
+machines.

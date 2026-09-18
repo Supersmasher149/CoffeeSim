@@ -492,6 +492,16 @@ std::pair<Boundaries, std::vector<Derived>> evaluate_regions(
         recipe.inlet_temperature_k.sample(states.front().shot.time_s);
     boundaries.delta_p_pa = boundaries.pressure_pa - coeff.outlet_pressure_pa;
 
+    // Compression, the inlet density and the regions' shared permeability
+    // shape depend only on the boundaries and the recipe, never on a region,
+    // so they are evaluated once per call. Only the multiplier differs.
+    const PuckGeometry geometry = compress_puck(recipe, coeff, boundaries.delta_p_pa);
+    const double inlet_density_kg_m3 = water.density_kg_m3(boundaries.inlet_temperature_k);
+    const double base_shape =
+        kozeny_carman_permeability(recipe.particle_diameter_m, geometry.porosity,
+                                   coeff.kozeny_constant) *
+        distribution_factor(recipe.particle_spread_factor, coeff.distribution_factor_floor);
+
     std::vector<Derived> derived;
     derived.reserve(states.size());
     for (std::size_t i = 0; i < states.size(); ++i) {
@@ -502,17 +512,12 @@ std::pair<Boundaries, std::vector<Derived>> evaluate_regions(
 
         Derived d;
         d.viscosity_pa_s = water.viscosity_pa_s(state.puck_temperature_k);
-        d.inlet_density_kg_m3 = water.density_kg_m3(boundaries.inlet_temperature_k);
+        d.inlet_density_kg_m3 = inlet_density_kg_m3;
         d.water_heat_capacity_j_kg_k = water.heat_capacity_j_kg_k(state.puck_temperature_k);
-        d.geometry = compress_puck(recipe, coeff, boundaries.delta_p_pa);
+        d.geometry = geometry;
 
         const double region_area_m2 = ctx.layout[i].area_m2;
-        const double k0 = kozeny_carman_permeability(recipe.particle_diameter_m,
-                                                      d.geometry.porosity,
-                                                      coeff.kozeny_constant);
-        const double shape =
-            k0 * distribution_factor(recipe.particle_spread_factor, coeff.distribution_factor_floor) *
-            region.permeability_multiplier;
+        const double shape = base_shape * region.permeability_multiplier;
         // The compressed depth is split evenly; every cell shares the
         // region's porosity and cross-section and differs only by state.
         d.cell_depth_m = d.geometry.depth_m / cell_count;

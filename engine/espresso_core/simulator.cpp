@@ -5,6 +5,8 @@
 #include <cmath>
 #include <limits>
 #include <optional>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 #include "espressolab/extraction.hpp"
@@ -102,19 +104,55 @@ double thermal_capacity_j_k(double coffee_kg, const ModelCoefficients& coeff,
            std::max(water_kg, kMassEpsilon) * water_heat_capacity_j_kg_k;
 }
 
+// Every field of ShotState and CellState, named once. The finiteness checks,
+// the sample interpolation and the region aggregation all iterate these lists
+// rather than spelling the fields out, and the static_asserts stop the build
+// when a field is added to either struct without joining a list here.
+//
+// ShotState: extensive quantities sum across regions; intensive ones are
+// weighted means. With time_s and class_in_cup_kg that is the whole struct.
+constexpr std::array kShotExtensive = {
+    &ShotState::remaining_extractable_solids_kg, &ShotState::dissolved_solids_kg,
+    &ShotState::beverage_mass_kg,                &ShotState::cumulative_water_in_kg,
+    &ShotState::retained_water_kg,               &ShotState::dissolved_solids_in_cup_kg,
+};
+constexpr std::array kShotIntensive = {
+    &ShotState::puck_temperature_k,
+    &ShotState::permeability_m2,
+    &ShotState::liquid_saturation,
+};
+static_assert(sizeof(ShotState) ==
+                  (1 + kShotExtensive.size() + kShotIntensive.size()) * sizeof(double) +
+                      sizeof(std::vector<double>),
+              "ShotState gained a field: add it to kShotExtensive or kShotIntensive");
+
+constexpr std::array kCellScalars = {
+    &CellState::temperature_k,       &CellState::liquid_saturation,
+    &CellState::retained_water_kg,   &CellState::dissolved_solids_kg,
+    &CellState::remaining_extractable_solids_kg,
+};
+// The per-cell series: extraction bins and the overlay's class pools.
+template <class Cell>
+auto cell_series(Cell& cell) {
+    return std::array{&cell.bin_remaining_kg, &cell.classes.remaining_kg,
+                      &cell.classes.dissolved_kg};
+}
+static_assert(sizeof(CellState) == kCellScalars.size() * sizeof(double) +
+                                       std::tuple_size_v<decltype(cell_series(
+                                           std::declval<CellState&>()))> *
+                                           sizeof(std::vector<double>),
+              "CellState gained a field: add it to kCellScalars or cell_series()");
+
 bool all_finite(const CellState& cell) {
-    for (double bin_kg : cell.bin_remaining_kg) {
-        if (!std::isfinite(bin_kg)) return false;
+    for (const auto field : kCellScalars) {
+        if (!std::isfinite(cell.*field)) return false;
     }
-    for (double class_kg : cell.classes.remaining_kg) {
-        if (!std::isfinite(class_kg)) return false;
+    for (const std::vector<double>* series : cell_series(cell)) {
+        for (double value : *series) {
+            if (!std::isfinite(value)) return false;
+        }
     }
-    for (double class_kg : cell.classes.dissolved_kg) {
-        if (!std::isfinite(class_kg)) return false;
-    }
-    return std::isfinite(cell.temperature_k) && std::isfinite(cell.liquid_saturation) &&
-           std::isfinite(cell.retained_water_kg) && std::isfinite(cell.dissolved_solids_kg) &&
-           std::isfinite(cell.remaining_extractable_solids_kg);
+    return true;
 }
 
 // Collapse the axial column back onto the region state the rest of the solver
@@ -174,15 +212,16 @@ public:
 };
 
 bool all_finite(const ShotState& state) {
+    for (const auto field : kShotExtensive) {
+        if (!std::isfinite(state.*field)) return false;
+    }
+    for (const auto field : kShotIntensive) {
+        if (!std::isfinite(state.*field)) return false;
+    }
     for (double class_kg : state.class_in_cup_kg) {
         if (!std::isfinite(class_kg)) return false;
     }
-    return std::isfinite(state.time_s) && std::isfinite(state.puck_temperature_k) &&
-           std::isfinite(state.permeability_m2) && std::isfinite(state.liquid_saturation) &&
-           std::isfinite(state.remaining_extractable_solids_kg) &&
-           std::isfinite(state.dissolved_solids_kg) && std::isfinite(state.beverage_mass_kg) &&
-           std::isfinite(state.cumulative_water_in_kg) && std::isfinite(state.retained_water_kg) &&
-           std::isfinite(state.dissolved_solids_in_cup_kg);
+    return std::isfinite(state.time_s);
 }
 
 bool all_finite(const std::vector<RegionState>& regions) {
@@ -225,18 +264,12 @@ ShotState interpolate_state(const ShotState& lower, const ShotState& upper, doub
     const auto interpolate = [fraction](double a, double b) { return a + fraction * (b - a); };
     ShotState state;
     state.time_s = time_s;
-    state.puck_temperature_k = interpolate(lower.puck_temperature_k, upper.puck_temperature_k);
-    state.permeability_m2 = interpolate(lower.permeability_m2, upper.permeability_m2);
-    state.liquid_saturation = interpolate(lower.liquid_saturation, upper.liquid_saturation);
-    state.remaining_extractable_solids_kg =
-        interpolate(lower.remaining_extractable_solids_kg, upper.remaining_extractable_solids_kg);
-    state.dissolved_solids_kg = interpolate(lower.dissolved_solids_kg, upper.dissolved_solids_kg);
-    state.beverage_mass_kg = interpolate(lower.beverage_mass_kg, upper.beverage_mass_kg);
-    state.cumulative_water_in_kg =
-        interpolate(lower.cumulative_water_in_kg, upper.cumulative_water_in_kg);
-    state.retained_water_kg = interpolate(lower.retained_water_kg, upper.retained_water_kg);
-    state.dissolved_solids_in_cup_kg =
-        interpolate(lower.dissolved_solids_in_cup_kg, upper.dissolved_solids_in_cup_kg);
+    for (const auto field : kShotExtensive) {
+        state.*field = interpolate(lower.*field, upper.*field);
+    }
+    for (const auto field : kShotIntensive) {
+        state.*field = interpolate(lower.*field, upper.*field);
+    }
     if (!lower.class_in_cup_kg.empty()) {
         state.class_in_cup_kg.resize(lower.class_in_cup_kg.size());
         for (std::size_t k = 0; k < lower.class_in_cup_kg.size(); ++k) {
@@ -247,28 +280,34 @@ ShotState interpolate_state(const ShotState& lower, const ShotState& upper, doub
     return state;
 }
 
+// Every field of every cell is interpolated, series included, so a sampled
+// region is a complete state: nothing reading it can find a missing bin or
+// class pool.
 RegionState interpolate_region(const RegionState& lower, const RegionState& upper, double time_s) {
     const double span = upper.shot.time_s - lower.shot.time_s;
     const double fraction = span > 0.0 ? (time_s - lower.shot.time_s) / span : 0.0;
+    const auto blend = [fraction](double a, double b) { return a + fraction * (b - a); };
     RegionState state;
     state.shot = interpolate_state(lower.shot, upper.shot, time_s);
-    state.integrated_flow_m3 =
-        lower.integrated_flow_m3 + fraction * (upper.integrated_flow_m3 - lower.integrated_flow_m3);
+    state.integrated_flow_m3 = blend(lower.integrated_flow_m3, upper.integrated_flow_m3);
     state.cells.reserve(lower.cells.size());
     for (std::size_t i = 0; i < lower.cells.size(); ++i) {
-        const auto blend = [&](double a, double b) { return a + fraction * (b - a); };
+        const CellState& below = lower.cells[i];
+        const CellState& above = upper.cells[i];
         CellState cell;
-        cell.temperature_k = blend(lower.cells[i].temperature_k, upper.cells[i].temperature_k);
-        cell.liquid_saturation =
-            blend(lower.cells[i].liquid_saturation, upper.cells[i].liquid_saturation);
-        cell.retained_water_kg =
-            blend(lower.cells[i].retained_water_kg, upper.cells[i].retained_water_kg);
-        cell.dissolved_solids_kg =
-            blend(lower.cells[i].dissolved_solids_kg, upper.cells[i].dissolved_solids_kg);
-        cell.remaining_extractable_solids_kg =
-            blend(lower.cells[i].remaining_extractable_solids_kg,
-                  upper.cells[i].remaining_extractable_solids_kg);
-        state.cells.push_back(cell);
+        for (const auto field : kCellScalars) {
+            cell.*field = blend(below.*field, above.*field);
+        }
+        const auto from = cell_series(below);
+        const auto to = cell_series(above);
+        const auto into = cell_series(cell);
+        for (std::size_t s = 0; s < into.size(); ++s) {
+            into[s]->resize(from[s]->size());
+            for (std::size_t k = 0; k < from[s]->size(); ++k) {
+                (*into[s])[k] = blend((*from[s])[k], (*to[s])[k]);
+            }
+        }
+        state.cells.push_back(std::move(cell));
     }
     return state;
 }
@@ -289,12 +328,7 @@ ShotState aggregate_state(const std::vector<RegionState>& regions, const std::ve
     for (std::size_t i = 0; i < regions.size(); ++i) {
         const ShotState& state = regions[i].shot;
         const Derived& region = derived[i];
-        aggregate.remaining_extractable_solids_kg += state.remaining_extractable_solids_kg;
-        aggregate.dissolved_solids_kg += state.dissolved_solids_kg;
-        aggregate.beverage_mass_kg += state.beverage_mass_kg;
-        aggregate.cumulative_water_in_kg += state.cumulative_water_in_kg;
-        aggregate.retained_water_kg += state.retained_water_kg;
-        aggregate.dissolved_solids_in_cup_kg += state.dissolved_solids_in_cup_kg;
+        for (const auto field : kShotExtensive) aggregate.*field += state.*field;
         for (std::size_t k = 0; k < aggregate.class_in_cup_kg.size(); ++k) {
             aggregate.class_in_cup_kg[k] += state.class_in_cup_kg[k];
         }

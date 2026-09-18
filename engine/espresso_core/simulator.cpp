@@ -17,6 +17,8 @@ namespace espressolab {
 namespace {
 
 constexpr double kMassEpsilon = 1.0e-12;
+// Slack for comparing accumulated sample times against step times.
+constexpr double kTimeEpsilonS = 1.0e-9;
 constexpr double kSaturationTolerance = 1.0e-6;
 // A puck temperature change larger than this in one step means dt_s is too
 // coarse for the heat balance; the solver warns rather than refusing.
@@ -784,7 +786,7 @@ void finalize_result(ShotResult& result, std::vector<RegionState>& regions,
         diag.min_permeability_m2 = 0.0;
     }
 
-    if (result.samples.empty() || result.samples.back().time_s < final_state.time_s - 1.0e-9) {
+    if (result.samples.empty() || result.samples.back().time_s < final_state.time_s - kTimeEpsilonS) {
         append_sample(result, final_state, final_boundaries, total_flow(final_derived), recipe);
     }
 
@@ -932,7 +934,7 @@ ShotResult Simulator::run(const Recipe& recipe, const ModelCoefficients& coeff,
         }
 
         const ShotState aggregate = aggregate_state(regions, derived, recipe, coeff);
-        if (aggregate.time_s + 1.0e-9 >= next_sample_time_s) {
+        if (aggregate.time_s + kTimeEpsilonS >= next_sample_time_s) {
             append_sample(result, aggregate, boundaries, flow_m3_s, recipe);
             next_sample_time_s += config.sample_interval_s;
         }
@@ -959,7 +961,7 @@ ShotResult Simulator::run(const Recipe& recipe, const ModelCoefficients& coeff,
         // snapshot be skipped on the steps that don't need it for
         // interpolation below.
         const bool crosses_sample_boundary =
-            next_sample_time_s <= regions.front().shot.time_s + dt + 1.0e-9;
+            next_sample_time_s <= regions.front().shot.time_s + dt + kTimeEpsilonS;
         const std::vector<RegionState> states_before_step =
             crosses_sample_boundary ? regions : std::vector<RegionState>{};
         if (const auto stop = advance_regions(regions, derived, boundaries, step_context, step,
@@ -969,7 +971,7 @@ ShotResult Simulator::run(const Recipe& recipe, const ModelCoefficients& coeff,
         }
 
         while (crosses_sample_boundary &&
-              next_sample_time_s <= regions.front().shot.time_s + 1.0e-9) {
+              next_sample_time_s <= regions.front().shot.time_s + kTimeEpsilonS) {
             std::vector<RegionState> sampled_regions;
             sampled_regions.reserve(regions.size());
             for (std::size_t i = 0; i < regions.size(); ++i) {

@@ -324,3 +324,24 @@ CMake 3.20+, a C++20 compiler, and Node 20+ for the dashboard. nlohmann/json,
 Catch2, cpp-httplib, and FTXUI (the CLI's terminal UI, linked only by
 `espressolab_cli`) are vendored in `third_party/`, so a clean clone builds
 offline. The TUI itself needs an interactive POSIX terminal (macOS or Linux).
+
+## License and data sources
+
+EspressoLab's own code is released under the [MIT License](LICENSE). The
+vendored libraries in `third_party/` keep their upstream licenses; see
+[third_party/README.md](third_party/README.md) for versions and sources.
+
+`espresso_real_world_refs/` holds four shot-level records derived from Jonathan
+Gagné's EG-1 vs Niche blooming-espresso experiment ([Coffee Ad
+Astra](https://coffeeadastra.com/2021/05/10/a-comparison-between-standard-and-low-fines-espresso-shots/)).
+The published shot-file archive states no explicit license, so this repo keeps
+only derived numeric samples and provenance, used for shape comparison rather
+than calibration. The MIT license above does not extend to that data; see
+`espresso_real_world_refs/manifest.json` and
+[docs/real-shot-validation.md](docs/real-shot-validation.md).
+
+## AI assistance
+
+This project was developed with AI assistance (Claude Code). The instructions
+given to the agent are in [CLAUDE.md](CLAUDE.md), and assisted commits carry
+`Co-Authored-By` trailers in the git history.

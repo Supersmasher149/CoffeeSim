@@ -17,6 +17,12 @@ enforced by `tests/schemas/real_shot_capture_check.py`.
 | `TEMPLATE.telemetry.csv` | Copy this per shot. Header only: `time_s,pressure_bar,flow_ml_s,cumulative_beverage_mass_g,temperature_c` |
 | `2026-09-01-pending-capture-01.capture.json` | The first fixture: a reserved slot, `status: pending_capture`. No shot has been brewed. Acquisition instructions are in its `observations.notes` |
 
+A capture may gain a `<same-id>.tasting.jev.json` (Jev) or
+`<same-id>.tasting.local.json` (local LLM) sidecar, written by the
+optional `tools/jev_tasting_notes.py`: a model's typed reading of
+`observations.taste`, kept out of the capture because it is not a measurement.
+See "Tasting notes against the flavour overlay" in the validation doc.
+
 ## Naming
 
 `<YYYY-MM-DD>-<machine-slug>-<nn>.capture.json`, with the matching

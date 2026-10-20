@@ -12,6 +12,14 @@ displayed quantity — both post/call into the same native workflows and render
 what the native solver returns, so the file-oriented CLI, the TUI, tests, and
 the dashboard produce byte-identical numbers for the same inputs.
 
+"No AI" holds for everything that builds: the one model call in the repo is
+`tools/jev_tasting_notes.py`, an optional, stdlib-only script that reads a
+real-shot capture's free-text tasting notes with TypeSafe's Jev model (or,
+with `--backend local`, a local LLM behind an OpenAI-compatible server such as
+Ollama) and writes a separate sidecar. Keep it that way — no Jev (or any model) call
+in the engine, server, CLI, TUI, dashboard, artifacts or hashes, and never let
+a sidecar become a calibration input. See `docs/real-shot-validation.md`.
+
 ## Commands
 
 ```bash
@@ -185,6 +193,8 @@ recipe, coefficient, configuration, and result hashes.
 | `tests/` | Unit, integration, property, convergence, verification tests |
 | `tests/pty/` | POSIX PTY smoke matrix for the TUI (outside `ctest`; needs a real pseudo-terminal) |
 | `tests/schemas/` | Document-contract checks run outside `ctest`: `real_shot_capture_check.py` (stdlib, in CI) and `schema_contract_check.py` (needs unvendored `jsonschema`, run by hand) |
+| `tools/` | Stdlib-only side scripts outside the build: `import_shot_telemetry.py` (DE1 `.shot` files into reference records), `jev_tasting_notes.py` (optional Jev or local-LLM reading of capture tasting notes, and its comparison with the flavour overlay) |
+| `tests/tools/` | Offline checks for `tools/`: `jev_tasting_notes_check.py` (fake transport, no network or key, in CI) |
 
 ### Runtime data flow
 

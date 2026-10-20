@@ -13,6 +13,7 @@ import type {
   ShotResult,
   SweepAccepted,
   SweepResult,
+  TastingReadingCatalogue,
   ValidationIssue,
 } from "./types";
 
@@ -82,6 +83,9 @@ export const api = {
         `?coefficients=${encodeURIComponent(coefficientSelector)}`,
       { signal },
     ),
+
+  tastingReadings: (signal?: AbortSignal) =>
+    request<TastingReadingCatalogue>("/tasting-readings", { signal }),
 
   simulate: (recipe: Recipe) =>
     request<ShotResult>("/shots", { method: "POST", body: JSON.stringify({ recipe }) }),

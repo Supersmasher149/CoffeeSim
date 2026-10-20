@@ -160,6 +160,100 @@ Two traps worth naming, because the model invites both:
   *out of the spout*. They differ until the pores fill. Compare cumulative mass,
   or accept the offset explicitly.
 
+### Tasting notes against the flavour overlay (optional, networked)
+
+`observations.taste` is free text, so none of the tables above can score it,
+and nothing in the sensory overlay has ever been checked against tasting.
+`tools/jev_tasting_notes.py` closes that gap from outside the simulator: it
+sends a capture's observation fields to [Jev](https://docs.typesafe.ai/introduction),
+TypeSafe AI's System One decision model, and gets back typed answers for the
+overlay's seven axes and its three-way verdict.
+
+```bash
+python3 tools/jev_tasting_notes.py read --capture assets/real_shots/<id>.capture.json --dry-run
+TYPESAFE_API_KEY=... python3 tools/jev_tasting_notes.py read --capture assets/real_shots/<id>.capture.json
+python3 tools/jev_tasting_notes.py compare --reading assets/real_shots/<id>.tasting.jev.json \
+    --summary <simulate --out dir>/summary.json
+```
+
+One request asks, per axis, whether the notes mention it at all (a Noul) and
+how strong it is on a five-level rubric (a Score); plus the verdict (a Choice
+over the `FlavorVerdict` names) and whether channelling was reported (a Noul).
+The rules it follows:
+
+- **A reading is not a measurement.** It goes to a separate
+  `<id>.tasting.jev.json` sidecar beside the capture. The capture is never
+  edited, the contract check only globs `*.capture.json`, and the tool refuses
+  to write into `assets/measured_shots/`. Nothing in the build, solver, server,
+  dashboard, `calibrate` or any hash reads a sidecar.
+- **Unmentioned is not absent.** An axis the notes never talk about stays
+  `null` (`not_mentioned`); an answer below `--min-confidence` (default 0.5)
+  stays `null` (`low_confidence`) with its probabilities kept.
+- **Levels, not magnitudes.** Each axis keeps Jev's most probable named level
+  (`absent` … `dominant`). Jev's Score expectations are not numerically
+  calibrated between levels, so they are never mapped onto the overlay's 0-10.
+  `compare` instead bands the overlay's 0-10 into the same five levels in code
+  (2 points each) and reports the step difference.
+- **Indicative only.** The overlay's verdict is relative to the bean's declared
+  target and the taster's is not, and one taster is not a panel. Agreement
+  here is a sanity check on the overlay's shape, never a calibration target.
+- **Provenance over reproducibility.** Jev is not deterministic in the
+  result-hash sense. The model is pinned (`jev-1.14.0`), and the sidecar
+  records the model that answered, the SHA-256 of the capture and of the
+  canonical request, the timestamp and the token usage.
+
+The tool is stdlib only, needs `TYPESAFE_API_KEY` (and optionally
+`TYPESAFE_BASE_URL`) only for a real `read`, and is checked offline, with a
+fake transport, by `tests/tools/jev_tasting_notes_check.py`.
+
+**In the dashboard.** Run a recipe that carries a bean, and the Shot tab's
+sensory estimate offers "Compare with tasting notes", listing every sidecar in
+`assets/real_shots/` (served read-only by `GET /api/v1/tasting-readings`, see
+`docs/api.md`). Picking one draws each tasted level as a shaded band behind the
+overlay's bar, on the same five 2-point bands `compare` uses, lists the levels
+beside the values, and adds the tasted verdict, whether channelling was
+reported, and how many axes the estimate falls inside the tasted band on. The
+browser never calls a model and the overlay's numbers are unchanged; the panel
+labels the bands as an AI reading of the taster's notes, naming the model.
+
+**Local model instead of Jev.** `--backend local` asks the same questions of a
+local LLM behind any OpenAI-compatible chat endpoint: Ollama by default
+(`http://localhost:11434/v1`, model `qwen2.5:7b-instruct`), or llama.cpp's
+`llama-server` / LM Studio via `LOCAL_LLM_BASE_URL` and `--model`. No key, and
+the notes never leave the machine.
+
+```bash
+ollama pull qwen2.5:7b-instruct
+python3 tools/jev_tasting_notes.py read --backend local --capture assets/real_shots/<id>.capture.json
+```
+
+It emulates Jev's answers rather than reproducing Jev's model, and differs in
+ways worth knowing:
+
+- Each question is its own completion of one label token (a letter per
+  choice, a digit per score level, yes/no per noul) at temperature 0. The
+  probabilities are the model's token log-probabilities over those labels,
+  renormalised — never numbers the model was asked to write. A server that
+  returns no `logprobs`, or a first token that is no allowed label, is an
+  error rather than a guess.
+- `confidence` is the top label's probability. It is not Jev's separately
+  trained confidence, and a small local model's probabilities are not
+  calibrated the way Jev's are claimed to be, so treat `--min-confidence` as a
+  rough filter.
+- The reading lands in `<id>.tasting.local.json` with `backend: "local"` and a
+  `local:`-prefixed `model`, so it cannot pass for a Jev reading; `compare`
+  reads either.
+- A local model at temperature 0 with a fixed seed is close to repeatable on
+  one machine and build, which Jev is not — but it is still not a result hash.
+- Accuracy, as far as it has been looked at: on an M1 Pro, `qwen2.5:7b-instruct`
+  answers the 16 questions in about 9 s. On a hand-written set of three
+  tasting notes (not real captures) it got 13 of 15 mention/channelling
+  yes/no answers and 7 of 8 levels right, and both verdicts. Its known
+  misses: "no bitterness" reads as not mentioned (null, so it fails safe), a
+  crack at the puck edge is not taken as channelling, and "thin body" reads
+  as moderate rather than faint. That is a smoke test, not a validation; try a
+  larger model with `--model` before trusting the levels.
+
 ## Calibration is not validation
 
 - Validation scores a fixed coefficient set against shots. Calibration changes

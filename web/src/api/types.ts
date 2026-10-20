@@ -228,6 +228,48 @@ export interface FlavorResult {
   series?: FlavorSample[];
 }
 
+// GET /api/v1/tasting-readings: a model's reading (Jev's or a local LLM's) of a
+// real-shot capture's free-text tasting notes, written by
+// tools/jev_tasting_notes.py. Not a measurement and not a model output; the
+// dashboard only shows it beside the overlay. Same order as the tool's LEVELS.
+export const TASTING_LEVELS = ["absent", "faint", "moderate", "pronounced", "dominant"] as const;
+export type TastingLevel = (typeof TASTING_LEVELS)[number];
+
+export interface TastingAxisReading {
+  level: TastingLevel | null;
+  status: "read" | "not_mentioned" | "low_confidence" | string;
+  confidence: number;
+}
+
+export interface TastingReading {
+  id: string;
+  capture_id: string;
+  backend: "typesafe" | "local";
+  model: string;
+  retrieved_at: string;
+  min_confidence: number;
+  axes: Record<SensoryAxis, TastingAxisReading>;
+  verdict: {
+    value: FlavorResult["verdict"] | null;
+    status: string;
+    confidence: number;
+  };
+  channeling_reported_probability: number;
+}
+
+export interface TastingReadingError {
+  id: string;
+  error: { code: string; message: string };
+}
+
+export type TastingReadingEntry = TastingReading | TastingReadingError;
+
+export interface TastingReadingCatalogue {
+  schema_version: string;
+  readings: TastingReadingEntry[];
+  count: number;
+}
+
 export interface ReferenceSource {
   author: string;
   experiment: string;

@@ -12,6 +12,17 @@ displayed quantity — both post/call into the same native workflows and render
 what the native solver returns, so the file-oriented CLI, the TUI, tests, and
 the dashboard produce byte-identical numbers for the same inputs.
 
+"No AI" holds for everything that builds: the one model call in the repo is
+`tools/jev_tasting_notes.py`, an optional, stdlib-only script that reads a
+real-shot capture's free-text tasting notes with TypeSafe's Jev model (or,
+with `--backend local`, a local LLM behind an OpenAI-compatible server such as
+Ollama) and writes a separate sidecar. The server lists those sidecars
+read-only (`GET /api/v1/tasting-readings`) and the dashboard's flavour panel
+draws a picked one beside the overlay, labelled as an AI reading of notes.
+Keep it that way — no Jev (or any model) call in the engine, server, CLI, TUI,
+dashboard, artifacts or hashes, and never let a sidecar become a calibration
+input or a solver input. See `docs/real-shot-validation.md`.
+
 ## Commands
 
 ```bash
@@ -177,7 +188,7 @@ recipe, coefficient, configuration, and result hashes.
 | `apps/espressolab_cli/` | Argv parsing, `workflows.{hpp,cpp}` (shared CLI workflow services), `sweep_batch_runner.{hpp,cpp}` (opt-in parallel sweeps), file-oriented command output |
 | `apps/espressolab_cli/tui/` | Interactive terminal UI: `tui_forms.{hpp,cpp}` (terminal-independent navigation/forms) and `tui.cpp` (FTXUI rendering) |
 | `apps/espressolab_server/` | Local REST translation, measured-shot comparison, in-memory runs, background sweep/CFD3D jobs (cpp-httplib) |
-| `web/src/features/` | shot, sweeps, run comparison, measured-shot comparison, calibration notice |
+| `web/src/features/` | shot (including the flavour panel's tasting-reading comparison), sweeps, run comparison, measured-shot comparison, calibration notice |
 | `assets/beans/` | Bean profiles for the sensory overlay. Authored priors, never measured |
 | `assets/real_shots/` | Real-shot capture records and templates. Inert: no build, solver, server or calibration path reads them |
 | `assets/` | Versioned example inputs and synthetic measurement fixtures |
@@ -185,6 +196,8 @@ recipe, coefficient, configuration, and result hashes.
 | `tests/` | Unit, integration, property, convergence, verification tests |
 | `tests/pty/` | POSIX PTY smoke matrix for the TUI (outside `ctest`; needs a real pseudo-terminal) |
 | `tests/schemas/` | Document-contract checks run outside `ctest`: `real_shot_capture_check.py` (stdlib, in CI) and `schema_contract_check.py` (needs unvendored `jsonschema`, run by hand) |
+| `tools/` | Stdlib-only side scripts outside the build: `import_shot_telemetry.py` (DE1 `.shot` files into reference records), `jev_tasting_notes.py` (optional Jev or local-LLM reading of capture tasting notes, and its comparison with the flavour overlay) |
+| `tests/tools/` | Offline checks for `tools/`: `jev_tasting_notes_check.py` (fake transport, no network or key, in CI) |
 
 ### Runtime data flow
 

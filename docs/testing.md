@@ -162,6 +162,16 @@ and passes that result to the same native scoring operation used by calibration.
 Synthetic fixtures test plumbing only and remain labelled synthetic in every
 response. `tests/server/measured_shots_smoke.py` covers the real HTTP routes.
 
+**Tasting-reading tests** cover the read-only listing of
+`tools/jev_tasting_notes.py` sidecars. `tests/server/tasting_readings_smoke.py`
+starts the real server on a throwaway assets directory and checks that only
+sidecars are listed, sorted, trimmed to the fields the dashboard draws, and
+that a malformed one becomes an error entry without hiding the rest. On the
+web side, `FlavorPanel.test.tsx` covers the picker, the bands, the in-band
+count and the error states, and `tasting.test.ts` pins the band cut-offs to
+the ones `tests/tools/jev_tasting_notes_check.py` pins for the terminal
+`compare`.
+
 **Cancellation tests** call `Simulator::run`, `CfdSolver::run`, `Cfd3dSolver::run`,
 `calibration::fit`, and `calibration::evaluate_shot_loss` with a callback that
 always reports "cancelled" and require `ExecutionCancelled` rather than a

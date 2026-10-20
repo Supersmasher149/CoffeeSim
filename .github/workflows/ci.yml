@@ -42,6 +42,12 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: python3 tests/schemas/real_shot_capture_check.py
 
+      # The optional Jev tasting-notes reader, checked with a fake transport:
+      # no network, no TYPESAFE_API_KEY. Stdlib only.
+      - name: Jev tasting-notes reader check
+        if: matrix.os == 'ubuntu-latest'
+        run: python3 tests/tools/jev_tasting_notes_check.py
+
       # Definition of done (section 2.2): baseline recipe, grind sweep, both
       # artifacts exported, identical result hash on rerun.
       - name: Acceptance demo

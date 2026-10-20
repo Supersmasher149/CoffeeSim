@@ -622,6 +622,32 @@ tbody tr[tabindex], tbody tr[role="button"] { cursor: pointer; }
 .flavor-composition { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
 .flavor-chip { font-size: 10px; color: var(--muted); background: var(--panel-2); border: 1px solid var(--line); border-radius: 3px; padding: 2px 6px; }
 .flavor-caveat { font-size: 10.5px; line-height: 1.5; color: var(--muted); margin: 0 0 8px; }
+/* Tasting readings: an AI reading of a taster's notes, drawn as a band under
+   the solver's bar in the second accent so it never reads as the estimate. */
+.flavor-tasting-picker { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; margin-bottom: 10px; }
+.flavor-tasting-picker label { color: var(--muted); font-size: 11px; }
+.flavor-tasting-picker select { width: auto; min-width: 0; max-width: 100%; }
+.flavor-tasting-note { font-size: 11px; color: var(--muted); margin: 0 0 10px; }
+.flavor-tasting-note code { font-size: 10.5px; }
+.flavor-axes.with-tasting .flavor-axis { grid-template-columns: 84px 1fr 78px 92px; }
+/* Behind the solver's fill and taller than the track, so the estimate is never
+   covered and the band still shows above and below it. */
+.flavor-tasted-band {
+  position: absolute; top: -4px; bottom: -4px; z-index: 0; border-radius: 3px;
+  background: color-mix(in srgb, var(--accent-2) 30%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-2) 70%, transparent);
+}
+.flavor-track .flavor-fill { position: relative; z-index: 1; }
+.flavor-track .flavor-target { z-index: 2; }
+.flavor-axis-tasted { font-size: 11px; color: var(--accent-2); text-transform: capitalize; }
+.flavor-axis-tasted.muted { color: var(--text-dim); text-transform: none; font-style: italic; }
+.flavor-tasting-summary { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 14px; margin-bottom: 10px; }
+.flavor-tasting-summary .flavor-caveat { flex-basis: 100%; margin-top: 2px; }
+@media (max-width: 520px) {
+  /* Too narrow for a fourth column: the tasted level drops under the bar. */
+  .flavor-axes.with-tasting .flavor-axis { grid-template-columns: 84px 1fr 78px; }
+  .flavor-axes.with-tasting .flavor-axis-tasted { grid-column: 2 / -1; margin-top: -2px; }
+}
 .bean-readout { font-size: 12px; }
 .bean-name { font-weight: 600; margin-bottom: 2px; }
 .bean-classes { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0 6px; }

@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cctype>
 #include <chrono>
@@ -6,10 +7,13 @@
 #include <condition_variable>
 #include <deque>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <iostream>
 #include <mutex>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -20,10 +24,12 @@
 #include <nlohmann/json.hpp>
 
 #include "espressolab/artifact_io.hpp"
+#include "espressolab/bean.hpp"
 #include "espressolab/calibration.hpp"
 #include "espressolab/cfd3d.hpp"
 #include "espressolab/cfd3d_artifact_io.hpp"
 #include "espressolab/experiment.hpp"
+#include "espressolab/flavor_result.hpp"
 #include "espressolab/reference_io.hpp"
 #include "espressolab/simulator.hpp"
 #include "espressolab/units.hpp"
@@ -748,6 +754,132 @@ std::optional<int> port_from_args(int argc, char** argv, std::string& error) {
     return 8734;
 }
 
+// Tasting readings are the sidecars tools/jev_tasting_notes.py writes beside a
+// real-shot capture: a model's (Jev's or a local LLM's) reading of the taster's
+// free-text notes. The server only lists them for display. It never calls a
+// model, and nothing here feeds a simulation, a fit, an artifact or a hash.
+constexpr std::array<const char*, 5> kTastingLevels = {"absent", "faint", "moderate",
+                                                       "pronounced", "dominant"};
+constexpr std::array<const char*, 2> kTastingReadingSuffixes = {".tasting.jev.json",
+                                                                ".tasting.local.json"};
+constexpr std::uintmax_t kTastingReadingMaxBytes = 1u << 20;
+
+bool has_suffix(const std::string& text, const std::string& suffix) {
+    return text.size() >= suffix.size() &&
+           text.compare(text.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+bool is_tasting_reading_file(const std::filesystem::path& path) {
+    const std::string name = path.filename().string();
+    return std::any_of(kTastingReadingSuffixes.begin(), kTastingReadingSuffixes.end(),
+                       [&](const char* suffix) { return has_suffix(name, suffix); });
+}
+
+bool is_probability(const json& value) {
+    return value.is_number() && std::isfinite(value.get<double>()) &&
+           value.get<double>() >= 0.0 && value.get<double>() <= 1.0;
+}
+
+struct TastingReadingInvalid : std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
+
+// The field at `key`, or a TastingReadingInvalid naming its path.
+const json& require_field(const json& object, const std::string& key, const std::string& path) {
+    if (!object.is_object() || !object.contains(key)) {
+        throw TastingReadingInvalid(path + "." + key + " is missing");
+    }
+    return object.at(key);
+}
+
+std::string require_string(const json& object, const std::string& key, const std::string& path) {
+    const json& value = require_field(object, key, path);
+    if (!value.is_string()) throw TastingReadingInvalid(path + "." + key + " must be a string");
+    return value.get<std::string>();
+}
+
+json require_probability(const json& object, const std::string& key, const std::string& path) {
+    const json& value = require_field(object, key, path);
+    if (!is_probability(value)) {
+        throw TastingReadingInvalid(path + "." + key + " must be a number in [0, 1]");
+    }
+    return value;
+}
+
+// Only the fields the dashboard draws, re-emitted from a checked document so a
+// hand-edited sidecar cannot push an arbitrary shape into the browser.
+json tasting_reading_entry(const std::filesystem::path& path) {
+    if (std::filesystem::file_size(path) > kTastingReadingMaxBytes) {
+        throw TastingReadingInvalid("file is larger than 1 MiB");
+    }
+    const std::optional<std::string> text = [&]() -> std::optional<std::string> {
+        std::ifstream stream(path, std::ios::binary);
+        if (!stream) return std::nullopt;
+        return std::string(std::istreambuf_iterator<char>(stream), {});
+    }();
+    if (!text) throw TastingReadingInvalid("cannot be read");
+    const json document = json::parse(*text, nullptr, false);
+    if (document.is_discarded() || !document.is_object()) {
+        throw TastingReadingInvalid("is not a JSON object");
+    }
+    if (require_string(document, "kind", "reading") != "jev_tasting_reading") {
+        throw TastingReadingInvalid("reading.kind must be jev_tasting_reading");
+    }
+    // Schema 1.0 readings predate the local backend and are all Jev's.
+    const std::string backend =
+        document.contains("backend") ? require_string(document, "backend", "reading") : "typesafe";
+    if (backend != "typesafe" && backend != "local") {
+        throw TastingReadingInvalid("reading.backend must be typesafe or local");
+    }
+
+    json axes = json::object();
+    const json& source_axes = require_field(document, "axes", "reading");
+    for (std::size_t a = 0; a < kSensoryAxisCount; ++a) {
+        const std::string name = to_string(static_cast<SensoryAxis>(a));
+        const std::string axis_path = "reading.axes." + name;
+        const json& axis = require_field(source_axes, name, "reading.axes");
+        const json& level = require_field(axis, "level", axis_path);
+        const bool known_level =
+            level.is_string() &&
+            std::any_of(kTastingLevels.begin(), kTastingLevels.end(),
+                        [&](const char* known) { return level.get<std::string>() == known; });
+        if (!level.is_null() && !known_level) {
+            throw TastingReadingInvalid(axis_path + ".level must be null or a named level");
+        }
+        axes[name] = {{"level", level},
+                      {"status", require_string(axis, "status", axis_path)},
+                      {"confidence", require_probability(axis, "confidence", axis_path)}};
+    }
+
+    const json& verdict = require_field(document, "verdict", "reading");
+    const json& verdict_value = require_field(verdict, "value", "reading.verdict");
+    bool known_verdict = false;
+    for (const FlavorVerdict candidate :
+         {FlavorVerdict::under_extracted_sour, FlavorVerdict::balanced,
+          FlavorVerdict::over_extracted_bitter}) {
+        known_verdict = known_verdict || (verdict_value.is_string() &&
+                                          verdict_value.get<std::string>() == to_string(candidate));
+    }
+    if (!verdict_value.is_null() && !known_verdict) {
+        throw TastingReadingInvalid("reading.verdict.value must be null or a FlavorVerdict name");
+    }
+
+    const std::string file = path.filename().string();
+    return {{"id", file.substr(0, file.size() - std::string(".json").size())},
+            {"capture_id", require_string(document, "capture_id", "reading")},
+            {"backend", backend},
+            {"model", require_string(document, "model", "reading")},
+            {"retrieved_at", require_string(document, "retrieved_at", "reading")},
+            {"min_confidence", require_probability(document, "min_confidence", "reading")},
+            {"axes", std::move(axes)},
+            {"verdict",
+             {{"value", verdict_value},
+              {"status", require_string(verdict, "status", "reading.verdict")},
+              {"confidence", require_probability(verdict, "confidence", "reading.verdict")}}},
+            {"channeling_reported_probability",
+             require_probability(document, "channeling_reported_probability", "reading")}};
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -995,6 +1127,40 @@ int main(int argc, char** argv) {
                                            {"tds", weights.tds},
                                            {"regularization", weights.regularization}};
                    response.set_content(body.dump(2), "application/json");
+               });
+
+    server.Get("/api/v1/tasting-readings",
+               [&](const httplib::Request&, httplib::Response& response) {
+                   json readings = json::array();
+                   const std::filesystem::path directory = assets / "real_shots";
+                   std::error_code missing;
+                   if (std::filesystem::is_directory(directory, missing)) {
+                       for (const auto& entry : std::filesystem::directory_iterator(directory)) {
+                           if (!entry.is_regular_file() || !is_tasting_reading_file(entry.path())) {
+                               continue;
+                           }
+                           const std::string file = entry.path().filename().string();
+                           const std::string id = file.substr(0, file.size() - 5);
+                           try {
+                               readings.push_back(tasting_reading_entry(entry.path()));
+                           } catch (const std::exception& e) {
+                               // Like /recipes: one bad sidecar must not hide the rest.
+                               readings.push_back(
+                                   {{"id", id},
+                                    {"error",
+                                     {{"code", "TASTING_READING_INVALID"},
+                                      {"message", file + ": " + e.what()}}}});
+                           }
+                       }
+                   }
+                   std::sort(readings.begin(), readings.end(), [](const json& a, const json& b) {
+                       return a.at("id").get<std::string>() < b.at("id").get<std::string>();
+                   });
+                   response.set_content(json{{"schema_version", "1.0"},
+                                             {"readings", readings},
+                                             {"count", readings.size()}}
+                                            .dump(2),
+                                        "application/json");
                });
 
     server.Get("/api/v1/recipes", [&](const httplib::Request&, httplib::Response& response) {

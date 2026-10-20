@@ -206,6 +206,16 @@ The tool is stdlib only, needs `TYPESAFE_API_KEY` (and optionally
 `TYPESAFE_BASE_URL`) only for a real `read`, and is checked offline, with a
 fake transport, by `tests/tools/jev_tasting_notes_check.py`.
 
+**In the dashboard.** Run a recipe that carries a bean, and the Shot tab's
+sensory estimate offers "Compare with tasting notes", listing every sidecar in
+`assets/real_shots/` (served read-only by `GET /api/v1/tasting-readings`, see
+`docs/api.md`). Picking one draws each tasted level as a shaded band behind the
+overlay's bar, on the same five 2-point bands `compare` uses, lists the levels
+beside the values, and adds the tasted verdict, whether channelling was
+reported, and how many axes the estimate falls inside the tasted band on. The
+browser never calls a model and the overlay's numbers are unchanged; the panel
+labels the bands as an AI reading of the taster's notes, naming the model.
+
 **Local model instead of Jev.** `--backend local` asks the same questions of a
 local LLM behind any OpenAI-compatible chat endpoint: Ollama by default
 (`http://localhost:11434/v1`, model `qwen2.5:7b-instruct`), or llama.cpp's

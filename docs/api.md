@@ -142,6 +142,50 @@ structured `REFERENCE_CATALOG_NOT_FOUND`, `REFERENCE_MANIFEST_NOT_FOUND`, or
 `REFERENCE_MANIFEST_INVALID` error. An individual malformed record is reported
 in `load_errors` while valid records remain available.
 
+## Listing tasting readings
+
+`GET /api/v1/tasting-readings` lists the sidecars `tools/jev_tasting_notes.py`
+writes beside real-shot captures, `assets/real_shots/*.tasting.jev.json` (Jev)
+and `*.tasting.local.json` (a local LLM): a model's reading of a taster's
+free-text notes on the sensory overlay's seven axes and its verdict. The
+dashboard's flavour panel draws a picked reading beside the overlay. The server
+only reads these files; it never calls a model, and nothing here reaches a
+simulation, a fit, an artifact or a hash.
+
+```json
+{
+  "schema_version": "1.0",
+  "count": 1,
+  "readings": [
+    {
+      "id": "2026-10-20-gaggia-01.tasting.local",
+      "capture_id": "2026-10-20-gaggia-01",
+      "backend": "local",
+      "model": "local:qwen2.5:7b-instruct",
+      "retrieved_at": "2026-10-20T16:00:00Z",
+      "min_confidence": 0.5,
+      "axes": {
+        "bitterness": { "level": "dominant", "status": "read", "confidence": 0.98 },
+        "fruit": { "level": null, "status": "not_mentioned", "confidence": 1.0 }
+      },
+      "verdict": { "value": "over_extracted_bitter", "status": "read", "confidence": 1.0 },
+      "channeling_reported_probability": 0.0
+    }
+  ]
+}
+```
+
+`axes` always carries all seven axes (two are shown). `level` is one of
+`absent`, `faint`, `moderate`, `pronounced`, `dominant`, or null when the notes
+never mention the axis or the answer was below the reading's `min_confidence`;
+`verdict.value` is a `FlavorVerdict` name or null. The response is re-emitted
+from a checked document, so the reading's raw `answers`, probabilities and
+token usage stay on disk. Entries are sorted by `id` (the file name without
+`.json`). A missing `assets/real_shots/` is an empty catalogue. As with
+`/recipes`, a sidecar that cannot be read or fails the check becomes an entry
+with `id` and an `error` object (`TASTING_READING_INVALID`, naming the field)
+instead of hiding the valid ones.
+
 ## Comparing a measured shot
 
 `GET /api/v1/measured-shots` reads model-ready JSON files from
